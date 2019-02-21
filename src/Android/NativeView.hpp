@@ -47,7 +47,6 @@ class NativeView {
   static jfieldID textureNonPowerOfTwo_field;
   static jmethodID init_surface_method, deinit_surface_method;
   static jmethodID setRequestedOrientationID;
-  static jmethodID swap_method;
   static jmethodID loadResourceBitmap_method;
   static jmethodID loadFileBitmap_method;
   static jmethodID bitmapToTexture_method;
@@ -76,9 +75,6 @@ public:
     // see http://developer.android.com/reference/android/content/pm/ActivityInfo.html#SCREEN_ORIENTATION_REVERSE_LANDSCAPE
     REVERSE_LANDSCAPE = 8,
     REVERSE_PORTRAIT = 9,
-    // HACK for Galaxy Tab (FROYO = 2.2 = API level 8)
-    REVERSE_LANDSCAPE_GT = 7,
-    REVERSE_PORTRAIT_GT = 8,
   };
 
   static void Initialise(JNIEnv *env);
@@ -126,10 +122,6 @@ public:
 
   bool setRequestedOrientation(ScreenOrientation so) {
     return env->CallBooleanMethod(obj, setRequestedOrientationID, (jint)so);
-  }
-
-  void swap() {
-    env->CallVoidMethod(obj, swap_method);
   }
 
   jobject loadResourceBitmap(const char *name) {

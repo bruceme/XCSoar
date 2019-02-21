@@ -44,6 +44,12 @@ struct BasicStringView : ConstBuffer<T> {
 
 	BasicStringView() = default;
 
+	explicit constexpr BasicStringView(ConstBuffer<T> src)
+		:ConstBuffer<T>(src) {}
+
+	explicit constexpr BasicStringView(ConstBuffer<void> src)
+		:ConstBuffer<T>(ConstBuffer<T>::FromVoid(src)) {}
+
 	constexpr BasicStringView(pointer_type _data, size_type _size) noexcept
 		:ConstBuffer<T>(_data, _size) {}
 
@@ -58,7 +64,7 @@ struct BasicStringView : ConstBuffer<T> {
 	constexpr BasicStringView(std::nullptr_t n) noexcept
 		:ConstBuffer<T>(n) {}
 
-	using ConstBuffer<T>::IsEmpty;
+	using ConstBuffer<T>::empty;
 	using ConstBuffer<T>::front;
 	using ConstBuffer<T>::back;
 	using ConstBuffer<T>::pop_front;

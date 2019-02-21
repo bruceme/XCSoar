@@ -35,18 +35,21 @@
 
 #include <cstddef>
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
 #endif
+
+template<typename T> struct ConstBuffer;
+struct StringView;
 
 /**
  * An OO wrapper for struct sockaddr.
  */
 class SocketAddress {
 public:
-#ifdef WIN32
+#ifdef _WIN32
 	typedef int size_type;
 #else
 	typedef socklen_t size_type;
@@ -74,7 +77,7 @@ public:
 		return address == nullptr;
 	}
 
-	const struct sockaddr *GetAddress() const noexcept {
+	constexpr const struct sockaddr *GetAddress() const noexcept {
 		return address;
 	}
 
@@ -90,9 +93,20 @@ public:
 	 * Does the object have a well-defined address?  Check !IsNull()
 	 * before calling this method.
 	 */
-	bool IsDefined() const noexcept {
+	constexpr bool IsDefined() const noexcept {
 		return GetFamily() != AF_UNSPEC;
 	}
+
+#ifdef HAVE_UN
+	/**
+	 * Extract the local socket path (which may begin with a null
+	 * byte, denoting an "abstract" socket).  The return value's
+	 * "size" attribute includes the null terminator.  Returns
+	 * nullptr if not applicable.
+	 */
+	gcc_pure
+	StringView GetLocalRaw() const noexcept;
+#endif
 
 #ifdef HAVE_TCP
 	/**
@@ -113,6 +127,16 @@ public:
 	gcc_pure
 	unsigned GetPort() const noexcept;
 #endif
+
+	/**
+	 * Return a buffer pointing to the "steady" portion of the
+	 * address, i.e. without volatile parts like the port number.
+	 * This buffer is useful for hashing the address, but not so
+	 * much for anything else.  Returns nullptr if the address is
+	 * not supported.
+	 */
+	gcc_pure
+	ConstBuffer<void> GetSteadyPart() const noexcept;
 
 	gcc_pure
 	bool operator==(const SocketAddress other) const noexcept;

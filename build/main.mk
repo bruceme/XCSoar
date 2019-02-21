@@ -648,7 +648,6 @@ XCSOAR_SOURCES := \
 	\
 	$(SRC)/Look/FontDescription.cpp \
 	$(SRC)/Look/GlobalFonts.cpp \
-	$(SRC)/Look/AutoFont.cpp \
 	$(SRC)/Look/DefaultFonts.cpp \
 	\
 	$(SRC)/Polar/PolarGlue.cpp \
@@ -777,7 +776,7 @@ XCSOAR_SOURCES += \
 	$(SRC)/Weather/NOAAUpdater.cpp
 
 XCSOAR_SOURCES += \
-	$(SRC)/Tracking/LiveTrack24/Client.cpp
+	$(SRC)/Tracking/LiveTrack24.cpp
 endif
 
 XCSOAR_SOURCES += \

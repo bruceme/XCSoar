@@ -21,18 +21,9 @@ Copyright_License {
 }
 */
 
-#include "RunFile.hpp"
-#include "Error.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "OS/Path.hpp"
+#ifndef XCSOAR_DEVICE_DRIVER_AIRCONTROLDISPLAY_HPP
+#define XCSOAR_DEVICE_DRIVER_AIRCONTROLDISPLAY_HPP
 
-extern "C" {
-#include <lauxlib.h>
-}
+extern const struct DeviceRegister acd_driver;
 
-void
-Lua::RunFile(lua_State *L, Path path)
-{
-  if (luaL_loadfile(L, NarrowPathName(path)) || lua_pcall(L, 0, 0, 0))
-    throw PopError(L);
-}
+#endif

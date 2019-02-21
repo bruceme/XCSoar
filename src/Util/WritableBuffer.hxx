@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2017 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright (C) 2013-2018 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #ifndef WRITABLE_BUFFER_HXX
 #define WRITABLE_BUFFER_HXX
 
+#include "ConstBuffer.hxx"
 #include "Compiler.h"
 
 #include <cstddef>
@@ -60,15 +61,23 @@ struct WritableBuffer<void> {
 	constexpr WritableBuffer(pointer_type _data, size_type _size)
 		:data(_data), size(_size) {}
 
-	constexpr static WritableBuffer Null() {
-		return { nullptr, 0 };
+	constexpr operator ConstBuffer<void>() const noexcept {
+		return {data, size};
 	}
 
 	constexpr bool IsNull() const {
 		return data == nullptr;
 	}
 
-	constexpr bool IsEmpty() const {
+	constexpr bool operator==(std::nullptr_t) const {
+		return data == nullptr;
+	}
+
+	constexpr bool operator!=(std::nullptr_t) const {
+		return data != nullptr;
+	}
+
+	constexpr bool empty() const {
 		return size == 0;
 	}
 };
@@ -99,6 +108,9 @@ struct WritableBuffer {
 	constexpr WritableBuffer(pointer_type _data, size_type _size)
 		:data(_data), size(_size) {}
 
+	constexpr WritableBuffer(pointer_type _data, pointer_type _end)
+		:data(_data), size(_end - _data) {}
+
 	/**
 	 * Convert array to WritableBuffer instance.
 	 */
@@ -106,8 +118,18 @@ struct WritableBuffer {
 	constexpr WritableBuffer(T (&_data)[_size])
 		:data(_data), size(_size) {}
 
-	constexpr static WritableBuffer Null() {
-		return { nullptr, 0 };
+	constexpr operator ConstBuffer<T>() const noexcept {
+		return {data, size};
+	}
+
+	/**
+	 * Cast a WritableBuffer<void> to a WritableBuffer<T>,
+	 * rounding down to the next multiple of T's size.
+	 */
+	static constexpr WritableBuffer<T> FromVoidFloor(WritableBuffer<void> other) {
+		static_assert(sizeof(T) > 0, "Empty base type");
+		return WritableBuffer<T>(pointer_type(other.data),
+					 other.size / sizeof(T));
 	}
 
 	/**
@@ -124,8 +146,7 @@ struct WritableBuffer {
 #ifndef NDEBUG
 		assert(other.size % sizeof(T) == 0);
 #endif
-		return WritableBuffer<T>(pointer_type(other.data),
-					 other.size / sizeof(T));
+		return FromVoidFloor(other);
 	}
 
 	constexpr WritableBuffer<void> ToVoid() const {
@@ -137,7 +158,15 @@ struct WritableBuffer {
 		return data == nullptr;
 	}
 
-	constexpr bool IsEmpty() const {
+	constexpr bool operator==(std::nullptr_t) const {
+		return data == nullptr;
+	}
+
+	constexpr bool operator!=(std::nullptr_t) const {
+		return data != nullptr;
+	}
+
+	constexpr bool empty() const {
 		return size == 0;
 	}
 
@@ -177,7 +206,7 @@ struct WritableBuffer {
 #endif
 	reference_type front() const {
 #ifndef NDEBUG
-		assert(!IsEmpty());
+		assert(!empty());
 #endif
 		return data[0];
 	}
@@ -191,7 +220,7 @@ struct WritableBuffer {
 #endif
 	reference_type back() const {
 #ifndef NDEBUG
-		assert(!IsEmpty());
+		assert(!empty());
 #endif
 		return data[size - 1];
 	}
@@ -201,7 +230,7 @@ struct WritableBuffer {
 	 * not actually modify the buffer).  Buffer must not be empty.
 	 */
 	void pop_front() {
-		assert(!IsEmpty());
+		assert(!empty());
 
 		++data;
 		--size;
@@ -212,7 +241,7 @@ struct WritableBuffer {
 	 * not actually modify the buffer).  Buffer must not be empty.
 	 */
 	void pop_back() {
-		assert(!IsEmpty());
+		assert(!empty());
 
 		--size;
 	}
@@ -248,6 +277,19 @@ struct WritableBuffer {
 
 		size = end() - new_data;
 		data = new_data;
+	}
+
+	/**
+	 * Move the end pointer to the given address (by adjusting the
+	 * size).
+	 */
+	void SetEnd(pointer_type new_end) {
+#ifndef NDEBUG
+		assert(IsNull() == (new_end == nullptr));
+		assert(new_end >= begin());
+#endif
+
+		size = new_end - data;
 	}
 };
 

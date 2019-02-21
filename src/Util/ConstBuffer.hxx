@@ -60,10 +60,6 @@ struct ConstBuffer<void> {
 	constexpr ConstBuffer(pointer_type _data, size_type _size)
 		:data(_data), size(_size) {}
 
-	constexpr static ConstBuffer Null() {
-		return ConstBuffer(nullptr, 0);
-	}
-
 	constexpr static ConstBuffer<void> FromVoid(ConstBuffer<void> other) {
 		return other;
 	}
@@ -76,7 +72,15 @@ struct ConstBuffer<void> {
 		return data == nullptr;
 	}
 
-	constexpr bool IsEmpty() const {
+	constexpr bool operator==(std::nullptr_t) const {
+		return data == nullptr;
+	}
+
+	constexpr bool operator!=(std::nullptr_t) const {
+		return data != nullptr;
+	}
+
+	constexpr bool empty() const {
 		return size == 0;
 	}
 };
@@ -105,6 +109,9 @@ struct ConstBuffer {
 	constexpr ConstBuffer(pointer_type _data, size_type _size)
 		:data(_data), size(_size) {}
 
+	constexpr ConstBuffer(pointer_type _data, pointer_type _end)
+		:data(_data), size(_end - _data) {}
+
 	/**
 	 * Convert array to ConstBuffer instance.
 	 */
@@ -112,8 +119,14 @@ struct ConstBuffer {
 	constexpr ConstBuffer(const T (&_data)[_size])
 		:data(_data), size(_size) {}
 
-	constexpr static ConstBuffer Null() {
-		return ConstBuffer(nullptr, 0);
+	/**
+	 * Cast a ConstBuffer<void> to a ConstBuffer<T>, rounding down
+	 * to the next multiple of T's size.
+	 */
+	static constexpr ConstBuffer<T> FromVoidFloor(ConstBuffer<void> other) {
+		static_assert(sizeof(T) > 0, "Empty base type");
+		return ConstBuffer<T>(pointer_type(other.data),
+				      other.size / sizeof(T));
 	}
 
 	/**
@@ -130,8 +143,7 @@ struct ConstBuffer {
 #ifndef NDEBUG
 		assert(other.size % sizeof(T) == 0);
 #endif
-		return ConstBuffer<T>(pointer_type(other.data),
-				      other.size / sizeof(T));
+		return FromVoidFloor(other);
 	}
 
 	constexpr ConstBuffer<void> ToVoid() const {
@@ -143,7 +155,15 @@ struct ConstBuffer {
 		return data == nullptr;
 	}
 
-	constexpr bool IsEmpty() const {
+	constexpr bool operator==(std::nullptr_t) const {
+		return data == nullptr;
+	}
+
+	constexpr bool operator!=(std::nullptr_t) const {
+		return data != nullptr;
+	}
+
+	constexpr bool empty() const {
 		return size == 0;
 	}
 
@@ -193,7 +213,7 @@ struct ConstBuffer {
 #endif
 	reference_type front() const {
 #ifndef NDEBUG
-		assert(!IsEmpty());
+		assert(!empty());
 #endif
 		return data[0];
 	}
@@ -207,7 +227,7 @@ struct ConstBuffer {
 #endif
 	reference_type back() const {
 #ifndef NDEBUG
-		assert(!IsEmpty());
+		assert(!empty());
 #endif
 		return data[size - 1];
 	}
@@ -218,7 +238,7 @@ struct ConstBuffer {
 	 */
 	void pop_front() {
 #ifndef NDEBUG
-		assert(!IsEmpty());
+		assert(!empty());
 #endif
 
 		++data;
@@ -231,7 +251,7 @@ struct ConstBuffer {
 	 */
 	void pop_back() {
 #ifndef NDEBUG
-		assert(!IsEmpty());
+		assert(!empty());
 #endif
 
 		--size;
@@ -268,6 +288,19 @@ struct ConstBuffer {
 
 		size = end() - new_data;
 		data = new_data;
+	}
+
+	/**
+	 * Move the end pointer to the given address (by adjusting the
+	 * size).
+	 */
+	void SetEnd(pointer_type new_end) {
+#ifndef NDEBUG
+		assert(IsNull() == (new_end == nullptr));
+		assert(new_end >= begin());
+#endif
+
+		size = new_end - data;
 	}
 };
 

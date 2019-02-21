@@ -324,11 +324,10 @@ ifeq ($(TARGET),UNIX)
 endif
 
 ifeq ($(TARGET),ANDROID)
-  ANDROID_NDK ?= $(HOME)/opt/android-ndk-r15c
+  ANDROID_NDK ?= $(HOME)/opt/android-ndk-r19
 
   ANDROID_SDK_PLATFORM = android-22
-  ANDROID_NDK_PLATFORM = android-19
-  ANDROID_NDK_PLATFORM_64 = android-21
+  ANDROID_NDK_PLATFORM = android-21
 
   ANDROID_ARCH = arm
   ANDROID_ABI2 = arm-linux-androideabi
@@ -340,11 +339,6 @@ ifeq ($(TARGET),ANDROID)
   ifeq ($(ARMV7),y)
     ANDROID_ABI3 = armeabi-v7a
     ANDROID_ABI5 = armeabi-v7a
-
-    ifeq ($(NEON),y)
-      # ARMv7+NEON builds are assumed to be run on at least Android 2.3
-      ANDROID_MIN_SDK_VERSION = 9
-    endif
   endif
 
   ifeq ($(X86),y)
@@ -352,22 +346,18 @@ ifeq ($(TARGET),ANDROID)
     ANDROID_ABI2 = x86
     ANDROID_ABI3 = x86
     HOST_TRIPLET = i686-linux-android
-    ANDROID_MIN_SDK_VERSION = 9
   endif
 
   ifeq ($(MIPS),y)
     ANDROID_ARCH = mips
     ANDROID_ABI2 = mipsel-linux-android
     ANDROID_ABI3 = mips
-    ANDROID_MIN_SDK_VERSION = 9
   endif
 
   ifeq ($(AARCH64),y)
     ANDROID_ARCH = arm64
     ANDROID_ABI2 = aarch64-linux-android
     ANDROID_ABI3 = arm64-v8a
-    ANDROID_NDK_PLATFORM = $(ANDROID_NDK_PLATFORM_64)
-    ANDROID_MIN_SDK_VERSION = 21
   endif
 
   ifeq ($(X64),y)
@@ -375,18 +365,15 @@ ifeq ($(TARGET),ANDROID)
     ANDROID_ABI2 = x86_64
     ANDROID_ABI3 = x86_64
     HOST_TRIPLET = x86_64-linux-android
-    ANDROID_NDK_PLATFORM = $(ANDROID_NDK_PLATFORM_64)
-    ANDROID_MIN_SDK_VERSION = 21
   endif
 
   ifeq ($(MIPS64),y)
     ANDROID_ARCH = mips64
     ANDROID_ABI2 = mips64el-linux-android
     ANDROID_ABI3 = mips64
-    ANDROID_NDK_PLATFORM = $(ANDROID_NDK_PLATFORM_64)
-    ANDROID_MIN_SDK_VERSION = 21
   endif
 
+  ANDROID_SYSROOT = $(ANDROID_NDK)/sysroot
   ANDROID_NDK_PLATFORM_DIR = $(ANDROID_NDK)/platforms/$(ANDROID_NDK_PLATFORM)
   ANDROID_TARGET_ROOT = $(ANDROID_NDK_PLATFORM_DIR)/arch-$(ANDROID_ARCH)
 
@@ -561,17 +548,11 @@ ifeq ($(TARGET_IS_KOBO),y)
 endif
 
 ifeq ($(TARGET),ANDROID)
-  TARGET_CPPFLAGS += --sysroot=$(ANDROID_TARGET_ROOT)
+  TARGET_CPPFLAGS += --sysroot=$(ANDROID_SYSROOT)
+  TARGET_CPPFLAGS += -isystem $(ANDROID_SYSROOT)/usr/include/$(HOST_TRIPLET)
   TARGET_CPPFLAGS += -DANDROID
+  TARGET_CPPFLAGS += -D__ANDROID_API__=21
   CXXFLAGS += -D__STDC_VERSION__=199901L
-
-  ANDROID_MIN_SDK_VERSION ?= 4
-  TARGET_CPPFLAGS += -DANDROID_MIN_SDK_VERSION=$(ANDROID_MIN_SDK_VERSION)
-
-  ifeq ($(shell test $(ANDROID_MIN_SDK_VERSION) -ge 9 && echo y),y)
-    # native EGL is available since Android 2.3
-    EGL = y
-  endif
 
   ifeq ($(X86),y)
     # On NDK r6, the macro _BYTE_ORDER never gets defined - workaround:
@@ -652,11 +633,12 @@ endif
 
 ifeq ($(TARGET),ANDROID)
   TARGET_LDFLAGS += -Wl,--no-undefined
-  TARGET_LDFLAGS += --sysroot=$(ANDROID_TARGET_ROOT)
   ifeq ($(call bool_or,$(X64),$(MIPS64)),y)
     TARGET_LDFLAGS += -L$(ANDROID_TARGET_ROOT)/usr/lib64
+    TARGET_LDFLAGS += -B$(ANDROID_TARGET_ROOT)/usr/lib64
   else
     TARGET_LDFLAGS += -L$(ANDROID_TARGET_ROOT)/usr/lib
+    TARGET_LDFLAGS += -B$(ANDROID_TARGET_ROOT)/usr/lib
   endif
 
   ifeq ($(ARMV7),y)
@@ -665,6 +647,13 @@ ifeq ($(TARGET),ANDROID)
     # workaround for "... uses VFP register arguments, output does not"
     TARGET_LDFLAGS += -Wl,--no-warn-mismatch
   endif
+
+  # clang as linker driver adds the option '-pie' to the linker command for the X64 platform.
+  # This option which is incompatible with the option '-shared'.
+  ifeq ($(X64),y)
+    TARGET_LDFLAGS += -no-pie
+  endif
+
 endif
 
 ifeq ($(HAVE_WIN32),y)

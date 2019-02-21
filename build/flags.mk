@@ -15,13 +15,20 @@ C_FEATURES += -fPIC
 LDFLAGS += -fPIC -shared
 endif
 
+ifeq ($(ICF),y)
+LDFLAGS += -Wl,--icf=all
+USE_LD = gold
+endif
+
 ifneq ($(USE_LD),)
 LDFLAGS += -fuse-ld=$(USE_LD)
 endif
 
+ifneq ($(MAKECMDGOALS),python)
 ifeq ($(HAVE_WIN32),n)
 CXX_FEATURES += -fvisibility=hidden
 C_FEATURES += -fvisibility=hidden
+endif
 endif
 
 ifeq ($(DEBUG)$(HAVE_WIN32)$(TARGET_IS_DARWIN),nnn)

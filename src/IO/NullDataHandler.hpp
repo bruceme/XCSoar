@@ -2,7 +2,7 @@
 Copyright_License {
 
   XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
+  Copyright (C) 2000-2018 The XCSoar Project
   A detailed list of copyright holders can be found in the file "AUTHORS".
 
   This program is free software; you can redistribute it and/or
@@ -21,16 +21,14 @@ Copyright_License {
 }
 */
 
-#include "Error.hpp"
+#ifndef XCSOAR_IO_NULL_DATA_HANDLER_HPP
+#define XCSOAR_IO_NULL_DATA_HANDLER_HPP
 
-extern "C" {
-#include <lua.h>
-}
+#include "DataHandler.hpp"
 
-Lua::Error
-Lua::PopError(lua_State *L)
-{
-  Error e(lua_tostring(L, -1));
-  lua_pop(L, 1);
-  return e;
-}
+class NullDataHandler : public DataHandler {
+public:
+  virtual void DataReceived(const void *, size_t) {}
+};
+
+#endif

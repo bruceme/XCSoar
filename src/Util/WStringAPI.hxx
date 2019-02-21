@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2017 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2010-2018 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -90,6 +90,13 @@ StringFindLast(wchar_t *haystack, wchar_t needle) noexcept
 	return wcsrchr(haystack, needle);
 }
 
+gcc_pure gcc_nonnull_all
+static inline const wchar_t *
+StringFindAny(const wchar_t *haystack, const wchar_t *accept) noexcept
+{
+	return wcspbrk(haystack, accept);
+}
+
 gcc_nonnull_all
 static inline void
 UnsafeCopyString(wchar_t *dest, const wchar_t *src) noexcept
@@ -97,17 +104,26 @@ UnsafeCopyString(wchar_t *dest, const wchar_t *src) noexcept
 	wcscpy(dest, src);
 }
 
-gcc_nonnull_all
+gcc_returns_nonnull gcc_nonnull_all
 static inline wchar_t *
 UnsafeCopyStringP(wchar_t *dest, const wchar_t *src) noexcept
 {
-#ifdef WIN32
+#if defined(_WIN32) || defined(__OpenBSD__) || defined(__NetBSD__)
 	/* emulate wcpcpy() */
 	UnsafeCopyString(dest, src);
 	return dest + StringLength(dest);
+#elif defined(__sun) && defined (__SVR4)
+	return std::wcpcpy(dest, src);
 #else
 	return wcpcpy(dest, src);
 #endif
+}
+
+gcc_pure gcc_nonnull_all
+static inline int
+StringCompare(const wchar_t *a, const wchar_t *b) noexcept
+{
+	return wcscmp(a, b);
 }
 
 /**
@@ -120,7 +136,7 @@ gcc_pure gcc_nonnull_all
 static inline bool
 StringIsEqual(const wchar_t *str1, const wchar_t *str2) noexcept
 {
-	return wcscmp(str1, str2) == 0;
+	return StringCompare(str1, str2) == 0;
 }
 
 /**
@@ -137,7 +153,11 @@ gcc_pure gcc_nonnull_all
 static inline bool
 StringIsEqualIgnoreCase(const wchar_t *a, const wchar_t *b) noexcept
 {
+#ifdef _WIN32
 	return _wcsicmp(a, b) == 0;
+#else
+	return wcscasecmp(a, b) == 0;
+#endif
 }
 
 gcc_pure gcc_nonnull_all
@@ -145,7 +165,11 @@ static inline bool
 StringIsEqualIgnoreCase(const wchar_t *a, const wchar_t *b,
 			size_t size) noexcept
 {
+#ifdef _WIN32
 	return _wcsnicmp(a, b, size) == 0;
+#else
+	return wcsncasecmp(a, b, size) == 0;
+#endif
 }
 
 gcc_pure gcc_nonnull_all
@@ -155,11 +179,15 @@ StringCollate(const wchar_t *a, const wchar_t *b) noexcept
 	return wcscoll(a, b);
 }
 
-gcc_malloc gcc_nonnull_all
+gcc_malloc gcc_returns_nonnull gcc_nonnull_all
 static inline wchar_t *
 DuplicateString(const wchar_t *p) noexcept
 {
+#if defined(__sun) && defined (__SVR4)
+	return std::wcsdup(p);
+#else
 	return wcsdup(p);
+#endif
 }
 
 #endif

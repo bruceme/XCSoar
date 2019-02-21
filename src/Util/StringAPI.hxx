@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2017 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2010-2018 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -94,6 +94,19 @@ StringFindLast(char *haystack, char needle) noexcept
 	return strrchr(haystack, needle);
 }
 
+gcc_pure gcc_nonnull_all
+static inline const char *
+StringFindAny(const char *haystack, const char *accept) noexcept
+{
+	return strpbrk(haystack, accept);
+}
+
+static inline char *
+StringToken(char *str, const char *delim) noexcept
+{
+	return strtok(str, delim);
+}
+
 gcc_nonnull_all
 static inline void
 UnsafeCopyString(char *dest, const char *src) noexcept
@@ -101,17 +114,24 @@ UnsafeCopyString(char *dest, const char *src) noexcept
 	strcpy(dest, src);
 }
 
-gcc_nonnull_all
+gcc_returns_nonnull gcc_nonnull_all
 static inline char *
 UnsafeCopyStringP(char *dest, const char *src) noexcept
 {
-#if defined(WIN32) || defined(__BIONIC__)
+#if defined(_WIN32)
 	/* emulate stpcpy() */
 	UnsafeCopyString(dest, src);
 	return dest + StringLength(dest);
 #else
 	return stpcpy(dest, src);
 #endif
+}
+
+gcc_pure gcc_nonnull_all
+static inline int
+StringCompare(const char *a, const char *b) noexcept
+{
+	return strcmp(a, b);
 }
 
 /**
@@ -121,7 +141,7 @@ gcc_pure gcc_nonnull_all
 static inline bool
 StringIsEqual(const char *a, const char *b) noexcept
 {
-	return strcmp(a, b) == 0;
+	return StringCompare(a, b) == 0;
 }
 
 /**
@@ -159,7 +179,7 @@ StringCollate(const char *a, const char *b) noexcept
  * Copy the string to a new allocation.  The return value must be
  * freed with free().
  */
-gcc_malloc gcc_nonnull_all
+gcc_malloc gcc_returns_nonnull gcc_nonnull_all
 static inline char *
 DuplicateString(const char *p) noexcept
 {

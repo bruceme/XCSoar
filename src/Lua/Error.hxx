@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2016-2018 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,43 +27,33 @@
  * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef THREAD_FALLBACK_SHARED_MUTEX_HXX
-#define THREAD_FALLBACK_SHARED_MUTEX_HXX
+#ifndef LUA_ERROR_HXX
+#define LUA_ERROR_HXX
 
-#include "FastMutex.hpp"
+#include <stdexcept>
+
+struct lua_State;
+
+namespace Lua {
+
+class Error : public std::runtime_error {
+public:
+  explicit Error(const char *_msg):std::runtime_error(_msg) {}
+};
 
 /**
- * Fallback SharedMutex implementation which uses a regular non-shared
- * mutex.  Therefore, this is not actually a "shared" mutex, but a
- * fallback for systems that don't have a native reader/writer lock.
+ * After a failed call to lua_pcall(), load and pop the Lua error
+ * from the stack and store it in an #Error instance.
  */
-class FallbackSharedMutex {
-	FastMutex mutex;
+Error
+PopError(lua_State *L);
 
-public:
-	void lock() {
-		mutex.lock();
-	}
+/**
+ * Pushes a representation of the given C++ exception on the stack.
+ */
+void
+Push(lua_State *L, std::exception_ptr e) noexcept;
 
-	bool try_lock() {
-		return mutex.try_lock();
-	}
-
-	void unlock() {
-		mutex.unlock();
-	}
-
-	void lock_shared() {
-		mutex.lock();
-	}
-
-	bool try_lock_shared() {
-		return mutex.try_lock();
-	}
-
-	void unlock_shared() {
-		mutex.unlock();
-	}
-};
+}
 
 #endif

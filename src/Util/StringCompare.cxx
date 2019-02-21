@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2017 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2013-2018 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,7 +36,8 @@ StringEndsWith(const char *haystack, const char *needle) noexcept
 	const size_t needle_length = StringLength(needle);
 
 	return haystack_length >= needle_length &&
-		StringIsEqual(haystack + haystack_length - needle_length, needle);
+		memcmp(haystack + haystack_length - needle_length,
+		       needle, needle_length) == 0;
 }
 
 bool
