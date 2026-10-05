@@ -1,30 +1,17 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxConfig.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "Map.hpp"
 #include "InfoBoxes/InfoBoxSettings.hpp"
+#include "util/StringFormat.hpp"
+#include "util/TruncateString.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string_view>
 
 using namespace InfoBoxFactory;
 
@@ -37,7 +24,10 @@ GetV60InfoBoxManagerConfig(const ProfileMap &map, InfoBoxSettings &settings)
   strcpy(profileKey, "Info");
 
   for (unsigned i = 0; i < InfoBoxSettings::Panel::MAX_CONTENTS; ++i) {
-    sprintf(profileKey + 4, "%u", i);
+    const int n = StringFormat(profileKey + 4, sizeof(profileKey) - 4, "%u", i);
+    if (n < 0 || static_cast<size_t>(n) >= sizeof(profileKey) - 4)
+      continue;
+
     unsigned int temp = 0;
     if (map.Get(profileKey, temp)) {
       settings.panels[0].contents[i] = (Type)( temp       & 0xFF);
@@ -48,8 +38,48 @@ GetV60InfoBoxManagerConfig(const ProfileMap &map, InfoBoxSettings &settings)
   }
 }
 
+/**
+ * One profile value per line. An empty line is not written, and a
+ * missing value leaves that line empty.
+ */
 static bool
-GetIBType(const ProfileMap &map, const char *key, InfoBoxFactory::Type &val)
+FormatTextKey(char *buffer, std::size_t size,
+              unsigned panel, unsigned slot,
+              const char *which) noexcept
+{
+  const int n = StringFormat(buffer, size, "InfoBoxPanel%u%s%u",
+                             panel, which, slot);
+  return n >= 0 && static_cast<std::size_t>(n) < size;
+}
+
+static void
+LoadTextField(const ProfileMap &map, char *key, std::size_t key_size,
+              unsigned panel, unsigned slot, const char *which,
+              StaticString<InfoBoxCustomText::MAX_LENGTH> &dest) noexcept
+{
+  if (!FormatTextKey(key, key_size, panel, slot, which))
+    return;
+
+  const char *value = map.Get(key);
+  if (value != nullptr)
+    CopyTruncateString(dest.data(), dest.capacity(), value);
+}
+
+static void
+SaveTextField(ProfileMap &map, char *key, std::size_t key_size,
+              unsigned panel, unsigned slot, const char *which,
+              const StaticString<InfoBoxCustomText::MAX_LENGTH> &src) noexcept
+{
+  if (!FormatTextKey(key, key_size, panel, slot, which))
+    return;
+
+  if (!src.empty() || map.Exists(key))
+    map.Set(key, src.c_str());
+}
+
+static bool
+GetIBType(const ProfileMap &map, std::string_view key,
+          InfoBoxFactory::Type &val)
 {
   unsigned _val = val;
   bool ret = map.Get(key, _val);
@@ -76,6 +106,9 @@ Profile::Load(const ProfileMap &map, InfoBoxSettings &settings)
   /* migrate from XCSoar older than 6.7 */
   switch (settings.geometry) {
   case InfoBoxSettings::Geometry::SPLIT_8:
+  case InfoBoxSettings::Geometry::SPLIT_10:
+  case InfoBoxSettings::Geometry::SPLIT_3X4:
+  case InfoBoxSettings::Geometry::SPLIT_3X5:
   case InfoBoxSettings::Geometry::BOTTOM_RIGHT_8:
   case InfoBoxSettings::Geometry::TOP_LEFT_8:
     break;
@@ -94,6 +127,7 @@ Profile::Load(const ProfileMap &map, InfoBoxSettings &settings)
 
   case InfoBoxSettings::Geometry::RIGHT_9_VARIO:
   case InfoBoxSettings::Geometry::RIGHT_5:
+  case InfoBoxSettings::Geometry::BOTTOM_RIGHT_10:
   case InfoBoxSettings::Geometry::BOTTOM_RIGHT_12:
   case InfoBoxSettings::Geometry::RIGHT_16:
   case InfoBoxSettings::Geometry::RIGHT_24:
@@ -103,12 +137,14 @@ Profile::Load(const ProfileMap &map, InfoBoxSettings &settings)
     settings.geometry = InfoBoxSettings::Geometry::BOTTOM_RIGHT_12;
     break;
 
+  case InfoBoxSettings::Geometry::TOP_LEFT_10:
   case InfoBoxSettings::Geometry::TOP_LEFT_12:
   case InfoBoxSettings::Geometry::LEFT_6_RIGHT_3_VARIO:
   case InfoBoxSettings::Geometry::LEFT_12_RIGHT_3_VARIO:
   case InfoBoxSettings::Geometry::BOTTOM_8_VARIO:
   case InfoBoxSettings::Geometry::TOP_LEFT_4:
   case InfoBoxSettings::Geometry::BOTTOM_RIGHT_4:
+  case InfoBoxSettings::Geometry::SPLIT_3X6:
     break;
 
   case InfoBoxSettings::Geometry::OBSOLETE_TOP_LEFT_4:
@@ -123,8 +159,12 @@ Profile::Load(const ProfileMap &map, InfoBoxSettings &settings)
     break;
   }
 
-  map.Get(ProfileKeys::AppInverseInfoBox, settings.inverse);
+  map.Get(ProfileKeys::InfoBoxTitleScale, settings.scale_title_font);
+  if ((settings.scale_title_font < 50) || (settings.scale_title_font > 150))
+    settings.scale_title_font = 100;
+
   map.Get(ProfileKeys::AppInfoBoxColors, settings.use_colors);
+  map.GetEnum(ProfileKeys::AppInfoBoxTheme, settings.theme);
 
   map.GetEnum(ProfileKeys::AppInfoBoxBorder, settings.border_style);
 
@@ -134,15 +174,45 @@ Profile::Load(const ProfileMap &map, InfoBoxSettings &settings)
     InfoBoxSettings::Panel &panel = settings.panels[i];
 
     if (i >= settings.PREASSIGNED_PANELS) {
-      sprintf(profileKey, "InfoBoxPanel%uName", i);
-      map.Get(profileKey, panel.name);
-      if (panel.name.empty())
-        _stprintf(panel.name.buffer(), _T("AUX-%u"), i-2);
+      const int n = StringFormat(profileKey, sizeof(profileKey), "InfoBoxPanel%uName", i);
+      if (n >= 0 && static_cast<size_t>(n) < sizeof(profileKey))
+        map.Get(profileKey, panel.name);
+
+      if (panel.name.empty()) {
+        const unsigned aux_index = i - settings.PREASSIGNED_PANELS + 1;
+        const int written = StringFormat(panel.name.buffer(),
+                                         panel.name.capacity(),
+                                         "AUX-%u", aux_index);
+        if (written < 0 ||
+            static_cast<size_t>(written) >= panel.name.capacity())
+          panel.name.clear();
+      }
+    }
+
+    {
+      const int n = StringFormat(profileKey, sizeof(profileKey),
+                                 "InfoBoxPanel%uGeometry", i);
+      if (n >= 0 && static_cast<size_t>(n) < sizeof(profileKey)) {
+        unsigned tmp_geometry = panel.geometry;
+        if (map.Get(profileKey, tmp_geometry) && tmp_geometry <= UINT8_MAX)
+          panel.geometry = static_cast<uint8_t>(tmp_geometry);
+      }
     }
 
     for (unsigned j = 0; j < panel.MAX_CONTENTS; ++j) {
-      sprintf(profileKey, "InfoBoxPanel%uBox%u", i, j);
+      const int n = StringFormat(profileKey, sizeof(profileKey), "InfoBoxPanel%uBox%u", i, j);
+      if (n < 0 || static_cast<size_t>(n) >= sizeof(profileKey))
+        continue;
+
       GetIBType(map, profileKey, panel.contents[j]);
+
+      InfoBoxCustomText &text = panel.text[j];
+      LoadTextField(map, profileKey, sizeof(profileKey), i, j,
+                    "Title", text.title);
+      LoadTextField(map, profileKey, sizeof(profileKey), i, j,
+                    "Value", text.value);
+      LoadTextField(map, profileKey, sizeof(profileKey), i, j,
+                    "Comment", text.comment);
     }
   }
 }
@@ -154,12 +224,29 @@ Profile::Save(ProfileMap &map,
   char profileKey[32];
 
   if (index >= InfoBoxSettings::PREASSIGNED_PANELS) {
-    sprintf(profileKey, "InfoBoxPanel%uName", index);
-    map.Set(profileKey, panel.name);
+    const int n = StringFormat(profileKey, sizeof(profileKey), "InfoBoxPanel%uName", index);
+    if (n >= 0 && static_cast<size_t>(n) < sizeof(profileKey))
+      map.Set(profileKey, panel.name);
+  }
+
+  {
+    const int n = StringFormat(profileKey, sizeof(profileKey),
+                               "InfoBoxPanel%uGeometry", index);
+    if (n >= 0 && static_cast<size_t>(n) < sizeof(profileKey))
+      map.Set(profileKey, static_cast<unsigned>(panel.geometry));
   }
 
   for (unsigned j = 0; j < panel.MAX_CONTENTS; ++j) {
-    sprintf(profileKey, "InfoBoxPanel%uBox%u", index, j);
-    map.Set(profileKey, panel.contents[j]);
+    const int n = StringFormat(profileKey, sizeof(profileKey), "InfoBoxPanel%uBox%u", index, j);
+    if (n >= 0 && static_cast<size_t>(n) < sizeof(profileKey))
+      map.Set(profileKey, panel.contents[j]);
+
+    const InfoBoxCustomText &text = panel.text[j];
+    SaveTextField(map, profileKey, sizeof(profileKey), index, j,
+                  "Title", text.title);
+    SaveTextField(map, profileKey, sizeof(profileKey), index, j,
+                  "Value", text.value);
+    SaveTextField(map, profileKey, sizeof(profileKey), index, j,
+                  "Comment", text.comment);
   }
 }

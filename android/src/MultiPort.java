@@ -1,28 +1,9 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 package org.xcsoar;
 
+import java.io.IOException;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.Iterator;
@@ -56,7 +37,10 @@ class MultiPort implements AndroidPort, InputListener {
         Log.i(TAG, "Bluetooth disconnect from " + port);
 
         i.remove();
-        port.close();
+        try {
+          port.close();
+        } catch (IOException e) {
+        }
         error = true;
         break;
 
@@ -93,11 +77,16 @@ class MultiPort implements AndroidPort, InputListener {
     inputListener = _listener;
   }
 
-  @Override public synchronized void close() {
+  @Override
+  public synchronized void close() {
     error = true;
 
-    for (AndroidPort port : ports)
-      port.close();
+    for (AndroidPort port : ports) {
+      try {
+        port.close();
+      } catch (IOException e) {
+      }
+    }
 
     ports.clear();
   }
@@ -130,7 +119,11 @@ class MultiPort implements AndroidPort, InputListener {
       if (nbytes < 0 && port.getState() == STATE_FAILED) {
         error = true;
         i.remove();
-        port.close();
+
+        try {
+          port.close();
+        } catch (IOException e) {
+        }
       } else if (nbytes > result)
         result = nbytes;
     }

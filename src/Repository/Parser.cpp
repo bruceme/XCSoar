@@ -1,31 +1,18 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Parser.hpp"
 #include "FileRepository.hpp"
-#include "IO/LineReader.hpp"
-#include "Util/StringUtil.hpp"
+#include "io/LineReader.hpp"
+#include "util/StringStrip.hxx"
+#include "util/HexString.hpp"
+#include "system/Path.hpp"
 
+/**
+ * Parses a line of the repository file.
+ * Each line is of the form `name = value`
+ * @returns A pointer to the value field.
+ */
 static const char *
 ParseLine(char *line)
 {
@@ -51,6 +38,10 @@ Commit(FileRepository &repository, AvailableFile &file)
 {
   if (file.IsEmpty())
     return true;
+
+  const Path path(file.name.c_str());
+  if (!path.IsValidFilename())
+    return false;
 
   if (!file.IsValid())
     return false;
@@ -85,17 +76,39 @@ ParseFileRepository(FileRepository &repository, NLineReader &reader)
       /* ignore */
     } else if (StringIsEqual(name, "uri")) {
       file.uri.assign(value);
+    } else if (StringIsEqual(name, "description")) {
+      file.description.assign(value);
     } else if (StringIsEqual(name, "area")) {
       file.area = value;
     } else if (StringIsEqual(name, "type")) {
       if (StringIsEqual(value, "airspace"))
         file.type = FileType::AIRSPACE;
+      else if (StringIsEqual(value, "waypoint-details"))
+        file.type = FileType::WAYPOINTDETAILS;
       else if (StringIsEqual(value, "waypoint"))
         file.type = FileType::WAYPOINT;
       else if (StringIsEqual(value, "map"))
         file.type = FileType::MAP;
       else if (StringIsEqual(value, "flarmnet"))
         file.type = FileType::FLARMNET;
+      else if (StringIsEqual(value, "rasp"))
+        file.type = FileType::RASP;
+      else if (StringIsEqual(value, "xci"))
+        file.type = FileType::XCI;
+      else if (StringIsEqual(value, "task"))
+        file.type = FileType::TASK;
+      else if (StringIsEqual(value, "checklist"))
+        file.type = FileType::CHECKLIST;
+    } else if (StringIsEqual(name, "update")) {
+      unsigned year, month, day;
+      if (sscanf(value, "%04u-%02u-%02u", &year, &month, &day) == 3)
+        file.update_date = BrokenDate(year, month, day);
+    } else if (StringIsEqual(name, "sha256")) {
+      try {
+        file.sha256_hash = ParseHexString<32>(std::string_view(value));
+      } catch (std::exception &e) {
+        // Parsing failed, sha256_hash stays zeroed
+      }
     }
   }
 

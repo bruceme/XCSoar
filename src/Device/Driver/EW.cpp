@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 
 // ToDo
@@ -30,18 +10,16 @@ Copyright_License {
 #include "Device/Driver.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/Declaration.hpp"
+#include "Device/Error.hpp"
 #include "NMEA/Checksum.hpp"
 #include "Operation/Operation.hpp"
-#include "Util/TruncateString.hpp"
-#include "Util/ConvertString.hpp"
+#include "util/TruncateString.hpp"
+#include "util/ScopeExit.hxx"
 
-#include <tchar.h>
+#include <algorithm>
+
 #include <stdio.h>
 #include "Waypoint/Waypoint.hpp"
-
-#ifdef _UNICODE
-#include <windows.h>
-#endif
 
 // Additional sentance for EW support
 
@@ -70,13 +48,13 @@ public:
 };
 
 static void
-WriteWithChecksum(Port &port, const char *String)
+WriteWithChecksum(Port &port, const char *String, OperationEnvironment &env)
 {
-  port.Write(String);
+  port.FullWrite(String, env, std::chrono::seconds{1});
 
   char sTmp[8];
   sprintf(sTmp, "%02X\r\n", ::NMEAChecksum(String));
-  port.Write(sTmp);
+  port.FullWrite(sTmp, env, std::chrono::seconds{1});
 }
 
 bool
@@ -86,34 +64,26 @@ EWDevice::TryConnect(OperationEnvironment &env)
   while (--retries) {
 
     // send IO Mode command
-    port.Write("##\r\n");
-    if (port.ExpectString("IO Mode.\r", env))
-      return true;
+    port.FullWrite("##\r\n", env, std::chrono::seconds{1});
 
-    if (!port.FullFlush(env, 100, 500))
-      return false;
+    try {
+      port.ExpectString("IO Mode.\r", env);
+      return true;
+    } catch (const DeviceTimeout &) {
+    }
+
+    port.FullFlush(env, std::chrono::milliseconds(100),
+                   std::chrono::milliseconds(500));
   }
 
   return false;
 }
 
 static void
-convert_string(char *dest, size_t size, const TCHAR *src)
+convert_string(char *dest, size_t size, const char *src)
 {
-#ifdef _UNICODE
-  size_t length = _tcslen(src);
-  if (length >= size)
-    length = size - 1;
-
-  int length2 = ::WideCharToMultiByte(CP_ACP, 0, src, length, dest, size,
-                                      nullptr, nullptr);
-  if (length2 < 0)
-    length2 = 0;
-  dest[length2] = '\0';
-#else
   strncpy(dest, src, size - 1);
   dest[size - 1] = '\0';
-#endif
 }
 
 bool
@@ -128,8 +98,8 @@ EWDevice::DeclareInner(const struct Declaration &declaration,
     return false;
 
   // send SetPilotInfo
-  WriteWithChecksum(port, "#SPI");
-  env.Sleep(50);
+  WriteWithChecksum(port, "#SPI", env);
+  env.Sleep(std::chrono::milliseconds(50));
 
   char sPilot[13], sGliderType[9], sGliderID[9];
   convert_string(sPilot, sizeof(sPilot), declaration.pilot_name);
@@ -140,46 +110,41 @@ EWDevice::DeclareInner(const struct Declaration &declaration,
   sprintf(sTmp, "%-12s%-8s%-8s%-12s%-12s%-6s\r", sPilot, sGliderType, sGliderID,
           "" /* GPS Model */, "" /* GPS Serial No. */, "" /* Flight Date */
           /* format unknown, left blank (GPS has a RTC) */);
-  port.Write(sTmp);
+  port.FullWrite(sTmp, env, std::chrono::seconds{1});
 
-  if (!port.ExpectString("OK\r", env))
-    return false;
+  port.ExpectString("OK\r", env);
 
   /*
   sprintf(sTmp, "#SUI%02d", 0);           // send pilot name
-  WriteWithChecksum(port, sTmp);
+  WriteWithChecksum(port, sTmp, env);
   env.Sleep(50);
-  port.Write(PilotsName);
+  port.FullWrite(PilotsName, env, std::chrono::seconds{1});
   port.Write('\r');
 
-  if (!port.ExpectString("OK\r"))
-    return false;
+  port.ExpectString("OK\r");
 
   sprintf(sTmp, "#SUI%02d", 1);           // send type of aircraft
-  WriteWithChecksum(port, sTmp);
+  WriteWithChecksum(port, sTmp, env);
   env.Sleep(50);
-  port.Write(Class);
+  port.FullWrite(Class, env, std::chrono::seconds{1});
   port.Write('\r');
 
-  if (!port.ExpectString("OK\r"))
-    nDeclErrorCode = 1;
+  port.ExpectString("OK\r");
 
   sprintf(sTmp, "#SUI%02d", 2);           // send aircraft ID
-  WriteWithChecksum(port, sTmp);
+  WriteWithChecksum(port, sTmp, env);
   env.Sleep(50);
-  port.Write(ID);
+  port.FullWrite(ID, env, std::chrono::seconds{1});
   port.Write('\r');
 
-  if (!port.ExpectString("OK\r"))
-    return false;
+  port.ExpectString("OK\r");
   */
 
   // clear all 6 TP's
   for (int i = 0; i < 6; i++) {
     sprintf(sTmp, "#CTP%02d", i);
-    WriteWithChecksum(port, sTmp);
-    if (!port.ExpectString("OK\r", env))
-      return false;
+    WriteWithChecksum(port, sTmp, env);
+    port.ExpectString("OK\r", env);
   }
 
   for (unsigned j = 0; j < declaration.Size(); ++j)
@@ -191,7 +156,7 @@ EWDevice::DeclareInner(const struct Declaration &declaration,
 
 bool
 EWDevice::Declare(const struct Declaration &declaration,
-                  gcc_unused const Waypoint *home,
+                  [[maybe_unused]] const Waypoint *home,
                   OperationEnvironment &env)
 {
   port.StopRxThread();
@@ -200,17 +165,19 @@ EWDevice::Declare(const struct Declaration &declaration,
   unsigned old_baud_rate = port.GetBaudrate();
   if (old_baud_rate == 9600)
     old_baud_rate = 0;
-  else if (old_baud_rate != 0 && !port.SetBaudrate(9600))
-    return false;
+  else if (old_baud_rate != 0)
+    port.SetBaudrate(9600);
+
+  AtScopeExit(this, old_baud_rate) {
+    // restore baudrate
+    if (old_baud_rate != 0)
+      port.SetBaudrate(old_baud_rate);
+  };
 
   bool success = DeclareInner(declaration, env);
 
   // switch to NMEA mode
-  port.Write("NMEA\r\n");
-
-  // restore baudrate
-  if (old_baud_rate != 0)
-    port.SetBaudrate(old_baud_rate);
+  port.FullWrite("NMEA\r\n", env, std::chrono::seconds{1});
 
   return success;
 }
@@ -227,13 +194,11 @@ EWDevice::AddWaypoint(const Waypoint &way_point, OperationEnvironment &env)
   if (ewDecelTpIndex > 6)
     return false;
 
-  // copy at most 6 chars
-  const WideToUTF8Converter name_utf8(way_point.name.c_str());
-  if (!name_utf8.IsValid())
+  if (way_point.name.empty())
     return false;
 
   char IDString[12];
-  char *end = CopyTruncateString(IDString, 7, name_utf8);
+  char *end = CopyTruncateString(IDString, 7, way_point.name.data());
 
   // fill up with spaces
   std::fill(end, IDString + 6, ' ');
@@ -272,11 +237,10 @@ EWDevice::AddWaypoint(const Waypoint &way_point, OperationEnvironment &env)
           ewDecelTpIndex, IDString[0], IDString[1], IDString[2], IDString[3],
           IDString[4], IDString[5], EW_Flags, DegLat, (int)MinLat / 10, DegLon,
           (int)MinLon / 10);
-  WriteWithChecksum(port, EWRecord);
+  WriteWithChecksum(port, EWRecord, env);
 
   // wait for response
-  if (!port.ExpectString("OK\r", env))
-    return false;
+  port.ExpectString("OK\r", env);
 
   // increase TP index
   ewDecelTpIndex++;
@@ -291,14 +255,14 @@ EWDevice::LinkTimeout()
 }
 
 static Device *
-EWCreateOnPort(const DeviceConfig &config, Port &com_port)
+EWCreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &com_port)
 {
   return new EWDevice(com_port);
 }
 
 const struct DeviceRegister ew_driver = {
-  _T("EW Logger"),
-  _T("EW Logger"),
+  "EW Logger",
+  "EW Logger",
   DeviceRegister::DECLARE,
   EWCreateOnPort,
 };

@@ -1,38 +1,19 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InputEvents.hpp"
 #include "Dialogs/Message.hpp"
-#include "Lua/StartFile.hpp"
+#include "lua/StartFile.hpp"
 #include "Dialogs/Error.hpp"
 #include "Dialogs/ComboPicker.hpp"
 #include "Language/Language.hpp"
 #include "LocalPath.hpp"
-#include "OS/Path.hpp"
-#include "OS/FileUtil.hpp"
+#include "Repository/FileType.hpp"
+#include "system/Path.hpp"
+#include "system/FileUtil.hpp"
 #include "Form/DataField/ComboList.hpp"
-#include "Util/StringFormat.hpp"
-#include "Util/StringCompare.hxx"
+#include "util/StringFormat.hpp"
+#include "util/StringCompare.hxx"
 
 #include <stdexcept>
 
@@ -48,16 +29,18 @@ public:
 };
 
 static AllocatedPath
-SelectLuaFile(const TCHAR *path)
+SelectLuaFile(const char *path)
 {
   if (StringIsEmpty(path)) {
     /* no parameter: let user select a *.lua file */
     LuaFileVisitor visitor;
 
-    Directory::VisitSpecificFiles(LocalPath(_T("lua")), _T("*.lua"),
+    const auto lua_dir = LocalPath(GetFileTypeDefaultDir(FileType::LUA));
+    Directory::VisitSpecificFiles(lua_dir,
+                                  GetFileTypePatterns(FileType::LUA),
                                   visitor, true);
     if (visitor.combo_list.empty()) {
-      ShowMessageBox(_("Not found"), _T("RunLuaFile"),
+      ShowMessageBox(_("Not found"), "RunLuaFile",
                      MB_OK|MB_ICONINFORMATION);
       return nullptr;
     }
@@ -67,30 +50,30 @@ SelectLuaFile(const TCHAR *path)
       return nullptr;
 
     return Path(visitor.combo_list[i].string_value.c_str());
-  } else if (StringEndsWith(path, _T(".lua"))) {
+  } else if (FilenameMatchesFileType(path, FileType::LUA)) {
     /* *.lua file specified: run this file */
     return Path(path).IsAbsolute()
       ? AllocatedPath(Path(path))
-      : AllocatedPath::Build(LocalPath(_T("lua")), path);
+      : AllocatedPath::Build(LocalPath(GetFileTypeDefaultDir(FileType::LUA)), path);
   } else {
-    ShowMessageBox(_T("RunLuaFile expects *.lua parameter"),
-                   _T("RunLuaFile"), MB_OK|MB_ICONINFORMATION);
+    ShowMessageBox("RunLuaFile expects *.lua parameter",
+                   "RunLuaFile", MB_OK|MB_ICONINFORMATION);
     return nullptr;
   }
 }
 
 void
-InputEvents::eventRunLuaFile(const TCHAR *misc)
+InputEvents::eventRunLuaFile(const char *misc)
 {
   const auto path = SelectLuaFile(misc);
-  if (path.IsNull())
+  if (path == nullptr)
     return;
 
   try {
     Lua::StartFile(path);
-  } catch (const std::runtime_error &e) {
-    TCHAR buffer[MAX_PATH];
-    StringFormat(buffer, MAX_PATH, _T("RunLuaFile %s"), misc);
-    ShowError(e, buffer);
+  } catch (...) {
+    char buffer[MAX_PATH];
+    StringFormat(buffer, MAX_PATH, "RunLuaFile %s", misc);
+    ShowError(std::current_exception(), buffer);
   }
 }

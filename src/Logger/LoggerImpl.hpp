@@ -1,36 +1,16 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#if !defined(XCSOAR_LOGGER_IMPL_HPP)
-#define XCSOAR_LOGGER_IMPL_HPP
+#pragma once
 
 #include "LoggerFRecord.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "time/BrokenDateTime.hpp"
+#include "time/Stamp.hpp"
 #include "Geo/GeoPoint.hpp"
-#include "OS/Path.hpp"
-#include "Util/OverwritingRingBuffer.hpp"
+#include "system/Path.hpp"
+#include "util/OverwritingRingBuffer.hpp"
 
-#include <tchar.h>
+#include <memory>
 
 struct NMEAInfo;
 struct LoggerSettings;
@@ -55,15 +35,17 @@ public:
     GeoPoint location;
     /** Barometric altitude (m STD) */
     double pressure_altitude;
-    /** GPS Altitude (m) */
+    /** GPS Altitude AMSL (m) */
     double altitude_gps;
+    /** GPS altitude above WGS84 ellipsoid (m) */
+    double altitude_ellipsoid;
     /** Date and time of fix */
     BrokenDateTime date_time_utc;
     /** IDs of satellites in fix */
     int satellite_ids[GPSState::MAXSATELLITES];
     bool satellite_ids_available;
     /** Time of fix (s) */
-    double time;
+    TimeStamp time;
     /** GPS fix quality */
     FixQuality fix_quality;
     /** GPS fix state */
@@ -79,6 +61,7 @@ public:
 
     bool pressure_altitude_available;
     bool gps_altitude_available;
+    bool gps_ellipsoid_altitude_available;
 
     /** 
      * Set buffer value from NMEA_INFO structure
@@ -92,7 +75,7 @@ public:
 
 private:
   AllocatedPath filename;
-  IGCWriter *writer;
+  std::unique_ptr<IGCWriter> writer;
 
   OverwritingRingBuffer<PreTakeoffBuffer, PRETAKEOFF_BUFFER_MAX> pre_takeoff_buffer;
 
@@ -106,28 +89,38 @@ private:
   bool simulator;
 
 public:
-  /** Default constructor */
   LoggerImpl();
-  ~LoggerImpl();
+  ~LoggerImpl() noexcept;
 
 public:
   void LogPoint(const NMEAInfo &gps_info);
   void LogEvent(const NMEAInfo &gps_info, const char* event);
 
-  bool IsActive() const {
+  bool IsActive() const noexcept {
     return writer != nullptr;
   }
 
+  /**
+   * The IGC file being written, or nullptr while the logger is off.
+   */
+  Path GetPath() const noexcept {
+    if (!IsActive())
+      return nullptr;
+
+    return filename;
+  }
+
   void StartLogger(const NMEAInfo &gps_info, const LoggerSettings &settings,
-                   const TCHAR *asset_number, const Declaration &decl);
+                   const char *asset_number, const Declaration &decl,
+                   const char *gps_device_name);
 
   /**
    * Stops the logger
    * @param gps_info NMEA_INFO struct holding the current date
    */
   void StopLogger(const NMEAInfo &gps_info);
-  void LoggerNote(const TCHAR *text);
-  void ClearBuffer();
+  void LoggerNote(const char *text);
+  void ClearBuffer() noexcept;
 
 private:
   /**
@@ -136,10 +129,8 @@ private:
    */
   bool StartLogger(const NMEAInfo &gps_info, const LoggerSettings &settings,
                    const char *logger_id);
-  
+
 private:
-  void LogPointToBuffer(const NMEAInfo &gps_info);
+  void LogPointToBuffer(const NMEAInfo &gps_info) noexcept;
   void WritePoint(const NMEAInfo &gps_info);
 };
-
-#endif

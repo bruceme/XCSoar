@@ -1,35 +1,15 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Logger/GRecord.hpp"
 #include "TestUtil.hpp"
-#include "OS/Path.hpp"
-#include "Util/PrintException.hxx"
+#include "system/Path.hpp"
+#include "util/PrintException.hxx"
 
-#include <tchar.h>
 #include <stdlib.h>
 
 static void
-CheckGRecord(const TCHAR *path)
+CheckGRecord(const char *path)
 {
   GRecord grecord;
   grecord.Initialize();
@@ -37,17 +17,17 @@ CheckGRecord(const TCHAR *path)
   ok1(true);
 }
 
-int main(int argc, char **argv)
+int main()
 try {
   plan_tests(4);
 
-  CheckGRecord(_T("test/data/grecord64a.igc"));
-  CheckGRecord(_T("test/data/grecord64b.igc"));
-  CheckGRecord(_T("test/data/grecord65a.igc"));
-  CheckGRecord(_T("test/data/grecord65b.igc"));
+  CheckGRecord("test/data/grecord64a.igc");
+  CheckGRecord("test/data/grecord64b.igc");
+  CheckGRecord("test/data/grecord65a.igc");
+  CheckGRecord("test/data/grecord65b.igc");
 
   return exit_status();
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

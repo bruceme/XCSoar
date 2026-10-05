@@ -1,31 +1,10 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef SCOREDTASKPOINT_HPP
-#define SCOREDTASKPOINT_HPP
+#pragma once
 
 #include "SampledTaskPoint.hpp"
 #include "Navigation/Aircraft.hpp"
-#include "Compiler.h"
 
 /**
  * Abstract specialisation of SampledTaskPoint to manage scoring
@@ -39,8 +18,18 @@
  */
 class ScoredTaskPoint : public SampledTaskPoint
 {
-  AircraftState state_entered;
-  bool has_exited;
+  /**
+   * The first state within the OZ.  If its HasTime() method returns
+   * false, the aircraft has not yet entered the OZ.
+   */
+  AircraftState entered_state;
+
+  /**
+   * The last state within the OZ before the aircraft left it.  If its
+   * HasTime() method returns false, the aircraft has not yet exited
+   * the OZ.
+   */
+  AircraftState exited_state;
 
 public:
   /**
@@ -50,9 +39,9 @@ public:
    *
    * @return Partially initialised object
    */
-  ScoredTaskPoint(const GeoPoint &location, bool b_scored);
+  ScoredTaskPoint(const GeoPoint &location, bool b_scored) noexcept;
 
-  const GeoPoint &GetLocationRemaining() const {
+  const GeoPoint &GetLocationRemaining() const noexcept {
     return GetLocationMin();
   }
 
@@ -61,8 +50,8 @@ public:
    *
    * @return True if observation zone has been entered
    */
-  bool HasEntered() const {
-    return state_entered.time > 0;
+  bool HasEntered() const noexcept {
+    return entered_state.HasTime();
   }
 
   /**
@@ -70,19 +59,29 @@ public:
    *
    * @return State at entry, or null if never entered
    */
-  const AircraftState &GetEnteredState() const {
-    return state_entered;
+  const AircraftState &GetEnteredState() const noexcept {
+    return entered_state;
   }
 
-  virtual void Reset();
+  virtual void Reset() noexcept;
 
   /**
    * Test whether aircraft has exited the OZ
    *
    * @return True if aircraft has exited the OZ
    */
-  bool HasExited() const {
-    return has_exited;
+  bool HasExited() const noexcept {
+    return exited_state.HasTime();
+  }
+
+  const AircraftState &GetExitedState() const noexcept {
+    return exited_state;
+  }
+
+  const AircraftState &GetScoredState() const noexcept {
+    return HasExited() && ScoreLastExit()
+      ? exited_state
+      : entered_state;
   }
 
   /**
@@ -95,7 +94,7 @@ public:
    * @return True if observation zone is entered now
    */
   bool TransitionEnter(const AircraftState &ref_now,
-                       const AircraftState &ref_last);
+                       const AircraftState &ref_last) noexcept;
 
   /**
    * Test whether aircraft has exited observation zone and
@@ -108,20 +107,11 @@ public:
    */
   bool TransitionExit(const AircraftState &ref_now,
                       const AircraftState &ref_last,
-                      const FlatProjection &projection);
+                      const FlatProjection &projection) noexcept;
 
   /** Retrieve location to be used for the scored task. */
-  gcc_pure
-  const GeoPoint &GetLocationScored() const;
-
-  /**
-   * Retrieve location to be used for the task already travelled.
-   * This is always the scored best location for prior-active task points.
-   */
-  gcc_pure
-  const GeoPoint &GetLocationTravelled() const {
-    return GetLocationMin();
-  }
+  [[gnu::pure]]
+  const GeoPoint &GetLocationScored() const noexcept;
 
 protected:
   /**
@@ -132,9 +122,9 @@ protected:
    *
    * @return True if aircraft now inside (and was outside)
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual bool CheckEnterTransition(const AircraftState &ref_now,
-                                    const AircraftState &ref_last) const = 0;
+                                    const AircraftState &ref_last) const noexcept = 0;
 
   /**
    * Check if aircraft has transitioned to outside sector
@@ -144,25 +134,23 @@ protected:
    *
    * @return True if aircraft now outside (and was inside)
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual bool CheckExitTransition(const AircraftState &ref_now,
-                                   const AircraftState &ref_last) const = 0;
+                                   const AircraftState &ref_last) const noexcept = 0;
 
 private:
-  gcc_pure
-  virtual bool EntryPrecondition() const {
+  [[gnu::pure]]
+  virtual bool EntryPrecondition() const noexcept {
     return true;
   }
 
-  gcc_pure
-  virtual bool ScoreLastExit() const {
+  [[gnu::pure]]
+  virtual bool ScoreLastExit() const noexcept {
     return false;
   }
 
-  gcc_pure
-  virtual bool ScoreFirstEntry() const {
+  [[gnu::pure]]
+  virtual bool ScoreFirstEntry() const noexcept {
     return false;
   }
 };
-
-#endif

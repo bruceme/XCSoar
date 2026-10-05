@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AnalyseFlight.hpp"
 #include "DebugReplay.hpp"
@@ -26,7 +7,7 @@
 #include "Engine/Waypoint/Waypoints.hpp"
 #include "Contest/ContestManager.hpp"
 #include "Math/Angle.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "time/BrokenDateTime.hpp"
 #include "Computer/CirclingComputer.hpp"
 #include "Computer/Wind/Computer.hpp"
 #include "Computer/Settings.hpp"
@@ -34,6 +15,8 @@
 #include "FlightPhaseDetector.hpp"
 
 #include <limits>
+
+using namespace std::chrono;
 
 void
 Run(DebugReplay &replay, FlightPhaseDetector &flight_phase_detector,
@@ -69,31 +52,26 @@ Run(DebugReplay &replay, FlightPhaseDetector &flight_phase_detector,
   AutoQNH auto_qnh(5);
   auto_qnh.Reset();
 
-  const int64_t takeoff_unix = takeoff_time.ToUnixTimeUTC();
-  const int64_t landing_unix = landing_time.ToUnixTimeUTC();
+  const auto takeoff_tp = takeoff_time.ToTimePoint();
+  const auto landing_tp = landing_time.ToTimePoint();
 
-
-  int64_t scoring_start_unix, scoring_end_unix;
+  auto scoring_start_tp = std::chrono::system_clock::time_point::min();
+  auto scoring_end_tp = std::chrono::system_clock::time_point::max();
 
   if (scoring_start_time.IsPlausible())
-    scoring_start_unix = scoring_start_time.ToUnixTimeUTC();
-  else
-    scoring_start_unix = std::numeric_limits<int64_t>::max();
+    scoring_start_tp = scoring_start_time.ToTimePoint();
 
   if (scoring_end_time.IsPlausible())
-    scoring_end_unix = scoring_end_time.ToUnixTimeUTC();
-  else
-    scoring_end_unix = 0;
-
+    scoring_end_tp = scoring_end_time.ToTimePoint();
 
   while (replay.Next()) {
     const MoreData &basic = replay.Basic();
-    const int64_t date_time_utc = basic.date_time_utc.ToUnixTimeUTC();
+    const auto date_time_utc = basic.date_time_utc.ToTimePoint();
 
-    if (date_time_utc < takeoff_unix)
+    if (date_time_utc < takeoff_tp)
       continue;
 
-    if (date_time_utc > landing_unix)
+    if (date_time_utc > landing_tp)
       break;
 
     circling_computer.TurnRate(replay.SetCalculated(),
@@ -138,7 +116,8 @@ Run(DebugReplay &replay, FlightPhaseDetector &flight_phase_detector,
 
     last_location = basic.location;
 
-    if (date_time_utc >= scoring_start_unix && date_time_utc <= scoring_end_unix) {
+    if (date_time_utc >= scoring_start_tp &&
+        date_time_utc <= scoring_end_tp) {
       const TracePoint point(basic);
       full_trace.push_back(point);
       triangle_trace.push_back(point);
@@ -176,9 +155,9 @@ void AnalyseFlight(DebugReplay &replay,
              const unsigned max_iterations,
              const unsigned max_tree_size)
 {
-  Trace full_trace(0, Trace::null_time, full_points);
-  Trace triangle_trace(0, Trace::null_time, triangle_points);
-  Trace sprint_trace(0, 9000, sprint_points);
+  Trace full_trace({}, Trace::null_time, full_points);
+  Trace triangle_trace({}, Trace::null_time, triangle_points);
+  Trace sprint_trace({}, minutes{120}, sprint_points);
   FlightPhaseDetector flight_phase_detector;
 
   Run(replay, flight_phase_detector, wind_list,

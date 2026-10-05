@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TabWidget.hpp"
 #include "Form/TabDisplay.hpp"
@@ -27,48 +7,59 @@ Copyright_License {
 #include "Asset.hpp"
 
 TabWidget::Layout::Layout(Orientation orientation, PixelRect rc,
-                          const TabDisplay &td, const Widget *e)
-  :tab_display(rc), pager(rc)
+                          const TabDisplay &td, const Widget *e) noexcept
+  :pager(rc)
 {
   vertical = IsVertical(orientation, rc);
 
   if (vertical) {
-    tab_display.right = pager.left = rc.left + td.GetRecommendedColumnWidth();
+    unsigned tab_width = td.GetRecommendedColumnWidth();
+    if (e != nullptr) {
+      const auto extra_size = e->GetMinimumSize();
+      if (extra_size.width > tab_width)
+        tab_width = extra_size.width;
+    }
+
+    tab_display = pager.CutLeftSafe(tab_width);
 
     if (e != nullptr) {
       auto max_size = e->GetMaximumSize();
-      unsigned extra_height = max_size.cy;
+      unsigned extra_height = max_size.height;
       unsigned max_height = rc.GetHeight() / 2;
       if (extra_height > max_height)
         extra_height = max_height;
 
-      extra = tab_display;
-      tab_display.top = extra.bottom = extra.top + extra_height;
+      extra = tab_display.CutTopSafe(extra_height);
     }
   } else {
-    tab_display.bottom = pager.top = rc.top + td.GetRecommendedRowHeight();
+    unsigned tab_height = td.GetRecommendedRowHeight();
+    if (e != nullptr) {
+      const auto extra_size = e->GetMinimumSize();
+      if (extra_size.height > tab_height)
+        tab_height = extra_size.height;
+    }
+
+    tab_display = pager.CutTopSafe(tab_height);
 
     if (e != nullptr) {
       auto max_size = e->GetMaximumSize();
-      unsigned extra_width = max_size.cx;
+      unsigned extra_width = max_size.width;
       unsigned max_width = rc.GetWidth() / 3;
       if (extra_width > max_width)
         extra_width = max_width;
 
-      extra = tab_display;
-      tab_display.left = extra.right = extra.left + extra_width;
+      extra = tab_display.CutRightSafe(extra_width);
     }
   }
 }
 
-TabWidget::~TabWidget()
+TabWidget::~TabWidget() noexcept
 {
   delete tab_display;
-  delete extra;
 }
 
 void
-TabWidget::LargeExtra()
+TabWidget::LargeExtra() noexcept
 {
   assert(extra != nullptr);
 
@@ -80,7 +71,7 @@ TabWidget::LargeExtra()
 }
 
 void
-TabWidget::RestoreExtra()
+TabWidget::RestoreExtra() noexcept
 {
   assert(extra != nullptr);
 
@@ -92,21 +83,21 @@ TabWidget::RestoreExtra()
 }
 
 void
-TabWidget::AddTab(Widget *widget, const TCHAR *caption,
-                  const MaskedIcon *icon)
+TabWidget::AddTab(std::unique_ptr<Widget> widget, const char *caption,
+                  const MaskedIcon *icon) noexcept
 {
   tab_display->Add(caption, icon);
-  PagerWidget::Add(widget);
+  PagerWidget::Add(std::move(widget));
 }
 
-const TCHAR *
-TabWidget::GetButtonCaption(unsigned i) const
+const char *
+TabWidget::GetButtonCaption(unsigned i) const noexcept
 {
   return tab_display->GetCaption(i);
 }
 
 bool
-TabWidget::ClickPage(unsigned i)
+TabWidget::ClickPage(unsigned i) noexcept
 {
   if (!PagerWidget::ClickPage(i))
     return false;
@@ -119,47 +110,61 @@ TabWidget::ClickPage(unsigned i)
 }
 
 bool
-TabWidget::NextPage()
+TabWidget::NextPage() noexcept
 {
   return Next(HasPointer());
 }
 
 bool
-TabWidget::PreviousPage()
+TabWidget::PreviousPage() noexcept
 {
   return Previous(HasPointer());
 }
 
 PixelSize
-TabWidget::GetMinimumSize() const
+TabWidget::GetMinimumSize() const noexcept
 {
   auto size = PagerWidget::GetMinimumSize();
   if (tab_display != nullptr) {
     if (tab_display->IsVertical())
-      size.cx += tab_display->GetRecommendedColumnWidth();
+      size.width += tab_display->GetRecommendedColumnWidth();
     else
-      size.cy += tab_display->GetRecommendedRowHeight();
+      size.height += tab_display->GetRecommendedRowHeight();
   }
 
   return size;
 }
 
 PixelSize
-TabWidget::GetMaximumSize() const
+TabWidget::GetMaximumSize() const noexcept
 {
   auto size = PagerWidget::GetMaximumSize();
   if (tab_display != nullptr) {
     if (tab_display->IsVertical())
-      size.cx += tab_display->GetRecommendedColumnWidth();
+      size.width += tab_display->GetRecommendedColumnWidth();
     else
-      size.cy += tab_display->GetRecommendedRowHeight();
+      size.height += tab_display->GetRecommendedRowHeight();
+  }
+
+  return size;
+}
+
+PixelSize
+TabWidget::GetCurrentMaximumSize() const noexcept
+{
+  auto size = GetCurrentWidget().GetMaximumSize();
+  if (tab_display != nullptr) {
+    if (tab_display->IsVertical())
+      size.width += tab_display->GetRecommendedColumnWidth();
+    else
+      size.height += tab_display->GetRecommendedRowHeight();
   }
 
   return size;
 }
 
 void
-TabWidget::Initialise(ContainerWindow &parent, const PixelRect &rc)
+TabWidget::Initialise(ContainerWindow &parent, const PixelRect &rc) noexcept
 {
   WindowStyle style;
   style.Hide();
@@ -175,9 +180,9 @@ TabWidget::Initialise(ContainerWindow &parent, const PixelRect &rc)
 }
 
 void
-TabWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+TabWidget::Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept
 {
-  const Layout layout(orientation, rc, *tab_display, extra);
+  const Layout layout(orientation, rc, *tab_display, extra.get());
 
   tab_display->UpdateLayout(layout.tab_display, layout.vertical);
 
@@ -190,7 +195,7 @@ TabWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
 }
 
 void
-TabWidget::Unprepare()
+TabWidget::Unprepare() noexcept
 {
   if (extra != nullptr)
     extra->Unprepare();
@@ -199,9 +204,9 @@ TabWidget::Unprepare()
 }
 
 void
-TabWidget::Show(const PixelRect &rc)
+TabWidget::Show(const PixelRect &rc) noexcept
 {
-  const Layout layout(orientation, rc, *tab_display, extra);
+  const Layout layout(orientation, rc, *tab_display, extra.get());
 
   tab_display->UpdateLayout(layout.tab_display, layout.vertical);
   tab_display->Show();
@@ -215,7 +220,7 @@ TabWidget::Show(const PixelRect &rc)
 }
 
 void
-TabWidget::Hide()
+TabWidget::Hide() noexcept
 {
   PagerWidget::Hide();
 
@@ -226,9 +231,9 @@ TabWidget::Hide()
 }
 
 void
-TabWidget::Move(const PixelRect &rc)
+TabWidget::Move(const PixelRect &rc) noexcept
 {
-  const Layout layout(orientation, rc, *tab_display, extra);
+  const Layout layout(orientation, rc, *tab_display, extra.get());
 
   tab_display->UpdateLayout(layout.tab_display, layout.vertical);
 
@@ -241,7 +246,7 @@ TabWidget::Move(const PixelRect &rc)
 }
 
 bool
-TabWidget::SetFocus()
+TabWidget::SetFocus() noexcept
 {
   if (!PagerWidget::SetFocus())
     tab_display->SetFocus();
@@ -250,7 +255,13 @@ TabWidget::SetFocus()
 }
 
 bool
-TabWidget::KeyPress(unsigned key_code)
+TabWidget::HasFocus() const noexcept
+{
+  return PagerWidget::HasFocus() || tab_display->HasFocus();
+}
+
+bool
+TabWidget::KeyPress(unsigned key_code) noexcept
 {
   // TODO: implement a few hotkeys
 
@@ -258,8 +269,8 @@ TabWidget::KeyPress(unsigned key_code)
 }
 
 void
-TabWidget::OnPageFlipped()
+TabWidget::OnPageFlipped() noexcept
 {
-  tab_display->Invalidate();
+  tab_display->SetCurrentIndex(GetCurrentIndex());
   PagerWidget::OnPageFlipped();
 }

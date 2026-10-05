@@ -1,32 +1,10 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef TASKPOINT_HPP
-#define TASKPOINT_HPP
+#pragma once
 
 #include "Type.hpp"
 #include "Geo/GeoPoint.hpp"
-#include "Compiler.h"
 
 /**
  * Base class for all task points 
@@ -38,10 +16,6 @@ class TaskPoint
   GeoPoint location;
 
 public:
-  bool IsIntermediatePoint() const {
-    return type == TaskPointType::AST || type == TaskPointType::AAT;
-  }
-
   /**
    * Constructor.  Location and elevation of waypoint is used
    * as the task point's reference values; a copy of the waypoint
@@ -51,11 +25,15 @@ public:
    *
    * @return Initialised object
    */
-  TaskPoint(TaskPointType _type, const GeoPoint &_location)
+  constexpr TaskPoint(TaskPointType _type, const GeoPoint &_location) noexcept
     :type(_type), location(_location) {}
 
-  TaskPointType GetType() const {
+  constexpr TaskPointType GetType() const noexcept {
     return type;
+  }
+
+  constexpr bool IsIntermediatePoint() const noexcept {
+    return type == TaskPointType::AST || type == TaskPointType::AAT;
   }
 
   /**
@@ -64,9 +42,24 @@ public:
    *
    * @return Location
    */
-  gcc_pure
-  virtual const GeoPoint &GetLocationRemaining() const {
+  [[gnu::pure]]
+  virtual const GeoPoint &GetLocationRemaining() const noexcept {
     return location;
+  }
+
+  /**
+   * Retrieve the location the aircraft is navigated to.  The remaining
+   * vectors of the current leg and of the leg after it, the bearing
+   * line drawn on the map and
+   * TaskStats::current_leg::location_remaining use this; the planned,
+   * nominal, minimum, maximum and scored legs keep using
+   * GetLocationRemaining().
+   *
+   * @return Location
+   */
+  [[gnu::pure]]
+  virtual const GeoPoint &GetLocationNavigation() const noexcept {
+    return GetLocationRemaining();
   }
 
   /**
@@ -74,24 +67,24 @@ public:
    *
    * @return Vector for task leg
    */
-  gcc_pure
-  virtual GeoVector GetVectorRemaining(const GeoPoint &reference) const = 0;
+  [[gnu::pure]]
+  virtual GeoVector GetVectorRemaining(const GeoPoint &reference) const noexcept = 0;
 
   /**
     * Calculate vector of next leg, if there is one
     *
     * @return Vector for task leg or GeoVector::Invalid() if there is no next leg
     */
-  gcc_pure
-  virtual GeoVector GetNextLegVector() const;
+  [[gnu::pure]]
+  virtual GeoVector GetNextLegVector() const noexcept;
 
   /**
    * Capability of this TaskPoint to have adjustable range/target
    *
    * @return True if task point has a target (can have range set)
    */
-  gcc_pure
-  bool HasTarget() const {
+  [[gnu::pure]]
+  bool HasTarget() const noexcept {
     return type == TaskPointType::AAT;
   }
 
@@ -101,22 +94,20 @@ public:
    *
    * @return Minimum allowable elevation of task point
    */
-  gcc_pure
-  virtual double GetElevation() const = 0;
+  [[gnu::pure]]
+  virtual double GetElevation() const noexcept = 0;
 
   /**
    * distance from this to the reference
    */
-  double Distance(const GeoPoint &ref) const {
+  double Distance(const GeoPoint &ref) const noexcept {
     return location.Distance(ref);
   }
 
   /**
    * The actual location
    */
-  const GeoPoint &GetLocation() const {
+  const GeoPoint &GetLocation() const noexcept {
     return location;
   }
 };
-
-#endif

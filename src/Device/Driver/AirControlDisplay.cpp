@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/AirControlDisplay.hpp"
 #include "Device/Driver.hpp"
@@ -28,19 +8,67 @@ Copyright_License {
 #include "NMEA/InputLine.hpp"
 #include "NMEA/Checksum.hpp"
 #include "Atmosphere/Pressure.hpp"
-#include "RadioFrequency.hpp"
+#include "Radio/RadioFrequency.hpp"
+#include "Radio/TransponderCode.hpp"
+#include "Radio/TransponderMode.hpp"
 #include "Units/System.hpp"
 #include "Math/Util.hpp"
+#include "util/StaticString.hxx"
+#include "util/Macros.hpp"
+#include "Formatter/NMEAFormatter.hpp"
+#include "NMEA/MoreData.hpp"
+#include "Operation/Operation.hpp"
+#include "time/PeriodClock.hpp"
 
-static bool
-ParsePAAVS(NMEAInputLine &line, NMEAInfo &info)
+#include <atomic>
+#include <cassert>
+
+using std::string_view_literals::operator""sv;
+
+class ACDDevice : public AbstractDevice {
+  friend bool ParsePAAVS(NMEAInputLine &line, NMEAInfo &info,
+                         ACDDevice *dev) noexcept;
+
+  Port &port;
+  PeriodClock status_clock;
+
+  /**
+   * Last COM standby channel (kHz) from the panel or from our own
+   * PutStandbyFrequency.  CHN1 is read-only on the ACD; tuning active uses
+   * CHN2 + swap + restore (see PutActiveFrequency).
+   */
+  std::atomic<unsigned> cached_com_standby_khz{0};
+  std::atomic<bool> com_standby_khz_known{false};
+
+public:
+  ACDDevice(Port &_port):port(_port) {}
+
+  /* virtual methods from class Device */
+  bool ParseNMEA(const char *line, struct NMEAInfo &info) override;
+  bool PutQNH(const AtmosphericPressure &pres,
+              OperationEnvironment &env) override;
+  bool PutVolume(unsigned volume, OperationEnvironment &env) override;
+  bool PutActiveFrequency(RadioFrequency frequency,
+                          const char *name,
+                          OperationEnvironment &env) override;
+  bool PutStandbyFrequency(RadioFrequency frequency,
+                           const char *name,
+                           OperationEnvironment &env) override;
+  bool ExchangeRadioFrequencies(OperationEnvironment &env,
+                                NMEAInfo &info) override;
+  bool PutTransponderCode(TransponderCode code, OperationEnvironment &env) override;
+  void OnCalculatedUpdate(const MoreData &basic,
+                          [[maybe_unused]] const DerivedInfo &calculated) override;
+};
+
+bool
+ParsePAAVS(NMEAInputLine &line, NMEAInfo &info, ACDDevice *dev) noexcept
 {
   double value;
 
-  char type[16];
-  line.Read(type, 16);
+  const auto type = line.ReadView();
 
-  if (StringIsEqual(type, "ALT")) {
+  if (type == "ALT"sv) {
     /*
     $PAAVS,ALT,<ALTQNE>,<ALTQNH>,<QNH>
      <ALTQNE> Current QNE altitude in meters with two decimal places
@@ -57,29 +85,112 @@ ParsePAAVS(NMEAInputLine &line, NMEAInfo &info)
       auto qnh = AtmosphericPressure::Pascal(value);
       info.settings.ProvideQNH(qnh, info.clock);
     }
+  } else if (type == "COM"sv) {
+    /*
+    $PAAVS,COM,<CHN1>,<CHN2>,<RXVOL1>,<RXVOL2>,<DWATCH>,<RX1>,<RX2>,<TX1>
+     <CHN1> Primary radio channel;
+            25kHz frequencies and 8.33kHz channels as unsigned integer
+            values between 118000 and 136990
+     <CHN2> Secondary radio channel;
+            25kHz frequencies and 8.33kHz channels as unsigned integer
+            values between 118000 and 136990
+     <RXVOL1> Primary radio channel volume (Unsigned integer values, 0–100)
+     <RXVOL2> Secondary radio channel volume (Unsigned integer values, 0–100)
+     <DWATCH> Dual watch mode (0 = off; 1 = on)
+     <RX1> Primary channel rx state (0 = no signal rec; 1 = signal rec)
+     <RX2> Secondary channel rx state (0 = no signal rec; 1 = signal rec)
+     <TX1> Transmit active (0 = no transmission; 1 = transmitting signal)
+     */
+
+    if (line.ReadChecked(value)) {
+      info.settings.has_active_frequency.Update(info.clock);
+      info.settings.active_frequency = RadioFrequency::FromKiloHertz(value);
+    }
+
+    if (line.ReadChecked(value)) {
+      info.settings.has_standby_frequency.Update(info.clock);
+      info.settings.standby_frequency = RadioFrequency::FromKiloHertz(value);
+      if (dev != nullptr) {
+        dev->cached_com_standby_khz.store(uround(value),
+                                          std::memory_order_relaxed);
+        dev->com_standby_khz_known.store(true,
+                                         std::memory_order_release);
+      }
+    }
+
+    unsigned volume;
+    if (line.ReadChecked(volume))
+      info.settings.ProvideVolume(volume, info.clock);
+  } else if (type == "XPDR"sv) {
+    /*
+    $PAAVS,XPDR,<SQUAWK>,<ACTIVE>,<ALTINH>,<ALT>,<SPI>,<ALLCALLSINH>
+    <SQUAWK> Squawk code value;
+             Octal unsigned integer value between 0000 and 7777 (digits 0–7).
+    <ACTIVE> Active flag;
+             0: standby (transponder is switched off / "SBY" mode)
+             1: active (transponder is switched on / "ALT" or "ON" mode
+                dependent of ALTINH)
+    <ALTINH> Altitude inhibit flag;
+             0: transmit altitude ("ALT" mode if active)
+             1: do not transmit altitude ("ON" mode if active)
+    <ALT>    Transmitted altitude in FL (integer value)
+    <SPI>    Special Position Ident flag
+             0: not set
+             1: set ("IDENT")
+    <ALLCALLSINH> 
+             Allcalls inhibit flag
+             0: not set
+             1: set ("GND Mode")
+     */
+    unsigned code_value;
+    if (line.ReadChecked(code_value)) {
+      StaticString<16> buffer;
+      buffer.Format("%04u", code_value);
+      TransponderCode parsed_code = TransponderCode::Parse(buffer);
+
+      if (!parsed_code.IsDefined())
+        return false;
+
+      info.settings.transponder_code = parsed_code;
+      info.settings.has_transponder_code.Update(info.clock);
+    }
+
+    unsigned active = 0;
+    unsigned altitude_inhibit = 0;
+    unsigned special_position_ident = 0;
+    unsigned allcalls_inhibit = 0;
+
+    bool has_active = line.ReadChecked(active);
+    bool has_altitude_inhibit = line.ReadChecked(altitude_inhibit);
+    line.Skip();
+    bool has_special_position_ident = line.ReadChecked(special_position_ident);
+    bool has_allcalls_inhibit = line.ReadChecked(allcalls_inhibit);
+
+    if (has_active &&
+        has_altitude_inhibit &&
+        has_special_position_ident &&
+        has_allcalls_inhibit) {
+      if (special_position_ident == 1) {
+        info.settings.transponder_mode.mode = TransponderMode::IDENT;
+      } else if (active == 0) {
+          info.settings.transponder_mode.mode = TransponderMode::SBY;
+      } else if (allcalls_inhibit == 1) {
+        info.settings.transponder_mode.mode = TransponderMode::GND;
+      } else if (active == 1 && altitude_inhibit == 1) {
+        info.settings.transponder_mode.mode = TransponderMode::ON;
+      } else if (active == 1 && altitude_inhibit == 0) {
+        info.settings.transponder_mode.mode = TransponderMode::ALT;
+      } else {
+        info.settings.transponder_mode.mode = TransponderMode::UNDEFINED;
+      }
+      info.settings.has_transponder_mode.Update(info.clock);
+    }
   } else {
-    // ignore responses from COM and XPDR
     return false;
   }
 
   return true;
 }
-
-class ACDDevice : public AbstractDevice {
-  Port &port;
-
-public:
-  ACDDevice(Port &_port):port(_port) {}
-
-  /* virtual methods from class Device */
-  bool ParseNMEA(const char *line, struct NMEAInfo &info) override;
-  bool PutQNH(const AtmosphericPressure &pres,
-              OperationEnvironment &env) override;
-  bool PutVolume(unsigned volume, OperationEnvironment &env) override;
-  bool PutStandbyFrequency(RadioFrequency frequency,
-                           const TCHAR *name,
-                           OperationEnvironment &env) override;
-};
 
 bool
 ACDDevice::PutQNH(const AtmosphericPressure &pres, OperationEnvironment &env)
@@ -87,7 +198,39 @@ ACDDevice::PutQNH(const AtmosphericPressure &pres, OperationEnvironment &env)
   char buffer[100];
   unsigned qnh = uround(pres.GetPascal());
   sprintf(buffer, "PAAVC,S,ALT,QNH,%u", qnh);
-  return PortWriteNMEA(port, buffer, env);
+  PortWriteNMEA(port, buffer, env);
+  return true;
+}
+
+bool
+ACDDevice::PutActiveFrequency(RadioFrequency frequency,
+                              [[maybe_unused]] const char *name,
+                              OperationEnvironment &env)
+{
+  assert(frequency.IsDefined());
+
+  /*
+   Primary COM channel (CHN1) is read-only on the ACD.  Same workaround as
+   LK8000 devAirControlDisplay: load standby (CHN2) with the desired active,
+   swap active/standby, then restore the previous standby on CHN2.
+   */
+  if (!com_standby_khz_known.load(std::memory_order_acquire))
+    return false;
+
+  const unsigned old_standby_khz =
+    cached_com_standby_khz.load(std::memory_order_relaxed);
+  const unsigned new_active_khz = frequency.GetKiloHertz();
+
+  char buffer[100];
+  sprintf(buffer, "PAAVC,S,COM,CHN2,%u", new_active_khz);
+  PortWriteNMEA(port, buffer, env);
+
+  PortWriteNMEA(port, "PAAVX,COM,XCHN", env);
+
+  sprintf(buffer, "PAAVC,S,COM,CHN2,%u", old_standby_khz);
+  PortWriteNMEA(port, buffer, env);
+
+  return true;
 }
 
 bool
@@ -95,18 +238,40 @@ ACDDevice::PutVolume(unsigned volume, OperationEnvironment &env)
 {
   char buffer[100];
   sprintf(buffer, "PAAVC,S,COM,RXVOL1,%u", volume);
-  return PortWriteNMEA(port, buffer, env);
+  PortWriteNMEA(port, buffer, env);
+  return true;
 }
 
 bool
 ACDDevice::PutStandbyFrequency(RadioFrequency frequency,
-                                   const TCHAR *name,
+                                   [[maybe_unused]] const char *name,
                                    OperationEnvironment &env)
 {
   char buffer[100];
   unsigned freq = frequency.GetKiloHertz();
   sprintf(buffer, "PAAVC,S,COM,CHN2,%u", freq);
-  return PortWriteNMEA(port, buffer, env);
+  PortWriteNMEA(port, buffer, env);
+  cached_com_standby_khz.store(freq, std::memory_order_relaxed);
+  com_standby_khz_known.store(true, std::memory_order_release);
+  return true;
+}
+
+bool
+ACDDevice::PutTransponderCode(TransponderCode code, OperationEnvironment &env)
+{
+  char buffer[100];
+  sprintf(buffer, "PAAVC,S,XPDR,SQUAWK,%04o", code.GetCode());
+  PortWriteNMEA(port, buffer, env);
+  return true;
+}
+
+bool
+ACDDevice::ExchangeRadioFrequencies(OperationEnvironment &env,
+                                    [[maybe_unused]] NMEAInfo &info)
+{
+  const char *sentence = "PAAVX,COM,XCHN";
+  PortWriteNMEA(port, sentence, env);
+  return true;
 }
 
 bool
@@ -118,20 +283,42 @@ ACDDevice::ParseNMEA(const char *_line, NMEAInfo &info)
   NMEAInputLine line(_line);
 
   if (line.ReadCompare("$PAAVS"))
-    return ParsePAAVS(line, info);
+    return ParsePAAVS(line, info, this);
   else
     return false;
 }
 
+void
+ACDDevice::OnCalculatedUpdate(const MoreData &basic, 
+                              [[maybe_unused]] const DerivedInfo &calculated)
+{
+  NullOperationEnvironment env;
+
+  if (basic.gps.fix_quality != FixQuality::NO_FIX &&
+      status_clock.CheckUpdate(std::chrono::seconds(1))) {
+
+    char buffer[100];
+
+    FormatGPRMC(buffer, sizeof(buffer), basic);
+    PortWriteNMEA(port, buffer, env);
+
+    FormatGPGSA(buffer, sizeof(buffer), basic);
+    PortWriteNMEA(port, buffer, env);
+
+    FormatGPGGA(buffer, sizeof(buffer), basic);
+    PortWriteNMEA(port, buffer, env);
+  }
+}
+
 static Device *
-AirControlDisplayCreateOnPort(const DeviceConfig &config, Port &com_port)
+AirControlDisplayCreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &com_port)
 {
   return new ACDDevice(com_port);
 }
 
 const struct DeviceRegister acd_driver = {
-  _T("ACD"),
-  _T("Air Control Display"),
+  "ACD",
+  "Air Control Display",
   DeviceRegister::RECEIVE_SETTINGS | DeviceRegister::SEND_SETTINGS,
   AirControlDisplayCreateOnPort,
 };

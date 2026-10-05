@@ -1,31 +1,10 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DATA_FIELD_FLOAT_HPP
-#define XCSOAR_DATA_FIELD_FLOAT_HPP
+#pragma once
 
 #include "Number.hpp"
-#include "Time/PeriodClock.hpp"
+#include "time/PeriodClock.hpp"
 
 class DataFieldFloat final : public NumberDataField {
   double mValue;
@@ -38,64 +17,59 @@ class DataFieldFloat final : public NumberDataField {
 
   StaticString<8> unit;
 
-  mutable TCHAR mOutBuf[OUTBUFFERSIZE+1];
+  mutable char mOutBuf[OUTBUFFERSIZE+1];
 
 protected:
-  double SpeedUp(bool keyup);
+  double SpeedUp(bool keyup) noexcept;
 
 public:
-  DataFieldFloat(const TCHAR *edit_format, const TCHAR *display_format,
+  DataFieldFloat(const char *edit_format, const char *display_format,
                  double _min, double _max, double _value,
                  double _step, bool _fine,
-                 DataFieldListener *listener=nullptr)
+                 DataFieldListener *listener=nullptr) noexcept
     :NumberDataField(Type::REAL, true, edit_format, display_format, listener),
      mValue(_value), mMin(_min), mMax(_max), mStep(_step),
      mSpeedup(0), mFine(_fine),
-     unit(_T("")) {}
+     unit("") {}
 
-  void SetUnits(const TCHAR *text) {
+  void SetUnits(const char *text) noexcept {
     unit = text;
   }
 
-  void Set(double _value) {
-    mValue = _value;
-  }
-
-  double GetAsFixed() const {
-    return mValue;
-  }
-
-  void SetMin(double v) {
+  void SetMin(double v) noexcept {
     mMin = v;
   }
 
-  void SetMax(double v) {
+  void SetMax(double v) noexcept {
     mMax = v;
   }
 
-  void SetStep(double v) {
+  void SetStep(double v) noexcept {
     mStep = v;
   }
 
-  double GetStep() const {
+  double GetStep() const noexcept {
     return mStep;
   }
 
-  void SetAsFloat(double Value);
+  double GetValue() const noexcept {
+    return mValue;
+  }
+
+  void SetValue(double _value) noexcept {
+    mValue = _value;
+  }
+
+  void ModifyValue(double Value) noexcept;
 
   /* virtual methods from class DataField */
-  void Inc() override;
-  void Dec() override;
-  int GetAsInteger() const override;
-  const TCHAR *GetAsString() const override;
-  const TCHAR *GetAsDisplayString() const override;
-  void SetAsInteger(int value) override;
-  void SetAsString(const TCHAR *value) override;
-  ComboList CreateComboList(const TCHAR *reference) const override;
-  void SetFromCombo(int iDataFieldIndex, const TCHAR *sValue) override;
+  void Inc() noexcept override;
+  void Dec() noexcept override;
+  const char *GetAsString() const noexcept override;
+  const char *GetAsDisplayString() const noexcept override;
+  ComboList CreateComboList(const char *reference) const noexcept override;
+  void SetFromCombo(int iDataFieldIndex, const char *sValue) noexcept override;
 
 protected:
-  void AppendComboValue(ComboList &combo_list, double value) const;
+  void AppendComboValue(ComboList &combo_list, double value) const noexcept;
 };
-
-#endif

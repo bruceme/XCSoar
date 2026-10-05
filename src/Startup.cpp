@@ -1,41 +1,36 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Startup.hpp"
 #include "Interface.hpp"
+#include "ActionInterface.hpp"
 #include "Components.hpp"
+#include "NetComponents.hpp"
+#include "BackendComponents.hpp"
+#include "DataComponents.hpp"
+#include "DataGlobals.hpp"
+#include "ui/canvas/Features.hpp" // for SOFTWARE_ROTATE_DISPLAY
 #include "Profile/Profile.hpp"
 #include "Profile/Current.hpp"
 #include "Profile/Settings.hpp"
 #include "Asset.hpp"
+#include "Hardware/CPU.hpp"
 #include "Simulator.hpp"
 #include "InfoBoxes/InfoBoxManager.hpp"
 #include "Terrain/RasterTerrain.hpp"
+#include "Terrain/AsyncLoader.hpp"
+#include "io/ZipArchive.hpp"
+#include "Message.hpp"
 #include "Weather/Rasp/RaspStore.hpp"
+#include "Weather/Rasp/Configured.hpp"
+#ifdef HAVE_HTTP
+#include "Weather/SkySight/SkySightClient.hpp"
+#endif
 #include "Input/InputEvents.hpp"
 #include "Input/InputQueue.hpp"
 #include "Dialogs/StartupDialog.hpp"
 #include "Dialogs/dlgSimulatorPrompt.hpp"
+#include "Dialogs/dlgQuickGuide.hpp"
 #include "Language/LanguageGlue.hpp"
 #include "Language/Language.hpp"
 #include "Protection.hpp"
@@ -48,6 +43,7 @@ Copyright_License {
 #include "Waypoint/WaypointDetailsReader.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
 #include "MapWindow/GlueMapWindow.hpp"
+#include "Device/Factory.hpp"
 #include "Device/device.hpp"
 #include "Device/MultipleDevices.hpp"
 #include "Topography/TopographyStore.hpp"
@@ -56,9 +52,11 @@ Copyright_License {
 #include "Audio/GlobalVolumeController.hpp"
 #include "Audio/VarioGlue.hpp"
 #include "Audio/VolumeController.hpp"
-#include "Screen/Busy.hpp"
 #include "CommandLine.hpp"
 #include "MainWindow.hpp"
+#ifdef HAVE_HTTP
+#include "Dialogs/NOTAM/NOTAMMessageListener.hpp"
+#endif
 #include "Computer/GlideComputer.hpp"
 #include "Computer/GlideComputerInterface.hpp"
 #include "Computer/Events.hpp"
@@ -66,17 +64,28 @@ Copyright_License {
 #include "MergeThread.hpp"
 #include "CalculationThread.hpp"
 #include "Replay/Replay.hpp"
+#include "DataFilePath.hpp"
 #include "LocalPath.hpp"
-#include "IO/FileCache.hpp"
-#include "IO/Async/AsioThread.hpp"
-#include "IO/Async/GlobalAsioThread.hpp"
-#include "Net/HTTP/DownloadManager.hpp"
+#include "system/FileUtil.hpp"
+#include "io/FileCache.hpp"
+#include "io/async/AsioThread.hpp"
+#include "io/async/GlobalAsioThread.hpp"
+#include "net/http/Init.hpp"
+#include "net/http/DownloadManager.hpp"
+#include "net/client/tim/Glue.hpp"
 #include "Hardware/DisplayDPI.hpp"
 #include "Hardware/DisplayGlue.hpp"
-#include "Compiler.h"
+#include "Screen/Layout.hpp"
+#include "ui/display/Display.hpp"
+#ifdef USE_WAYLAND
+#include "ui/display/wayland/Scale.hpp"
+#endif
+#include "util/Compiler.h"
 #include "NMEA/Aircraft.hpp"
 #include "Waypoint/Waypoints.hpp"
 #include "Waypoint/WaypointGlue.hpp"
+#include "Storage/StorageManager.hpp"
+#include "DataLayoutMigration.hpp"
 
 #include "Airspace/AirspaceWarningManager.hpp"
 #include "Airspace/Airspaces.hpp"
@@ -88,6 +97,9 @@ Copyright_License {
 #include "Task/DefaultTask.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
 #include "Operation/VerboseOperationEnvironment.hpp"
+#include "Operation/PluggableOperationEnvironment.hpp"
+#include "Operation/SubOperationEnvironment.hpp"
+#include "Widget/ProgressWidget.hpp"
 #include "PageActions.hpp"
 #include "Weather/Features.hpp"
 #include "Weather/NOAAGlue.hpp"
@@ -97,29 +109,74 @@ Copyright_License {
 #include "Tracking/TrackingGlue.hpp"
 #include "Units/Units.hpp"
 #include "Formatter/UserGeoPointFormatter.hpp"
-#include "Thread/Debug.hpp"
+#include "thread/Debug.hpp"
 
-#include "Lua/StartFile.hpp"
-#include "Lua/Background.hpp"
+#include "lua/StartFile.hpp"
+#include "lua/Background.hpp"
+#include "Repository/FileType.hpp"
+
+#include "util/ScopeExit.hxx"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Globals.hpp"
-#include "Screen/OpenGL/Dynamic.hpp"
+#include "ui/canvas/opengl/Globals.hpp"
+#include "ui/canvas/opengl/Dynamic.hpp"
 #else
 #include "DrawThread.hpp"
 #endif
 
+#ifdef ANDROID
+#include "Android/Main.hpp"
+#include "Android/NativeView.hpp"
+#endif
+
+#ifdef KOBO
+#include "Kobo/System.hpp"
+#endif
+
+#ifdef __APPLE__
+#include "Apple/Services.hpp"
+#include "Apple/BackgroundSave.hpp"
+#include "Apple/DarkMode.hpp"
+#endif
+
+#ifdef HAVE_EDL
+#include "Weather/EDL/Glue.hpp"
+#endif
+
 static TaskManager *task_manager;
 static GlideComputerEvents *glide_computer_events;
+#ifdef HAVE_EDL
+static EDL::Glue *edl_glue;
+#endif
 static AllMonitors *all_monitors;
 static GlideComputerTaskEvents *task_events;
+static DeviceFactory *device_factory;
+
+/** @see WasStartupCancelledByUser() */
+static bool startup_cancelled_by_user = false;
+
+bool
+WasStartupCancelledByUser() noexcept
+{
+  return startup_cancelled_by_user;
+}
 
 static bool
 LoadProfile()
 {
-  if (Profile::GetPath().IsNull() &&
-      !dlgStartupShowModal())
+  /* run the data-layout migration BEFORE the profile is selected and
+     loaded: it moves root-level profiles into profiles/ - selecting or
+     loading first ends up with an empty profile that later overwrites
+     the migrated one on exit (settings loss on first start after an
+     upgrade) */
+  MigrateDataLayoutToSubdirs();
+
+  if (Profile::GetPath() == nullptr &&
+      !dlgStartupShowModal()) {
+    LogString("LoadProfile: no profile path and startup dialog was cancelled");
+    startup_cancelled_by_user = true;
     return false;
+  }
 
   Profile::Load();
   Profile::Use(Profile::map);
@@ -133,13 +190,15 @@ LoadProfile()
 static void
 AfterStartup()
 {
-  StartupLogFreeRamAndStorage();
-
   try {
-    const auto lua_path = LocalPath(_T("lua"));
-    Lua::StartFile(AllocatedPath::Build(lua_path, _T("init.lua")));
-  } catch (const std::runtime_error &e) {
-      LogError(e);
+    const auto lua_path = LocalPath(GetFileTypeDefaultDir(FileType::LUA));
+    const AllocatedPath init_path = AllocatedPath::Build(lua_path, "init.lua");
+    if (File::Exists(init_path))
+      Lua::StartFile(init_path);
+    else
+      LogDebug("Optional {} not found", init_path.c_str());
+  } catch (...) {
+    LogError(std::current_exception(), "Lua init script failed");
   }
 
   if (is_simulator()) {
@@ -148,8 +207,10 @@ AfterStartup()
     InputEvents::processGlideComputer(GCE_STARTUP_REAL);
   }
 
-  OrderedTask *defaultTask = LoadDefaultTask(CommonInterface::GetComputerSettings().task,
-                                             &way_points);
+  auto &way_points = *data_components->waypoints;
+
+  const auto defaultTask = LoadDefaultTask(CommonInterface::GetComputerSettings().task,
+                                           &way_points);
   if (defaultTask) {
     {
       ScopeSuspendAllThreads suspend;
@@ -157,70 +218,188 @@ AfterStartup()
       way_points.Optimise();
     }
 
-    protected_task_manager->TaskCommit(*defaultTask);
-    delete defaultTask;
+    backend_components->protected_task_manager->TaskCommit(*defaultTask);
   }
 
-  task_manager->Resume();
+  const bool resumed = task_manager->Resume();
+  // Return value intentionally unused; task will resume if available.
+  (void)resumed;
+
 
   InfoBoxManager::SetDirty();
 
   ForceCalculation();
+
+#ifdef HAVE_HTTP
+  if (net_components != nullptr && net_components->notam != nullptr &&
+      data_components != nullptr && data_components->airspaces != nullptr) {
+    try {
+      const ScopeSuspendAllThreads suspend;
+      const auto &basic = CommonInterface::Basic();
+      if (net_components->notam->LoadCachedNOTAMsAndUpdate(
+            *data_components->airspaces,
+            basic.location_available ? basic.location : GeoPoint::Invalid()) &&
+          data_components->terrain != nullptr) {
+        SetAirspaceGroundLevels(*data_components->airspaces,
+                                *data_components->terrain);
+      }
+    } catch (...) {
+      LogError(std::current_exception());
+    }
+  }
+#endif
+}
+
+void
+MainWindow::LoadTerrain() noexcept
+{
+  SetTopWidget(nullptr);
+
+  delete terrain_loader;
+  terrain_loader = nullptr;
+
+  if (const auto path = Profile::GetPath(ProfileKeys::MapFile);
+      path != nullptr) {
+    LogFormat("Loading terrain: %s", path.c_str());
+
+    /* Quick synchronous validation: try opening the ZIP archive
+       before launching the async loader to fail fast on missing or
+       unreadable files. */
+    try {
+      ZipArchive test_archive{path};
+    } catch (...) {
+      LogFormat("Failed to open map file: %s", path.c_str());
+      Message::AddMessage(_("Failed to open configured map file"));
+      return;
+    }
+
+    terrain_loader = new AsyncTerrainOverviewLoader();
+
+    terrain_loader_env = std::make_unique<PluggableOperationEnvironment>();
+    auto *progress = new ProgressWidget(*terrain_loader_env,
+                                        _("Loading Terrain File..."));
+    SetTopWidget(progress);
+
+    terrain_loader->Start(file_cache, path, *terrain_loader_env,
+                          terrain_loader_notify);
+  } else if (data_components->terrain) {
+    /* the map file has been disabled - remove the terrain from all
+       subsystems and dispose the object */
+
+    const ScopeSuspendAllThreads suspend;
+    DataGlobals::UnsetTerrain();
+
+    /* this call is only necessary so the bottom widget that may have
+       been cleared by UnsetTerrain() gets created again */
+    DataGlobals::SetTerrain(nullptr);
+  }
+}
+
+void
+MainWindow::OnTerrainLoaded() noexcept
+try {
+  assert(terrain_loader != nullptr);
+
+  std::unique_ptr<AsyncTerrainOverviewLoader> loader{std::exchange(terrain_loader, nullptr)};
+  auto new_terrain = loader->Wait();
+  loader.reset();
+
+  SetTopWidget(nullptr);
+  terrain_loader_env.reset();
+
+  const ScopeSuspendAllThreads suspend;
+
+  DataGlobals::UnsetTerrain();
+  DataGlobals::SetTerrain(std::move(new_terrain));
+  DataGlobals::UpdateHome(false);
+
+  SetAirspaceGroundLevels(*data_components->airspaces,
+                          *data_components->terrain);
+} catch (...) {
+  SetTopWidget(nullptr);
+  terrain_loader_env.reset();
+  LogError(std::current_exception(), "LoadTerrain failed");
 }
 
 /**
  * "Boots" up XCSoar
- * @param hInstance Instance handle
  * @param lpCmdLine Command line string
  * @return True if bootup successful, False otherwise
  */
 bool
-Startup()
+Startup(UI::Display &display)
 {
   VerboseOperationEnvironment operation;
+  operation.SetProgressRange(1024);
 
 #ifdef HAVE_DOWNLOAD_MANAGER
   Net::DownloadManager::Initialise();
 #endif
 
-  LogFormat("Display dpi=%u,%u", Display::GetXDPI(), Display::GetYDPI());
+#ifdef __APPLE__
+  InitializeAppleServices();
+#endif
 
   // Creates the main window
 
-  TopWindowStyle style;
+  UI::TopWindowStyle style;
   if (CommandLine::full_screen)
     style.FullScreen();
 
   style.Resizable();
 
+#ifdef SOFTWARE_ROTATE_DISPLAY
+  style.InitialOrientation(Display::DetectInitialOrientation());
+#endif
+
   MainWindow *const main_window = CommonInterface::main_window =
-    new MainWindow();
+    new MainWindow(display);
   main_window->Create(SystemWindowSize(), style);
   if (!main_window->IsDefined())
     return false;
 
+#ifdef __APPLE__
+  /* inherit the system appearance; this must happen after the window
+     exists, because on iOS the appearance is read from the window
+     scene, and before anything builds a Look or shows the progress
+     window */
+  UpdateAppleDarkMode();
+#endif
+
 #ifdef ENABLE_OPENGL
-  LogFormat("OpenGL: "
-#ifdef HAVE_OES_DRAW_TEXTURE
-            "oesdt=%d "
-#endif
+  LogFmt("OpenGL: "
 #ifdef HAVE_DYNAMIC_MULTI_DRAW_ARRAYS
-            "mda=%d "
+         "mda={} "
 #endif
-            "npot=%d fbo=%d stencil=%#x",
-#ifdef HAVE_OES_DRAW_TEXTURE
-            OpenGL::oes_draw_texture,
-#endif
+         "npot={} stencil={:#x}",
 #ifdef HAVE_DYNAMIC_MULTI_DRAW_ARRAYS
-            GLExt::HaveMultiDrawElements(),
+         GLExt::HaveMultiDrawElements(),
 #endif
-             OpenGL::texture_non_power_of_two,
-            OpenGL::frame_buffer_object,
-            OpenGL::render_buffer_stencil);
+         OpenGL::texture_non_power_of_two,
+         OpenGL::render_buffer_stencil);
+#endif
+
+#ifdef ANDROID
+  /* mark the UI EventLoop as "running", which allows
+     TopWindow::Pause() to submit the PAUSE command to the event
+     queue; this works because the remaining code in this function may
+     invoke modal dialogs, and its event loop will be able to process
+     PAUSE even if TopWindow::RunEventLoop() is not yet invoked */
+  main_window->BeginRunning();
+  AtScopeExit(main_window) { main_window->EndRunning(); };
 #endif
 
   CommonInterface::SetUISettings().SetDefaults();
   main_window->Initialise();
+
+#ifdef ANDROID
+  /* surfaceChanged may have reported insets before the event queue
+     existed; ask again and apply them before the Fly/Simulator
+     dialog is created */
+  if (native_view != nullptr)
+    native_view->ReportSize(Java::GetEnv());
+  main_window->PublishSafeAreaInsets();
+#endif
 
 #ifdef SIMULATOR_AVAILABLE
   // prompt for simulator if not set by command line argument "-simulator" or "-fly"
@@ -228,6 +407,7 @@ Startup()
     SimulatorPromptResult result = dlgSimulatorPromptShowModal();
     switch (result) {
     case SPR_QUIT:
+      startup_cancelled_by_user = true;
       return false;
 
     case SPR_FLY:
@@ -238,6 +418,16 @@ Startup()
       global_simulator_flag = true;
       break;
     }
+  }
+#endif
+
+#ifdef ANDROID
+  /* Start the foreground service only in fly mode; the service keeps
+     XCSoar alive for IGC logging and safety warnings, neither of
+     which applies in simulator mode. */
+  if (!is_simulator()) {
+    const auto env = Java::GetEnv();
+    native_view->StartMyService(env);
   }
 #endif
 
@@ -252,70 +442,178 @@ Startup()
   if (!LoadProfile())
     return false;
 
+#ifdef __APPLE__
+  /* now that there is a profile to save, arm the "save on suspend"
+     hook; doing this any earlier could persist the still empty
+     profile map */
+  InitializeAppleBackgroundSave();
+#endif
+
   operation.SetText(_("Initialising"));
 
   /* create XCSoarData on the first start */
   CreateDataPath();
 
+#ifdef KOBO
+  ApplyKoboWifiAutoOn();
+#endif
+
+#ifdef ANDROID
+  native_view->AcquireWakeLock(Java::GetEnv());
+#endif
+
+#ifdef HAVE_FULL_SCREEN_SETTING
+  main_window->ApplyFullScreenSettings();
+#endif
+
   Display::LoadOrientation(operation);
   main_window->CheckResize();
 
-  main_window->InitialiseConfigured();
+  SetDisplayType(CommonInterface::GetUISettings().display.display_type);
 
   {
-    file_cache = new FileCache(LocalPath(_T("cache")));
+    const PixelSize size = main_window->GetSize();
+    const auto dpi = Display::GetDPI(display);
+    LogFmt("Display: {}x{} dpi={},{} vdpi={} size={:.2f}x{:.2f}in "
+           "small_screen={}",
+           size.width, size.height, dpi.x, dpi.y, Layout::vdpi,
+           dpi.x > 0 ? double(size.width) / dpi.x : 0.,
+           dpi.y > 0 ? double(size.height) / dpi.y : 0.,
+           Layout::small_screen);
+#ifdef USE_WAYLAND
+    const auto hardware = display.GetHardwareSize();
+    const auto logical = display.GetSize();
+    const auto output_mm = display.GetSizeMM();
+    LogFmt("Monitor: {}x{} dpi={},{} {}x{}mm logical={}x{} scale={:.2f}",
+           hardware.width, hardware.height, dpi.x, dpi.y,
+           output_mm.width, output_mm.height,
+           logical.width, logical.height,
+           display.GetScale120() / (double)Wayland::SCALE_100);
+#endif
   }
+
+  /* Log device capabilities and features after initialization */
+  LogFormat("Device capabilities: HasIOIOLib()=%s",
+            HasIOIOLib() ? "yes" : "no");
+  if (CommandLine::touch_input == CommandLine::TouchInput::Force)
+    LogFormat("Touch input mode: forced on (see command line)");
+  else if (CommandLine::touch_input == CommandLine::TouchInput::Disable)
+    LogFormat("Touch input mode: forced off (see command line)");
+#if !defined(NON_INTERACTIVE) && !defined(USE_X11)
+  LogFormat("Device capabilities: HasPointer()=%s",
+            HasPointer() ? "yes" : "no");
+  LogFormat("Device capabilities: HasKeyboard()=%s",
+            HasKeyboard() ? "yes" : "no");
+  LogFormat("Device capabilities: HasTouchScreen()=%s",
+            HasTouchScreen() ? "yes" : "no");
+  LogFormat("Device capabilities: HasCursorKeys()=%s",
+            HasCursorKeys() ? "yes" : "no");
+#endif
+  LogFormat("Device capabilities: HasColors()=%s",
+            HasColors() ? "yes" : "no");
+  LogFormat("Device capabilities: HasEPaper()=%s",
+            HasEPaper() ? "yes" : "no");
+  LogFormat("Device capabilities: IsDithered()=%s",
+            IsDithered() ? "yes" : "no");
+  if (const unsigned max_cpu_khz = GetMaxCPUFrequencyKHz();
+      max_cpu_khz != 0)
+    LogFormat("Device capabilities: max_cpu_freq=%u kHz", max_cpu_khz);
+  else
+    LogFormat("Device capabilities: max_cpu_freq=unknown");
+  LogFormat("Device capabilities: IsSlowCPU()=%s",
+            IsSlowCPU() ? "yes" : "no");
+
+  main_window->InitialiseConfigured();
+
+  file_cache = new FileCache(GetCachePath());
+
+  data_components = new DataComponents();
+  backend_components = new BackendComponents();
+
+  /* Create storage manager and hand it a callback that marshals
+     notifications to the UI thread via MainWindow::storage_notify_. */
+  backend_components->storage_manager =
+    std::make_unique<StorageManager>([main_window]{
+      main_window->SendStorageNotification();
+    });
+  backend_components->storage_manager->StartMonitoring();
+  main_window->InitialiseStorage();
 
   ReadLanguageFile();
 
-  InputEvents::readFile();
+  try {
+    LogString("Loading input events file");
+    InputEvents::readFile();
+  } catch (...) {
+    LogError(std::current_exception());
+  }
+
+  backend_components->igc_logger = std::make_unique<Logger>();
+  backend_components->nmea_logger = std::make_unique<NMEALogger>();
 
   // Initialize DeviceBlackboard
-  device_blackboard = new DeviceBlackboard();
-  devices = new MultipleDevices(*asio_thread);
-  device_blackboard->SetDevices(*devices);
+  device_factory = new DeviceFactory{
+    *asio_thread, *global_cares_channel,
+#ifdef ANDROID
+    *context, permission_manager,
+    bluetooth_helper, ioio_helper, usb_serial_helper,
+#endif
+  };
+
+  backend_components->devices = std::make_unique<MultipleDevices>(*backend_components->device_blackboard,
+                                                                  backend_components->nmea_logger.get(),
+                                                                  *device_factory);
 
   // Initialize main blackboard data
   task_events = new GlideComputerTaskEvents();
-  task_manager = new TaskManager(computer_settings.task, way_points);
+  task_manager = new TaskManager(computer_settings.task,
+                                 *data_components->waypoints);
   task_manager->SetTaskEvents(*task_events);
   task_manager->Reset();
 
-  protected_task_manager =
-    new ProtectedTaskManager(*task_manager, computer_settings.task);
+  backend_components->protected_task_manager =
+    std::make_unique<ProtectedTaskManager>(*task_manager, computer_settings.task);
 
   // Read the terrain file
-  operation.SetText(_("Loading Terrain File..."));
-  LogFormat("OpenTerrain");
-  terrain = RasterTerrain::OpenTerrain(file_cache, operation);
+  main_window->LoadTerrain();
 
-  logger = new Logger();
+  backend_components->glide_computer =
+    std::make_unique<GlideComputer>(computer_settings,
+                                    *data_components->waypoints,
+                                    *data_components->airspaces,
+                                    *backend_components->protected_task_manager,
+                                    *task_events);
+  backend_components->glide_computer->SetTerrain(data_components->terrain.get());
+  backend_components->glide_computer->SetLogger(backend_components->igc_logger.get());
+  backend_components->glide_computer->Initialise();
 
-  glide_computer = new GlideComputer(computer_settings,
-                                     way_points, airspace_database,
-                                     *protected_task_manager,
-                                     *task_events);
-  glide_computer->SetTerrain(terrain);
-  glide_computer->SetLogger(logger);
-  glide_computer->Initialise();
-
-  replay = new Replay(logger, *protected_task_manager);
+  backend_components->replay =
+    std::make_unique<Replay>(*backend_components->device_blackboard,
+                             backend_components->igc_logger.get(),
+                             *backend_components->protected_task_manager);
 
 #ifdef HAVE_CMDLINE_REPLAY
   if (CommandLine::replay_path != nullptr) {
     try {
-      replay->Start(Path(CommandLine::replay_path));
-    } catch (const std::runtime_error &e) {
-      LogError(e);
+      backend_components->replay->Start(Path(CommandLine::replay_path),
+        CommonInterface::GetSystemSettings().devices[0]);
+    } catch (...) {
+      LogError(std::current_exception());
     }
   }
 #endif
 
+  // Show unified Quick Guide dialog (warranty + guide pages)
+  if (!dlgQuickGuideShowModal()) {
+    startup_cancelled_by_user = true;
+    return false;
+  }
 
   GlidePolar &gp = CommonInterface::SetComputerSettings().polar.glide_polar_task;
   gp = GlidePolar(0);
   gp.SetMC(computer_settings.task.safety_mc);
   gp.SetBugs(computer_settings.polar.degradation_factor);
+  gp.SetCrewMass(computer_settings.logger.crew_mass_template);
   PlaneGlue::FromProfile(CommonInterface::SetComputerSettings().plane,
                          Profile::map);
   PlaneGlue::Synchronize(computer_settings.plane,
@@ -323,39 +621,71 @@ Startup()
   task_manager->SetGlidePolar(gp);
 
   // Read the topography file(s)
-  topography = new TopographyStore();
-  LoadConfiguredTopography(*topography, operation);
+  data_components->topography = std::make_unique<TopographyStore>();
+  {
+    LogFormat("Loading topography");
+    operation.SetText(_("Loading Topography File..."));
+    LoadConfiguredTopography(*data_components->topography);
+    operation.SetProgressPosition(256);
+  }
 
   // Read the waypoint files
-  WaypointGlue::LoadWaypoints(way_points, terrain, operation);
+  LogFormat("Loading waypoints");
+  {
+    SubOperationEnvironment sub_env(operation, 256, 512);
+    sub_env.SetText(_("Loading Waypoints..."));
+    WaypointGlue::LoadWaypoints(*data_components->waypoints,
+                                data_components->terrain.get(),
+                                sub_env);
+  }
 
   // Read and parse the airfield info file
-  WaypointDetails::ReadFileFromProfile(way_points, operation);
+  try {
+    SubOperationEnvironment sub_env(operation, 512, 768);
+    sub_env.SetText(_("Loading Airfield Details File..."));
+    WaypointDetails::ReadFileFromProfile(*data_components->waypoints, sub_env);
+  } catch (...) {
+    LogError(std::current_exception());
+  }
 
   // Set the home waypoint
-  WaypointGlue::SetHome(way_points, terrain,
-                        CommonInterface::SetComputerSettings().poi,
-                        CommonInterface::SetComputerSettings().team_code,
-                        device_blackboard, false);
+  auto &settings = CommonInterface::SetComputerSettings();
+  WaypointGlue::SetHome(*data_components->waypoints,
+                        settings.poi, settings.team_code,
+                        false);
+  ActionInterface::SetStartupLocation();
 
-  // ReSynchronise the blackboards here since SetHome touches them
-  device_blackboard->Merge();
-  CommonInterface::ReadBlackboardBasic(device_blackboard->Basic());
+  // ReSynchronise the blackboards here since SetStartupLocation
+  // touches them
+  backend_components->device_blackboard->Merge();
+  CommonInterface::ReadBlackboardBasic(backend_components->device_blackboard->Basic());
 
   // Scan for weather forecast
-  LogFormat("RASP load");
-  auto rasp = std::make_shared<RaspStore>(LocalPath(_T(RASP_FILENAME)));
-  rasp->ScanAll();
+  LogString("RASP load");
+  auto rasp = LoadConfiguredRasp();
+
+#ifdef HAVE_HTTP
+  auto skysight = std::make_shared<SkySightClient>(*Net::curl);
+  DataGlobals::SetSkySight(skysight);
+#endif
 
   // Reads the airspace files
-  ReadAirspace(airspace_database, terrain, computer_settings.pressure,
-               operation);
+  {
+    SubOperationEnvironment sub_env(operation, 768, 1024);
+    ReadAirspace(*data_components->airspaces,
+                 computer_settings.pressure,
+                 sub_env);
+  }
+
+  if (data_components->terrain)
+    SetAirspaceGroundLevels(*data_components->airspaces,
+                            *data_components->terrain);
 
   {
     const AircraftState aircraft_state =
-      ToAircraftState(device_blackboard->Basic(),
-                      device_blackboard->Calculated());
-    ProtectedAirspaceWarningManager::ExclusiveLease lease(glide_computer->GetAirspaceWarnings());
+      ToAircraftState(backend_components->device_blackboard->Basic(),
+                      backend_components->device_blackboard->Calculated());
+    ProtectedAirspaceWarningManager::ExclusiveLease lease(backend_components->glide_computer->GetAirspaceWarnings());
     lease->Reset(aircraft_state);
   }
 
@@ -372,8 +702,11 @@ Startup()
   AudioVarioGlue::Configure(ui_settings.sound.vario);
 
   // Start the device thread(s)
-  operation.SetText(_("Starting devices"));
-  devStartup();
+  if (backend_components->devices != nullptr) {
+    operation.SetText(_("Starting devices"));
+    devStartup(*backend_components->devices,
+               CommonInterface::GetSystemSettings());
+  }
 
 /*
   -- Reset polar in case devices need the data
@@ -386,14 +719,14 @@ Startup()
 
   GlueMapWindow *map_window = main_window->GetMap();
   if (map_window != nullptr) {
-    map_window->SetWaypoints(&way_points);
-    map_window->SetTask(protected_task_manager);
-    map_window->SetRoutePlanner(&glide_computer->GetProtectedRoutePlanner());
-    map_window->SetGlideComputer(glide_computer);
-    map_window->SetAirspaces(&airspace_database);
+    map_window->SetWaypoints(data_components->waypoints.get());
+    map_window->SetTask(backend_components->protected_task_manager.get());
+    map_window->SetRoutePlanner(&backend_components->glide_computer->GetProtectedRoutePlanner());
+    map_window->SetGlideComputer(backend_components->glide_computer.get());
+    map_window->SetAirspaces(data_components->airspaces.get());
 
-    map_window->SetTopography(topography);
-    map_window->SetTerrain(terrain);
+    map_window->SetTopography(data_components->topography.get());
+    map_window->SetTerrain(data_components->terrain.get());
     map_window->SetRasp(rasp);
 
 #ifdef HAVE_NOAA
@@ -419,92 +752,142 @@ Startup()
   // Create the calculation thread
   CreateCalculationThread();
 
-  // Find unique ID of this PDA
-  ReadAssetNumber();
-
   glide_computer_events = new GlideComputerEvents();
   glide_computer_events->Reset();
   live_blackboard.AddListener(*glide_computer_events);
 
+#ifdef HAVE_EDL
+  edl_glue = new EDL::Glue();
+  live_blackboard.AddListener(*edl_glue);
+#endif
+
   all_monitors = new AllMonitors();
 
   if (!is_simulator() && computer_settings.logger.enable_flight_logger) {
-    flight_logger = new GlueFlightLogger(live_blackboard);
-    flight_logger->SetPath(LocalPath(_T("flights.log")));
+    backend_components->flight_logger = std::make_unique<GlueFlightLogger>(live_blackboard);
+    backend_components->flight_logger->SetPath(
+      LogsDataSavePath("flights.log"));
   }
 
   if (computer_settings.logger.enable_nmea_logger)
-    NMEALogger::enabled = true;
+    backend_components->nmea_logger->Enable();
 
-  LogFormat("ProgramStarted");
+  LogString("ProgramStarted");
 
-  // Give focus to the map
   main_window->SetDefaultFocus();
 
-  // Start calculation thread
-  merge_thread->Start();
-  calculation_thread->Start();
-
-  PageActions::Update();
-
-#ifdef HAVE_TRACKING
-  tracking = new TrackingGlue(*asio_thread);
-  tracking->SetSettings(computer_settings.tracking);
-
-#ifdef HAVE_SKYLINES_TRACKING
+#ifdef HAVE_HTTP
+  net_components = new NetComponents(*asio_thread, *Net::curl,
+                                     computer_settings.tracking,
+                                     computer_settings.airspace.notam);
+  if (net_components->notam != nullptr)
+    InstallNOTAMMessageListener(*net_components->notam);
+# ifdef HAVE_EDL
+  if (edl_glue != nullptr && net_components->edl != nullptr)
+    edl_glue->AttachDownloadGlue(*net_components->edl);
+# endif
+# ifdef HAVE_SKYLINES_TRACKING
   if (map_window != nullptr)
-    map_window->SetSkyLinesData(&tracking->GetSkyLinesData());
-#endif
+    map_window->SetSkyLinesData(&net_components->tracking->GetSkyLinesData());
+# endif
+  if (map_window != nullptr)
+    map_window->SetThermalInfoMap(net_components->tim.get());
 #endif
 
   assert(!global_running);
   global_running = true;
+
+  /* Threads must run before AfterStartup() (NOTAM cache uses
+     ScopeSuspendAllThreads, which needs a started calculation thread). */
+  backend_components->merge_thread->Start();
+  backend_components->calculation_thread->Start();
 
   AfterStartup();
 
   operation.Hide();
 
   main_window->FinishStartup();
+  main_window->SchedulePageActionsUpdate();
 
   return true;
+}
+
+#ifdef HAVE_HTTP
+static void
+BeginShutdownNetComponents(MainWindow &main_window) noexcept
+{
+  if (net_components == nullptr)
+    return;
+
+  net_components->BeginShutdown();
+  DeinitNOTAMMessageListener();
+
+  if (GlueMapWindow *map = main_window.GetMap()) {
+#ifdef HAVE_SKYLINES_TRACKING
+    map->SetSkyLinesData(nullptr);
+#endif
+    map->SetThermalInfoMap(nullptr);
+  }
+}
+
+static void
+DestroyNetComponents() noexcept
+{
+  delete net_components;
+  net_components = nullptr;
+}
+#endif
+
+void
+SaveUserState() noexcept
+{
+  SaveFlarmColors();
+  SaveFlarmMessaging();
+  Profile::Save();
 }
 
 void
 Shutdown()
 {
   VerboseOperationEnvironment operation;
-  gcc_unused ScopeBusyIndicator busy;
 
   MainWindow *const main_window = CommonInterface::main_window;
   auto &live_blackboard = CommonInterface::GetLiveBlackboard();
+
+  // Turn off all displays first to prevent UI operations from blocking
+  global_running = false;
+
+#ifdef __APPLE__
+  /* stop saving on suspend before we start tearing down the state
+     which SaveUserState() would touch */
+  DeinitializeAppleBackgroundSave();
+#endif
+
+#ifdef HAVE_HTTP
+  if (main_window != nullptr)
+    BeginShutdownNetComponents(*main_window);
+#endif
 
   // Show progress dialog
   operation.SetText(_("Shutdown, please wait..."));
 
   // Log shutdown information
-  LogFormat("Entering shutdown...");
+  LogString("Entering shutdown...");
 
   main_window->BeginShutdown();
 
-  StartupLogFreeRamAndStorage();
-
   Lua::StopAllBackground();
 
-  // Turn off all displays
-  global_running = false;
-
-#ifdef HAVE_TRACKING
-  if (tracking != nullptr)
-    tracking->StopAsync();
-#endif
-
   // Stop logger and save igc file
-  operation.SetText(_("Shutdown, saving logs..."));
-  if (logger != nullptr)
-    logger->GUIStopLogger(CommonInterface::Basic(), true);
+  if (backend_components != nullptr && backend_components->igc_logger != nullptr) {
+    operation.SetText(_("Shutdown, saving logs..."));
 
-  delete flight_logger;
-  flight_logger = nullptr;
+    try {
+      backend_components->igc_logger->GUIStopLogger(CommonInterface::Basic(), true);
+    } catch (...) {
+      LogError(std::current_exception());
+    }
+  }
 
   delete all_monitors;
   all_monitors = nullptr;
@@ -515,16 +898,29 @@ Shutdown()
     glide_computer_events = nullptr;
   }
 
-  SaveFlarmColors();
+#ifdef HAVE_EDL
+  if (edl_glue != nullptr) {
+    edl_glue->DetachDownloadGlue();
+    live_blackboard.RemoveListener(*edl_glue);
+    delete edl_glue;
+    edl_glue = nullptr;
+  }
+#endif
 
   // Save settings to profile
   operation.SetText(_("Shutdown, saving profile..."));
-  Profile::Save();
+  SaveUserState();
 
   operation.SetText(_("Shutdown, please wait..."));
 
+  // Close any device connections
+  if (backend_components != nullptr && backend_components->devices != nullptr) {
+    LogString("Stop devices");
+    backend_components->devices->Close();
+  }
+
   // Stop threads
-  LogFormat("Stop threads");
+  LogString("Stop threads");
 #ifdef HAVE_DOWNLOAD_MANAGER
   Net::DownloadManager::BeginDeinitialise();
 #endif
@@ -533,85 +929,82 @@ Shutdown()
     draw_thread->BeginStop();
 #endif
 
-  if (calculation_thread != nullptr)
-    calculation_thread->BeginStop();
+  if (backend_components != nullptr) {
+    if (backend_components->calculation_thread)
+      backend_components->calculation_thread->BeginStop();
 
-  if (merge_thread != nullptr)
-    merge_thread->BeginStop();
+    if (backend_components->merge_thread)
+      backend_components->merge_thread->BeginStop();
 
-  // Wait for the calculations thread to finish
-  LogFormat("Waiting for calculation thread");
+    // Wait for the calculations thread to finish
+    LogString("Waiting for calculation thread");
 
-  if (merge_thread != nullptr) {
-    merge_thread->Join();
-    delete merge_thread;
-    merge_thread = nullptr;
-  }
+    if (backend_components->merge_thread && backend_components->merge_thread->IsDefined()) {
+      backend_components->merge_thread->Join();
+      backend_components->merge_thread.reset();
+    }
 
-  if (calculation_thread != nullptr) {
-    calculation_thread->Join();
-    delete calculation_thread;
-    calculation_thread = nullptr;
+    if (backend_components->calculation_thread && backend_components->calculation_thread->IsDefined()) {
+      backend_components->calculation_thread->Join();
+      backend_components->calculation_thread.reset();
+    }
   }
 
   //  Wait for the drawing thread to finish
 #ifndef ENABLE_OPENGL
-  LogFormat("Waiting for draw thread");
+  LogString("Waiting for draw thread");
 
-  if (draw_thread != nullptr) {
+  if (draw_thread != nullptr && draw_thread->IsDefined()) {
     draw_thread->Join();
     delete draw_thread;
     draw_thread = nullptr;
   }
 #endif
 
-  LogFormat("delete MapWindow");
+  LogString("delete MapWindow");
   main_window->Deinitialise();
+
+#ifdef HAVE_HTTP
+  /* Release SkySight before HTTP/curl teardown so active tile requests cancel
+     while the UI event loop is still alive. */
+  DataGlobals::SetSkySight({});
+#endif
 
   // Stop sound
   AudioVarioGlue::Deinitialise();
 
   // Save the task for the next time
-  operation.SetText(_("Shutdown, saving task..."));
+  if (backend_components != nullptr && backend_components->protected_task_manager) {
+    operation.SetText(_("Shutdown, saving task..."));
+    LogString("Save default task");
 
-  LogFormat("Save default task");
-  if (protected_task_manager != nullptr) {
     try {
-      protected_task_manager->TaskSaveDefault();
-    } catch (const std::runtime_error &e) {
-      LogError(e);
+      backend_components->protected_task_manager->TaskSaveDefault();
+    } catch (...) {
+      LogError(std::current_exception());
     }
   }
-
-  // Clear waypoint database
-  way_points.Clear();
 
   operation.SetText(_("Shutdown, please wait..."));
 
   // Clear terrain database
 
-  delete terrain;
-  terrain = nullptr;
-  delete topography;
-  topography = nullptr;
+  delete terrain_loader;
+  terrain_loader = nullptr;
 
-  // Close any device connections
-  devShutdown();
+  if (backend_components != nullptr)
+    backend_components->devices.reset();
 
-  NMEALogger::Shutdown();
+  delete device_factory;
+  device_factory = nullptr;
 
-  delete replay;
-  replay = nullptr;
+  if (backend_components != nullptr) {
+    backend_components->nmea_logger.reset();
 
-  delete devices;
-  devices = nullptr;
-  delete device_blackboard;
-  device_blackboard = nullptr;
-
-  if (protected_task_manager != nullptr) {
-    protected_task_manager->SetRoutePlanner(nullptr);
-    delete protected_task_manager;
-    protected_task_manager = nullptr;
+    if (backend_components->protected_task_manager) {
+      backend_components->protected_task_manager->SetRoutePlanner(nullptr);
+      backend_components->protected_task_manager.reset();
+    }
   }
 
   delete task_manager;
@@ -622,39 +1015,40 @@ Shutdown()
   noaa_store = nullptr;
 #endif
 
-#ifdef HAVE_TRACKING
-  if (tracking != nullptr) {
-    tracking->WaitStopped();
-    delete tracking;
-    tracking = nullptr;
-  }
-#endif
-
 #ifdef HAVE_DOWNLOAD_MANAGER
   Net::DownloadManager::Deinitialise();
 #endif
 
   // Close the progress dialog
-  LogFormat("Close Progress Dialog");
+  LogString("Close Progress Dialog");
   operation.Hide();
 
-  delete glide_computer;
-  glide_computer = nullptr;
   delete task_events;
   task_events = nullptr;
-  delete logger;
-  logger = nullptr;
-
-  // Clear airspace database
-  airspace_database.Clear();
 
   // Destroy FlarmNet records
   DeinitTrafficGlobals();
 
+  main_window->DeinitialiseStorage();
+
+  if (backend_components != nullptr &&
+      backend_components->storage_manager != nullptr)
+    backend_components->storage_manager->StopMonitoring();
+
+  delete backend_components;
+  backend_components = nullptr;
+
+  delete data_components;
+  data_components = nullptr;
+
   delete file_cache;
   file_cache = nullptr;
 
-  LogFormat("Close Windows - main");
+#ifdef HAVE_HTTP
+  DestroyNetComponents();
+#endif
+
+  LogString("Close Windows - main");
   main_window->Destroy();
   delete main_window;
   CommonInterface::main_window = nullptr;
@@ -663,7 +1057,9 @@ Shutdown()
 
   Display::RestoreOrientation();
 
-  StartupLogFreeRamAndStorage();
+#ifdef __APPLE__
+  DeinitializeAppleServices();
+#endif
 
-  LogFormat("Finished shutdown");
+  LogString("Finished shutdown");
 }

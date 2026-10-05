@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include <Python.h>
 #include <structmember.h> /* required for PyMemberDef */
@@ -35,11 +16,11 @@
 #include "Engine/Airspace/AirspaceAltitude.hpp"
 #include "Engine/Navigation/Aircraft.hpp"
 #include "NMEA/Aircraft.hpp"
-#include "Util/tstring.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
-#include <vector>
 #include <algorithm>
+#include <string>
+#include <vector>
 
 static constexpr AirspaceClassStringCouple airspace_class_strings[] = {
   { "CLASSA", CLASSA },
@@ -51,7 +32,7 @@ static constexpr AirspaceClassStringCouple airspace_class_strings[] = {
   { "CLASSG", CLASSG },
   { "CTR", CTR },
   { "TMZ", TMZ },
-  { "RESTRICT", RESTRICT },
+  { "RESTRICTED", RESTRICTED },
   { "PROHIBITED", PROHIBITED },
   { "DANGER", DANGER },
   { "NOGLIDER", NOGLIDER },
@@ -62,7 +43,11 @@ static constexpr AirspaceClassStringCouple airspace_class_strings[] = {
   { "RMZ", RMZ },
 };
 
-PyObject* xcsoar_Airspaces_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+PyObject *
+xcsoar_Airspaces_new(PyTypeObject *type,
+                     [[maybe_unused]] PyObject *args,
+                     [[maybe_unused]] PyObject *kwargs)
+{
   /* constructor */
   Pyxcsoar_Airspaces *self;
   self = (Pyxcsoar_Airspaces *)type->tp_alloc(type, 0);
@@ -124,7 +109,7 @@ PyObject* xcsoar_Airspaces_addPolygon(Pyxcsoar_Airspaces *self, PyObject *args) 
   }
 
   /* Parse airspace name */
-  tstring name;
+  std::string name;
 
   if (!Python::PyStringToString(py_name, name)) {
     PyErr_SetString(PyExc_ValueError, "Can't parse airspace name.");
@@ -132,7 +117,7 @@ PyObject* xcsoar_Airspaces_addPolygon(Pyxcsoar_Airspaces *self, PyObject *args) 
   }
 
   /* Parse airspace class */
-  tstring as_class;
+  std::string as_class;
   AirspaceClass type = AirspaceClass::OTHER;
 
   if (!Python::PyStringToString(py_as_class, as_class)) {
@@ -146,7 +131,7 @@ PyObject* xcsoar_Airspaces_addPolygon(Pyxcsoar_Airspaces *self, PyObject *args) 
   }
 
   /* Parse airspace base and top */
-  tstring base_ref, top_ref;
+  std::string base_ref, top_ref;
   AirspaceAltitude base, top;
 
   if (!Python::PyStringToString(py_base_ref, base_ref)) {
@@ -188,9 +173,9 @@ PyObject* xcsoar_Airspaces_addPolygon(Pyxcsoar_Airspaces *self, PyObject *args) 
   }
 
   /* Create airspace and save it into the database */
-  AbstractAirspace *as = new AirspacePolygon(points);
-  as->SetProperties(std::move(name), type, base, top);
-  self->airspace_database->Add(as);
+  auto as = std::make_shared<AirspacePolygon>(points);
+  as->SetProperties(std::move(name), type, {}, base, top);
+  self->airspace_database->Add(std::move(as));
 
   Py_RETURN_NONE;
 }

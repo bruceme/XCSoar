@@ -1,50 +1,69 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_WIDGET_DIALOG_HPP
-#define XCSOAR_WIDGET_DIALOG_HPP
+#pragma once
 
 #include "Form/Form.hpp"
 #include "Form/ButtonPanel.hpp"
 #include "Widget/ManagedWidget.hpp"
 
-#include <tchar.h>
-
+#include <memory>
+#include <type_traits>
 class Widget;
 
 class WidgetDialog : public WndForm {
+protected:
   ButtonPanel buttons;
-
   ManagedWidget widget;
 
+private:
   bool full;
-
   bool auto_size;
+  bool changed = false;
 
-  bool changed;
+protected:
+  // Expose auto_size to derived classes
+  bool IsAutoSize() const noexcept {
+    return auto_size;
+  }
 
 public:
   explicit WidgetDialog(const DialogLook &look);
+
+  WidgetDialog(UI::SingleWindow &parent, const DialogLook &look,
+               const PixelRect &rc, const char *caption,
+               Widget *widget) noexcept;
+
+  struct Auto {};
+
+  /**
+   * Create a dialog, but do not associate it with a #Widget yet.
+   * Call FinishPreliminary() to resume building the dialog.
+   */
+  WidgetDialog(Auto, UI::SingleWindow &parent, const DialogLook &look,
+               const char *caption) noexcept;
+
+  /**
+   * Create a dialog with an automatic size (by
+   * Widget::GetMinimumSize() and Widget::GetMaximumSize()).
+   */
+  WidgetDialog(Auto, UI::SingleWindow &parent, const DialogLook &look,
+               const char *caption, Widget *widget) noexcept;
+
+  struct Full {};
+
+  /**
+   * Create a dialog, but do not associate it with a #Widget yet.
+   * Call FinishPreliminary() to resume building the dialog.
+   */
+  WidgetDialog(Full, UI::SingleWindow &parent, const DialogLook &look,
+               const char *caption) noexcept;
+
+  /**
+   * Create a full-screen dialog.
+   */
+  WidgetDialog(Full, UI::SingleWindow &parent, const DialogLook &look,
+               const char *caption, Widget *widget) noexcept;
 
   virtual ~WidgetDialog();
 
@@ -52,27 +71,8 @@ public:
     return buttons.GetLook();
   }
 
-  void Create(SingleWindow &parent, const TCHAR *caption,
-              const PixelRect &rc, Widget *widget);
-
-  /**
-   * Create a full-screen dialog.
-   */
-  void CreateFull(SingleWindow &parent, const TCHAR *caption, Widget *widget);
-
-  /**
-   * Create a dialog with an automatic size (by
-   * Widget::GetMinimumSize() and Widget::GetMaximumSize()).
-   */
-  void CreateAuto(SingleWindow &parent, const TCHAR *caption, Widget *widget);
-
-  /**
-   * Create a dialog, but do not associate it with a #Widget yet.
-   * Call FinishPreliminary() to resume building the dialog.
-   */
-  void CreatePreliminary(SingleWindow &parent, const TCHAR *caption);
-
   void FinishPreliminary(Widget *widget);
+  void FinishPreliminary(std::unique_ptr<Widget> widget) noexcept;
 
   bool GetChanged() const {
     return changed;
@@ -96,23 +96,23 @@ public:
     return widget.Steal();
   }
 
-  Button *AddButton(ButtonRenderer *renderer,
-                    ActionListener &listener, int id) {
-    return buttons.Add(renderer, listener, id);
+  Button *AddButton(std::unique_ptr<ButtonRenderer> &&renderer,
+                    Button::Callback callback) noexcept {
+    return buttons.Add(std::move(renderer), std::move(callback));
   }
 
-  Button *AddButton(const TCHAR *caption,
-                    ActionListener &listener, int id) {
-    return buttons.Add(caption, listener, id);
+  Button *AddButton(const char *caption,
+                    Button::Callback callback) noexcept {
+    return buttons.Add(caption, std::move(callback));
   }
 
-  Button *AddButton(const TCHAR *caption, int modal_result) {
-    return AddButton(caption, *this, modal_result);
+  Button *AddButton(const char *caption, int modal_result) {
+    return AddButton(caption, MakeModalResultCallback(modal_result));
   }
 
-  Button *AddSymbolButton(const TCHAR *caption,
-                          ActionListener &listener, int id) {
-    return buttons.AddSymbol(caption, listener, id);
+  Button *AddSymbolButton(const char *caption,
+                          Button::Callback callback) noexcept {
+    return buttons.AddSymbol(caption, std::move(callback));
   }
 
   void AddButtonKey(unsigned key_code) {
@@ -126,23 +126,49 @@ public:
     buttons.EnableCursorSelection(_index);
   }
 
+  void ResyncButtonPanelSelection() noexcept {
+    buttons.ReselectToFirstEnabled();
+  }
+
   int ShowModal();
 
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override;
+  /* virtual methods from class WndForm */
+  void SetModalResult(int id) noexcept override;
 
-private:
+protected:
   void AutoSize();
+  void AutoSize(const PixelRect &parent_rc);
 
 protected:
   /* virtual methods from class Window */
-  virtual void OnDestroy() override;
-  virtual void OnResize(PixelSize new_size) override;
+  void OnDestroy() noexcept override;
+  void OnResize(PixelSize new_size) noexcept override;
 
   /* virtual methods from class WndForm */
-  virtual void ReinitialiseLayout(const PixelRect &parent_rc) override;
-  virtual void SetDefaultFocus() override;
-  virtual bool OnAnyKeyDown(unsigned key_code) override;
+  void ReinitialiseLayout(const PixelRect &rc) noexcept override;
+  void SetDefaultFocus() noexcept override;
+  bool OnAnyKeyDown(unsigned key_code) noexcept override;
+};
+
+/**
+ * Helper class for #WidgetDialog which can construct a #Widget of the
+ * given type.
+ */
+template<typename T>
+class TWidgetDialog final : public WidgetDialog {
+  static_assert(std::is_base_of_v<Widget, T>, "Not a Widget");
+
+public:
+  using WidgetDialog::WidgetDialog;
+
+  template<typename... Args>
+  void SetWidget(Args&&... args) {
+    FinishPreliminary(std::make_unique<T>(std::forward<Args>(args)...));
+  }
+
+  auto &GetWidget() noexcept {
+    return static_cast<T &>(WidgetDialog::GetWidget());
+  }
 };
 
 /**
@@ -154,11 +180,9 @@ protected:
  * @return true if changed data was saved
  */
 bool
-DefaultWidgetDialog(SingleWindow &parent, const DialogLook &look,
-                    const TCHAR *caption, const PixelRect &rc, Widget &widget);
+DefaultWidgetDialog(UI::SingleWindow &parent, const DialogLook &look,
+                    const char *caption, const PixelRect &rc, Widget &widget);
 
 bool
-DefaultWidgetDialog(SingleWindow &parent, const DialogLook &look,
-                    const TCHAR *caption, Widget &widget);
-
-#endif
+DefaultWidgetDialog(UI::SingleWindow &parent, const DialogLook &look,
+                    const char *caption, Widget &widget);

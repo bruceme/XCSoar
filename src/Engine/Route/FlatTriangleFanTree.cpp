@@ -1,107 +1,82 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlatTriangleFanTree.hpp"
+#include "FlatTriangleFanVisitor.hpp"
 #include "RouteLink.hpp"
 #include "Terrain/RasterMap.hpp"
 #include "ReachFanParms.hpp"
-#include "Util/GlobalSliceAllocator.hpp"
+#include "util/GlobalSliceAllocator.hxx"
 #include "Geo/Flat/FlatProjection.hpp"
 
-#define REACH_BUFFER 1
-#define REACH_SWEEP (ROUTEPOLAR_Q1-REACH_BUFFER)
-
-#define REACH_MAX_DEPTH 4
-#define REACH_MIN_STEP 25
-#define REACH_MAX_VERTICES 2000
+#define REACH_SWEEP (ROUTEPOLAR_Q1-BUFFER)
 
 static bool
-AlmostTheSame(const FlatGeoPoint p1, const FlatGeoPoint p2)
+AlmostTheSame(const FlatGeoPoint p1, const FlatGeoPoint p2) noexcept
 {
   const FlatGeoPoint k = p1 - p2;
-  const int dmax = std::max(abs(k.x), abs(k.y));
+  const unsigned dmax = std::max<unsigned>(std::abs(k.x), std::abs(k.y));
   return dmax <= 1;
 }
 
 static bool
-TooClose(const FlatGeoPoint p1, const FlatGeoPoint p2)
+TooClose(const FlatGeoPoint p1, const FlatGeoPoint p2) noexcept
 {
   const FlatGeoPoint k = p1 - p2;
-  const int dmax = std::max(abs(k.x), abs(k.y));
-  return dmax < REACH_MIN_STEP;
+  const unsigned dmax = std::max<unsigned>(std::abs(k.x), std::abs(k.y));
+  return dmax < FlatTriangleFanTree::MIN_STEP;
 }
 
-void
-FlatTriangleFanTree::CalcBB()
+const FlatBoundingBox &
+FlatTriangleFanTree::CalcBoundingBox() noexcept
 {
-  FlatTriangleFan::CalcBoundingBox();
+  bb_children = fan.CalcBoundingBox();
 
-  bb_children = bounding_box;
+  for (auto &child : children)
+    bb_children.Merge(child.CalcBoundingBox());
 
-  for (auto &child : children) {
-    child.CalcBB();
-    bb_children.Merge(child.bb_children);
-  }
+  return bb_children;
 }
 
 void
 FlatTriangleFanTree::FillReach(const AFlatGeoPoint &origin,
-                               ReachFanParms &parms)
+                               ReachFanParms &parms) noexcept
 {
   gaps_filled = false;
 
   FillReach(origin, 0, ROUTEPOLAR_POINTS, parms);
 
-  for (parms.set_depth = 0; parms.set_depth < REACH_MAX_DEPTH;
+  for (parms.set_depth = 0; parms.set_depth < MAX_DEPTH;
       ++parms.set_depth)
     if (!FillDepth(origin, parms))
       // stop searching
       break;
 
   // this boundingbox update visits the tree recursively
-  CalcBB();
+  CalcBoundingBox();
 }
 
 void
-FlatTriangleFanTree::DummyReach(const AFlatGeoPoint &ao)
+FlatTriangleFanTree::DummyReach(const AFlatGeoPoint &ao) noexcept
 {
   assert(children.empty());
 
-  AddOrigin(ao, 0);
-  CalcBB();
+  fan.AddOrigin(ao, 0);
+  CalcBoundingBox();
 }
 
 bool
 FlatTriangleFanTree::FillDepth(const AFlatGeoPoint &origin,
-                               ReachFanParms &parms)
+                               ReachFanParms &parms) noexcept
 {
   if (depth == parms.set_depth) {
     if (gaps_filled)
       return true;
     gaps_filled = true;
 
-    if (parms.vertex_counter > REACH_MAX_VERTICES)
+    if (parms.vertex_counter > MAX_VERTICES)
       return false;
-    if (parms.fan_counter > REACH_MAX_FANS)
+    if (parms.fan_counter > MAX_FANS)
       return false;
 
     FillGaps(origin, parms);
@@ -116,10 +91,10 @@ FlatTriangleFanTree::FillDepth(const AFlatGeoPoint &origin,
 bool
 FlatTriangleFanTree::FillReach(const AFlatGeoPoint &origin, const int index_low,
                                const int index_high,
-                               const ReachFanParms &parms)
+                               const ReachFanParms &parms) noexcept
 {
   const GeoPoint geo_origin = parms.projection.Unproject(origin);
-  height = origin.altitude;
+  fan.SetHeight(origin.altitude);
 
   // fill vector
   if (!IsRoot()) {
@@ -130,7 +105,7 @@ FlatTriangleFanTree::FillReach(const AFlatGeoPoint &origin, const int index_low,
       return false;
   }
 
-  AddOrigin(origin, index_high - index_low);
+  fan.AddOrigin(origin, index_high - index_low);
   for (int index = index_low; index < index_high; ++index) {
     FlatGeoPoint x = parms.ReachIntercept(index, origin, geo_origin);
     /* if ReachIntercept() did not find anything reasonable it returns
@@ -140,22 +115,24 @@ FlatTriangleFanTree::FillReach(const AFlatGeoPoint &origin, const int index_low,
     if (AlmostTheSame(origin, x))
       x = origin;
 
-    AddPoint(x);
+    fan.AddPoint(x);
   }
 
-  return CommitPoints(IsRoot());
+  return fan.CommitPoints(IsRoot());
 }
 
 void
-FlatTriangleFanTree::FillGaps(const AFlatGeoPoint &origin, ReachFanParms &parms)
+FlatTriangleFanTree::FillGaps(const AFlatGeoPoint &origin,
+                              ReachFanParms &parms) noexcept
 {
   // worth checking for gaps?
-  if (vs.size() > 2 && parms.rpolars.IsTurningReachEnabled()) {
+  if (const auto vertices = fan.GetVertices();
+      vertices.size() > 2 && parms.rpolars.IsTurningReachEnabled()) {
 
     // now check gaps
-    RouteLink e_last(RoutePoint(vs.front(), 0),
+    RouteLink e_last(RoutePoint(vertices.front(), 0),
                      origin, parms.projection);
-    for (auto x_last = vs.cbegin(), end = vs.cend(),
+    for (auto x_last = vertices.begin(), end = vertices.end(),
          x = x_last + 1; x != end; x_last = x++) {
       if (TooClose(*x, origin) || TooClose(*x_last, origin))
         continue;
@@ -171,14 +148,14 @@ FlatTriangleFanTree::FillGaps(const AFlatGeoPoint &origin, ReachFanParms &parms)
 
 void
 FlatTriangleFanTree::UpdateTerrainBase(const FlatGeoPoint o,
-                                       ReachFanParms &parms)
+                                       ReachFanParms &parms) noexcept
 {
   if (!parms.terrain) {
     parms.terrain_base = 0;
     return;
   }
 
-  for (const auto &x : vs) {
+  for (const auto &x : fan.GetVertices()) {
     const FlatGeoPoint av = (o + x) * 0.5;
     const GeoPoint p = parms.projection.Unproject(av);
     const auto h = parms.terrain->GetHeight(p);
@@ -198,7 +175,8 @@ FlatTriangleFanTree::UpdateTerrainBase(const FlatGeoPoint o,
 
 bool
 FlatTriangleFanTree::CheckGap(const AFlatGeoPoint &n, const RouteLink &e_1,
-                              const RouteLink &e_2, ReachFanParms &parms)
+                              const RouteLink &e_2,
+                              ReachFanParms &parms) noexcept
 {
   const bool side = (e_1.d > e_2.d);
   const RouteLink &e_long = (side ? e_1 : e_2);
@@ -221,9 +199,9 @@ FlatTriangleFanTree::CheckGap(const AFlatGeoPoint &n, const RouteLink &e_1,
   int index_left, index_right;
   if (!side) {
     index_left = e_long.polar_index - REACH_SWEEP;
-    index_right = e_long.polar_index - REACH_BUFFER;
+    index_right = e_long.polar_index - BUFFER;
   } else {
-    index_left = e_long.polar_index + REACH_BUFFER;
+    index_left = e_long.polar_index + BUFFER;
     index_right = e_long.polar_index + REACH_SWEEP;
   }
 
@@ -238,9 +216,9 @@ FlatTriangleFanTree::CheckGap(const AFlatGeoPoint &n, const RouteLink &e_1,
 
     FlatTriangleFanTree child(depth + 1);
     if (child.FillReach(x, index_left, index_right, parms)) {
-      parms.vertex_counter += child.vs.size();
+      parms.vertex_counter += child.fan.GetVertices().size();
       parms.fan_counter++;
-      children.emplace_back(std::move(child));
+      children.emplace_front(std::move(child));
       return true;
     }
   }
@@ -250,26 +228,26 @@ FlatTriangleFanTree::CheckGap(const AFlatGeoPoint &n, const RouteLink &e_1,
 
 int
 FlatTriangleFanTree::DirectArrival(FlatGeoPoint dest,
-                                   const ReachFanParms &parms) const
+                                   const ReachFanParms &parms) const noexcept
 {
-  assert(!vs.empty());
-  return parms.rpolars.CalcGlideArrival(GetOrigin(), dest, parms.projection);
+  assert(!IsEmpty());
+  return parms.rpolars.CalcGlideArrival(fan.GetOrigin(), dest, parms.projection);
 }
 
 bool
 FlatTriangleFanTree::FindPositiveArrival(const FlatGeoPoint n,
                                          const ReachFanParms &parms,
-                                         int &arrival_height) const
+                                         int &arrival_height) const noexcept
 {
-  if (height < arrival_height)
+  if (GetHeight() < arrival_height)
     return false; // can't possibly improve
 
   if (!bb_children.IsInside(n))
     return false; // not in scope
 
-  if (IsInside(n)) { // found in this segment
+  if (fan.IsInside(n, IsRoot())) { // found in this segment
     const int h =
-      parms.rpolars.CalcGlideArrival(GetOrigin(), n, parms.projection);
+      parms.rpolars.CalcGlideArrival(fan.GetOrigin(), n, parms.projection);
     if (h > arrival_height) {
       arrival_height = h;
       return true;
@@ -283,6 +261,8 @@ FlatTriangleFanTree::FindPositiveArrival(const FlatGeoPoint n,
   bool retval = false;
   for (const auto &child : children)
     if (child.FindPositiveArrival(n, parms, arrival_height))
+      /* no short-circuit here because another child may improve the
+         arrival height */
       retval = true;
 
   return retval;
@@ -290,13 +270,12 @@ FlatTriangleFanTree::FindPositiveArrival(const FlatGeoPoint n,
 
 void
 FlatTriangleFanTree::AcceptInRange(const FlatBoundingBox &bb,
-                                   FlatTriangleFanVisitor &visitor) const
+                                   FlatTriangleFanVisitor &visitor) const noexcept
 {
   if (!bb.Overlaps(bb_children))
     return;
 
-  if (bb.Overlaps(bounding_box))
-    visitor.VisitFan(GetOrigin(), GetHull(IsRoot()));
+  fan.AcceptInRange(bb, visitor, IsRoot());
 
   for (const auto &child : children)
     child.AcceptInRange(bb, visitor);

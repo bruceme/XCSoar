@@ -1,34 +1,20 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Trace.hpp"
 #include "Vector.hpp"
-#include "Util/GlobalSliceAllocator.hpp"
+#include "Geo/GeoBounds.hpp"
+#include "Geo/Flat/FlatBoundingBox.hpp"
+#include "Geo/Flat/FlatRay.hpp"
+#include "util/GlobalSliceAllocator.hxx"
 
 #include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <vector>
 
-Trace::Trace(const unsigned _no_thin_time, const unsigned max_time,
-             const unsigned max_size)
+Trace::Trace(const Time _no_thin_time, const Time max_time,
+             const unsigned max_size) noexcept
   :cached_size(0),
    max_time(max_time),
    no_thin_time(_no_thin_time),
@@ -39,13 +25,13 @@ Trace::Trace(const unsigned _no_thin_time, const unsigned max_time,
 }
 
 void
-Trace::clear()
+Trace::clear() noexcept
 {
   assert(cached_size == delta_list.size());
   assert(cached_size == chronological_list.size());
 
   average_delta_distance = 0;
-  average_delta_time = 0;
+  average_delta_time = {};
 
   delta_list.clear();
   chronological_list.clear_and_dispose(MakeDisposer());
@@ -58,21 +44,21 @@ Trace::clear()
   ++append_serial;
 }
 
-unsigned
-Trace::GetRecentTime(const unsigned t) const
+Trace::Time
+Trace::GetRecentTime(const Time t) const noexcept
 {
   if (empty())
-    return 0;
+    return {};
 
   const TracePoint &last = back();
   if (last.GetTime() > t)
     return last.GetTime() - t;
 
-  return 0;
+  return {};
 }
 
 void
-Trace::UpdateDelta(TraceDelta &td)
+Trace::UpdateDelta(TraceDelta &td) noexcept
 {
   assert(cached_size == delta_list.size());
   assert(cached_size == chronological_list.size());
@@ -91,7 +77,7 @@ Trace::UpdateDelta(TraceDelta &td)
 }
 
 void
-Trace::EraseInside(DeltaList::iterator it)
+Trace::EraseInside(DeltaList::iterator it) noexcept
 {
   assert(cached_size > 0);
   assert(cached_size == delta_list.size());
@@ -116,7 +102,7 @@ Trace::EraseInside(DeltaList::iterator it)
 }
 
 bool
-Trace::EraseDelta(const unsigned target_size, const unsigned recent)
+Trace::EraseDelta(const unsigned target_size, const Time recent) noexcept
 {
   assert(cached_size == delta_list.size());
   assert(cached_size == chronological_list.size());
@@ -126,7 +112,7 @@ Trace::EraseDelta(const unsigned target_size, const unsigned recent)
 
   bool modified = false;
 
-  const unsigned recent_time = GetRecentTime(recent);
+  const Time recent_time = GetRecentTime(recent);
 
   auto candidate = delta_list.begin();
   while (size() > target_size) {
@@ -145,9 +131,9 @@ Trace::EraseDelta(const unsigned target_size, const unsigned recent)
 }
 
 bool
-Trace::EraseEarlierThan(const unsigned p_time)
+Trace::EraseEarlierThan(const Time p_time) noexcept
 {
-  if (p_time == 0 || empty() || GetFront().point.GetTime() >= p_time)
+  if (p_time == Time{} || empty() || GetFront().point.GetTime() >= p_time)
     // there will be nothing to remove
     return false;
 
@@ -174,9 +160,9 @@ Trace::EraseEarlierThan(const unsigned p_time)
 }
 
 void
-Trace::EraseLaterThan(const unsigned min_time)
+Trace::EraseLaterThan(const Time min_time) noexcept
 {
-  assert(min_time > 0);
+  assert(min_time.count() > 0);
   assert(!empty());
 
   while (!empty() && GetBack().point.GetTime() > min_time) {
@@ -201,7 +187,7 @@ Trace::EraseLaterThan(const unsigned min_time)
  * Update start node (and neighbour) after min time pruning
  */
 void
-Trace::EraseStart(TraceDelta &td)
+Trace::EraseStart(TraceDelta &td) noexcept
 {
   delta_list.erase(delta_list.iterator_to(td));
 
@@ -212,10 +198,12 @@ Trace::EraseStart(TraceDelta &td)
 }
 
 void
-Trace::push_back(const TracePoint &point)
+Trace::push_back(const TracePoint &point) noexcept
 {
   assert(cached_size == delta_list.size());
   assert(cached_size == chronological_list.size());
+
+  const Time min_delta = std::chrono::seconds{2};
 
   if (empty()) {
     // first point determines origin for flat projection
@@ -224,16 +212,19 @@ Trace::push_back(const TracePoint &point)
   } else if (point.GetTime() < back().GetTime()) {
     // gone back in time
 
-    if (point.GetTime() + 180 < back().GetTime()) {
+    const Time clear_threshold = std::chrono::minutes{3};
+    const Time fix_threshold = std::chrono::seconds{10};
+
+    if (point.GetTime() + clear_threshold < back().GetTime()) {
       /* not fixable, clear the trace and restart from scratch */
       clear();
       return;
     }
 
     /* not much, try to fix it */
-    EraseLaterThan(point.GetTime() - 10);
+    EraseLaterThan(point.GetTime() - fix_threshold);
     ++modify_serial;
-  } else if (point.GetTime() - back().GetTime() < 2)
+  } else if (point.GetTime() - back().GetTime() < min_delta)
     // only add one item per two seconds
     return;
 
@@ -245,7 +236,7 @@ Trace::push_back(const TracePoint &point)
   assert(size() < max_size);
 
   TraceDelta *td = allocator.allocate(1);
-  allocator.construct(td, point);
+  std::allocator_traits<Allocator>::construct(allocator, td, point);
   td->point.Project(task_projection);
 
   delta_list.insert(*td);
@@ -260,9 +251,9 @@ Trace::push_back(const TracePoint &point)
 }
 
 unsigned
-Trace::CalcAverageDeltaDistance(const unsigned no_thin) const
+Trace::CalcAverageDeltaDistance(const Time no_thin) const noexcept
 {
-  unsigned r = GetRecentTime(no_thin);
+  const Time r = GetRecentTime(no_thin);
   unsigned acc = 0;
   unsigned counter = 0;
 
@@ -277,10 +268,10 @@ Trace::CalcAverageDeltaDistance(const unsigned no_thin) const
   return 0;
 }
 
-unsigned
-Trace::CalcAverageDeltaTime(const unsigned no_thin) const
+Trace::Time
+Trace::CalcAverageDeltaTime(const Time no_thin) const noexcept
 {
-  unsigned r = GetRecentTime(no_thin);
+  const Time r = GetRecentTime(no_thin);
   unsigned counter = 0;
 
   /* find the last item before the "r" timestamp */
@@ -290,18 +281,18 @@ Trace::CalcAverageDeltaTime(const unsigned no_thin) const
     ++counter;
 
   if (counter < 2)
-    return 0;
+    return {};
 
   --it;
   --counter;
 
-  unsigned start_time = front().GetTime();
-  unsigned end_time = it->point.GetTime();
+  Time start_time = front().GetTime();
+  Time end_time = it->point.GetTime();
   return (end_time - start_time) / counter;
 }
 
 void
-Trace::EnforceTimeWindow(unsigned latest_time)
+Trace::EnforceTimeWindow(const Time latest_time) noexcept
 {
   if (max_time == null_time)
     /* no time window configured */
@@ -316,8 +307,8 @@ Trace::EnforceTimeWindow(unsigned latest_time)
   EraseEarlierThan(latest_time - max_time);
 }
 
-void
-Trace::Thin2()
+inline void
+Trace::Thin2() noexcept
 {
   const unsigned target_size = opt_size;
   assert(size() > target_size);
@@ -328,14 +319,14 @@ Trace::Thin2()
     return;
 
   // if still too big, thin again, ignoring recency
-  if (no_thin_time > 0)
-    EraseDelta(target_size, 0);
+  if (no_thin_time.count() > 0)
+    EraseDelta(target_size, {});
 
   assert(size() <= target_size);
 }
 
 void
-Trace::Thin()
+Trace::Thin() noexcept
 {
   assert(cached_size == delta_list.size());
   assert(cached_size == chronological_list.size());
@@ -353,7 +344,7 @@ Trace::Thin()
 }
 
 void
-Trace::GetPoints(TracePointVector& iov) const
+Trace::GetPoints(TracePointVector& iov) const noexcept
 {
   iov.clear();
   iov.reserve(size());
@@ -372,34 +363,33 @@ public:
   typedef typename I::difference_type difference_type;
 
   PointerIterator() = default;
-  explicit PointerIterator(I _i):i(_i) {}
-  PointerIterator<I> &operator=(const PointerIterator<I> &other) = default;
+  explicit PointerIterator(I _i) noexcept:i(_i) {}
 
-  PointerIterator<I> &operator--() {
+  PointerIterator<I> &operator--() noexcept {
     --i;
     return *this;
   }
 
-  PointerIterator<I> &operator++() {
+  PointerIterator<I> &operator++() noexcept {
     ++i;
     return *this;
   }
 
-  typename I::pointer operator*() {
+  typename I::pointer operator*() noexcept {
     return &*i;
   }
 
-  bool operator==(const PointerIterator<I> &other) const {
+  bool operator==(const PointerIterator<I> &other) const noexcept {
     return i == other.i;
   }
 
-  bool operator!=(const PointerIterator<I> &other) const {
+  bool operator!=(const PointerIterator<I> &other) const noexcept {
     return i != other.i;
   }
 };
 
 void
-Trace::GetPoints(TracePointerVector &v) const
+Trace::GetPoints(TracePointerVector &v) const noexcept
 {
   v.clear();
   v.reserve(size());
@@ -409,7 +399,7 @@ Trace::GetPoints(TracePointerVector &v) const
 }
 
 bool
-Trace::SyncPoints(TracePointerVector &v) const
+Trace::SyncPoints(TracePointerVector &v) const noexcept
 {
   assert(v.size() <= size());
 
@@ -427,8 +417,9 @@ Trace::SyncPoints(TracePointerVector &v) const
 }
 
 void
-Trace::GetPoints(TracePointVector &v, unsigned min_time,
-                 const GeoPoint &location, double min_distance) const
+Trace::GetPoints(TracePointVector &v, const Time min_time,
+                 const GeoPoint &location,
+                 double min_distance) const
 {
   /* skip the trace points that are before min_time */
   Trace::const_iterator i = begin(), end = this->end();
@@ -455,4 +446,297 @@ Trace::GetPoints(TracePointVector &v, unsigned min_time,
     v.push_back(*i);
     i.NextSquareRange(sq_range, end);
   } while (i != end);
+}
+
+/**
+ * True if the flat segment [a,b] hits \a box (endpoint inside or edge cross).
+ */
+[[gnu::pure]]
+static bool
+FlatSegmentHitsBox(const FlatGeoPoint &a, const FlatGeoPoint &b,
+                   const FlatBoundingBox &box) noexcept
+{
+  if (box.IsInside(a) || box.IsInside(b))
+    return true;
+
+  if (a == b)
+    return false;
+
+  return box.Intersects(FlatRay(a, b));
+}
+
+/**
+ * After distance thinning, keep first/last and every \a stride-th point.
+ */
+static void
+ApplyPointStride(TracePointVector &points, unsigned stride) noexcept
+{
+  if (stride <= 1 || points.size() <= 2)
+    return;
+
+  TracePointVector kept;
+  kept.reserve(points.size() / stride + 2);
+  kept.push_back(points.front());
+  for (size_t i = stride; i + 1 < points.size(); i += stride)
+    kept.push_back(points[i]);
+  if (kept.back().GetTime() != points.back().GetTime())
+    kept.push_back(points.back());
+  points.swap(kept);
+}
+
+/**
+ * Raise stride until #points fits in \a max_points (first/last preserved).
+ * Speed-agnostic: PG dense circles and glider cruise share one budget.
+ */
+static unsigned
+StrideForBudget(unsigned point_count, unsigned max_points,
+                unsigned min_stride) noexcept
+{
+  unsigned stride = std::max(1u, min_stride);
+  if (max_points < 2 || point_count <= max_points)
+    return stride;
+
+  /* kept ≈ 1 + ceil((n - 1) / stride), and we always re-add the tip. */
+  const unsigned numer = point_count - 1;
+  const unsigned denom = max_points - 1;
+  const unsigned need = (numer + denom - 1) / denom;
+  return std::max(stride, need);
+}
+
+/**
+ * Distance-thin from the newest sample backward, then always keep the
+ * oldest candidate.  Anchoring at the tip stops the kept vertices from
+ * walking when the viewport drops an old point (follow / replay).
+ */
+static void
+ThinByDistanceFromTip(const TracePointVector &candidates,
+                      TracePointVector &out,
+                      unsigned sq_range) noexcept
+{
+  out.clear();
+  if (candidates.empty())
+    return;
+
+  out.reserve(candidates.size());
+  out.push_back(candidates.back());
+  size_t last = candidates.size() - 1;
+  for (size_t k = candidates.size() - 1; k-- > 0;) {
+    if (candidates[k].FlatSquareDistanceTo(candidates[last]) >= sq_range) {
+      out.push_back(candidates[k]);
+      last = k;
+    }
+  }
+
+  if (out.back().GetTime() != candidates.front().GetTime())
+    out.push_back(candidates.front());
+
+  std::reverse(out.begin(), out.end());
+}
+
+/**
+ * If the thinned path still exceeds \a max_points, stride only the
+ * older prefix so recent circling stays dense.
+ */
+static void
+FitPointBudget(TracePointVector &points, unsigned max_points,
+               unsigned min_stride) noexcept
+{
+  if (max_points < 2 || points.size() <= max_points)
+    return;
+
+  constexpr unsigned TAIL_CAP = 512;
+  const unsigned tail =
+    std::min(unsigned(points.size() - 2),
+             std::min(TAIL_CAP, max_points * 3 / 4));
+  if (tail < 2 || max_points <= tail + 1) {
+    ApplyPointStride(points,
+                     StrideForBudget(unsigned(points.size()), max_points,
+                                     min_stride));
+    return;
+  }
+
+  TracePointVector prefix;
+  prefix.insert(prefix.end(), points.begin(), points.end() - tail);
+  ApplyPointStride(prefix,
+                   StrideForBudget(unsigned(prefix.size()),
+                                   max_points - tail, min_stride));
+
+  TracePointVector kept;
+  kept.reserve(prefix.size() + tail);
+  kept.insert(kept.end(), prefix.begin(), prefix.end());
+
+  const auto tail_begin = points.end() - tail;
+  const size_t skip =
+    !kept.empty() && kept.back().GetTime() == tail_begin->GetTime() ? 1 : 0;
+  kept.insert(kept.end(), tail_begin + skip, points.end());
+  points.swap(kept);
+}
+
+static void
+ThinTraceCandidates(const TracePointVector &candidates,
+                    TracePointVector &out,
+                    const TrailSpatialFilter &filter) noexcept
+{
+  ThinByDistanceFromTip(candidates, out, filter.sq_range);
+  FitPointBudget(out, filter.max_points, filter.point_stride);
+}
+
+void
+FilterTraceByBounds(const TracePointVector &in,
+                    TracePointVector &out,
+                    const TrailSpatialFilter &filter) noexcept
+{
+  out.clear();
+
+  if (!filter.valid || in.empty())
+    return;
+
+  TracePointVector candidates;
+  candidates.reserve(std::min(in.size(), size_t(4096)));
+
+  const TracePoint *prev = nullptr;
+  FlatGeoPoint prev_flat{};
+
+  for (const auto &point : in) {
+    const FlatGeoPoint flat = point.GetFlatLocation();
+    bool keep = filter.box.IsInside(flat);
+
+    if (!keep && prev != nullptr &&
+        FlatSegmentHitsBox(prev_flat, flat, filter.box))
+      keep = true;
+
+    if (keep) {
+      if (prev != nullptr &&
+          (candidates.empty() ||
+           candidates.back().GetTime() != prev->GetTime())) {
+        if (!filter.box.IsInside(prev_flat) &&
+            FlatSegmentHitsBox(prev_flat, flat, filter.box))
+          candidates.push_back(*prev);
+      }
+
+      if (candidates.empty() ||
+          candidates.back().GetTime() != point.GetTime())
+        candidates.push_back(point);
+    }
+
+    prev = &point;
+    prev_flat = flat;
+  }
+
+  if (candidates.empty())
+    return;
+
+  ThinTraceCandidates(candidates, out, filter);
+}
+
+TrailSpatialFilter
+Trace::MakeSpatialFilter(const GeoBounds &bounds,
+                         const GeoPoint &location,
+                         double min_distance,
+                         unsigned point_stride,
+                         unsigned max_points) const noexcept
+{
+  TrailSpatialFilter filter;
+  if (!bounds.IsValid() || empty() || !task_projection.IsValid())
+    return filter;
+
+  filter.box = task_projection.Project(bounds);
+  const unsigned range = ProjectRange(location, min_distance);
+  filter.sq_range = range * range;
+  filter.point_stride = std::max(1u, point_stride);
+  filter.max_points = max_points;
+  filter.valid = true;
+  return filter;
+}
+
+void
+Trace::GetPointsFrom(Time min_time, TracePointVector &v) const noexcept
+{
+  v.clear();
+
+  Trace::const_iterator i = begin(), end = this->end();
+  while (i != end && i->GetTime() < min_time)
+    ++i;
+
+  if (i == end)
+    return;
+
+  v.reserve(size());
+  for (; i != end; ++i)
+    v.push_back(*i);
+}
+
+void
+Trace::AppendPointsAfter(Time after, TracePointVector &v) const noexcept
+{
+  Trace::const_iterator i = begin(), end = this->end();
+  while (i != end && i->GetTime() <= after)
+    ++i;
+
+  for (; i != end; ++i)
+    v.push_back(*i);
+}
+
+void
+Trace::GetPoints(TracePointVector &v, const Time min_time,
+                 const GeoBounds &bounds,
+                 const GeoPoint &location,
+                 const double min_distance,
+                 const unsigned point_stride,
+                 const unsigned max_points) const
+{
+  v.clear();
+
+  const TrailSpatialFilter filter =
+    MakeSpatialFilter(bounds, location, min_distance, point_stride,
+                      max_points);
+  if (!filter.valid)
+    return;
+
+  /* Skip points before min_time. */
+  Trace::const_iterator i = begin(), end = this->end();
+  while (i != end && i->GetTime() < min_time)
+    ++i;
+
+  if (i == end)
+    return;
+
+  /* Bounds first (flat AABB), then spacing-thin — one chronological pass. */
+  TracePointVector candidates;
+  candidates.reserve(std::min(size_t(size()), size_t(4096)));
+
+  const TracePoint *prev = nullptr;
+  FlatGeoPoint prev_flat{};
+
+  for (; i != end; ++i) {
+    const TracePoint &point = *i;
+    const FlatGeoPoint flat = point.GetFlatLocation();
+    bool keep = filter.box.IsInside(flat);
+
+    if (!keep && prev != nullptr &&
+        FlatSegmentHitsBox(prev_flat, flat, filter.box))
+      keep = true;
+
+    if (keep) {
+      if (prev != nullptr &&
+          (candidates.empty() ||
+           candidates.back().GetTime() != prev->GetTime())) {
+        if (!filter.box.IsInside(prev_flat) &&
+            FlatSegmentHitsBox(prev_flat, flat, filter.box))
+          candidates.push_back(*prev);
+      }
+
+      if (candidates.empty() ||
+          candidates.back().GetTime() != point.GetTime())
+        candidates.push_back(point);
+    }
+
+    prev = &point;
+    prev_flat = flat;
+  }
+
+  if (candidates.empty())
+    return;
+
+  ThinTraceCandidates(candidates, v, filter);
 }

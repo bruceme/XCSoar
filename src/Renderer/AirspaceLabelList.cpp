@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include <algorithm>
 #include "AirspaceLabelList.hpp"
@@ -29,26 +9,30 @@ class AirspaceLabelListCompare {
   const AirspaceWarningConfig &config;
 
 public:
-  AirspaceLabelListCompare(const AirspaceWarningConfig &_config)
+  AirspaceLabelListCompare(const AirspaceWarningConfig &_config) noexcept
     :config(_config) {}
 
+  [[gnu::pure]]
   bool operator() (const AirspaceLabelList::Label &label1,
-                   const AirspaceLabelList::Label &label2) {
-    bool en1 = config.IsClassEnabled(label1.cls);
-    bool en2 = config.IsClassEnabled(label2.cls);
+                   const AirspaceLabelList::Label &label2) noexcept {
+    const bool en1 = config.IsClassEnabled(label1.cls);
+    const bool en2 = config.IsClassEnabled(label2.cls);
 
-    if(en1 == en2)
-      return AirspaceAltitude::SortHighest(label2.base, label1.base);
-    else if(en1)
-      return false;
-    else
-      return true;
+    if (en1 != en2)
+      return en1;
+
+    if (label1.base.altitude != label2.base.altitude)
+      return AirspaceAltitude::SortHighest(label1.base, label2.base);
+
+    return label1.identity < label2.identity;
   }
 };
 
 void
-AirspaceLabelList::Add(const GeoPoint &pos, AirspaceClass cls, 
-                       const AirspaceAltitude &base, const AirspaceAltitude &top)
+AirspaceLabelList::Add(const GeoPoint &pos, AirspaceClass cls,
+                       const AirspaceAltitude &base,
+                       const AirspaceAltitude &top,
+                       const Identity identity) noexcept
 {
   if (labels.full())
     return;
@@ -58,10 +42,11 @@ AirspaceLabelList::Add(const GeoPoint &pos, AirspaceClass cls,
   label.pos = pos;
   label.base = base;
   label.top = top;
+  label.identity = identity;
 }
 
 void
-AirspaceLabelList::Sort(const AirspaceWarningConfig &config)
+AirspaceLabelList::Sort(const AirspaceWarningConfig &config) noexcept
 {
   AirspaceLabelListCompare compare(config);
   std::sort(labels.begin(), labels.end(), compare);

@@ -4,19 +4,21 @@
 #include "Computer/FlyingComputer.hpp"
 #include "Engine/Contest/ContestManager.hpp"
 #include "Computer/Settings.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "OS/FileUtil.hpp"
-#include "IO/FileLineReader.hpp"
+#include "system/ConvertPathName.hpp"
+#include "system/FileUtil.hpp"
+#include "io/FileLineReader.hpp"
 #include "NMEA/MoreData.hpp"
 #include "NMEA/Derived.hpp"
 #include "test_debug.hpp"
-#include "Util/PrintException.hxx"
+#include "util/PrintException.hxx"
 
 #include <fstream>
 
 extern "C" {
 #include "tap.h"
 }
+
+using namespace std::chrono;
 
 ContestResult official_score_classic,
   official_score_sprint,
@@ -59,9 +61,9 @@ inline void load_score_file(std::ifstream& fscore,
   fscore >> tmp; score.distance = tmp;
   fscore >> tmp; double speed(tmp);
   if (speed>0) {
-    score.time = 3600*score.distance/speed;
+    score.time = FloatDuration{hours{1}} * score.distance / speed;
   } else {
-    score.time = 0;
+    score.time = {};
   }
   score.distance *= 1000;
 }
@@ -69,7 +71,7 @@ inline void load_score_file(std::ifstream& fscore,
 
 inline void load_scores(unsigned &contest_handicap) {
   // replay_file
-  const auto score_file = replay_file.WithExtension(_T(".txt"));
+  const auto score_file = replay_file.WithSuffix(".txt");
   if (verbose) {
     std::cout << "# replay file: " << replay_file << "\n";
     std::cout << "# score file: " << score_file << "\n";
@@ -99,7 +101,7 @@ public:
     :IgcReplay(std::move(_reader)) {}
 
   void print(std::ostream &f, const MoreData &basic) {
-    f << (double)basic.time << " " 
+    f << basic.time.ToDuration().count() << " "
       <<  (double)basic.location.longitude.Degrees() << " " 
       <<  (double)basic.location.latitude.Degrees() << " "
       <<  (double)basic.nav_altitude << "\n";
@@ -112,7 +114,7 @@ static bool
 test_replay(const Contest olc_type,
             const ContestResult &official_score)
 {
-  Directory::Create(Path(_T("output/results")));
+  Directory::Create(Path("output/results"));
   std::ofstream f("output/results/res-sample.txt");
 
   GlidePolar glide_polar(2);

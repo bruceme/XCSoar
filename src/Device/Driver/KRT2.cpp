@@ -1,37 +1,19 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/KRT2.hpp"
 #include "Device/Driver.hpp"
 #include "Device/Port/Port.hpp"
 #include "NMEA/Info.hpp"
-#include "RadioFrequency.hpp"
-#include "Thread/Cond.hxx"
-#include "Thread/Mutex.hpp"
-#include "Util/CharUtil.hxx"
-#include "Util/StaticFifoBuffer.hxx"
+#include "Radio/RadioFrequency.hpp"
+#include "thread/Cond.hxx"
+#include "thread/Mutex.hxx"
+#include "util/CharUtil.hxx"
+#include "util/SpanCast.hxx"
+#include "util/StaticFifoBuffer.hxx"
 
-#include <stdint.h>
+#include <cstdint>
+
 #include <stdio.h>
 
 /**
@@ -44,24 +26,54 @@ Copyright_License {
  * for the protocol specification.
  */
 class KRT2Device final : public AbstractDevice {
-  static constexpr unsigned CMD_TIMEOUT = 250; //!< Command timeout in ms.
+  static constexpr auto CMD_TIMEOUT = std::chrono::milliseconds(250); //!< Command timeout
   static constexpr unsigned NR_RETRIES = 3; //!< Number of tries to send a command.
 
-  static constexpr char STX = 0x02; //!< Command start character.
-  static constexpr char ACK = 0x06; //!< Command acknowledged character.
-  static constexpr char NAK = 0x15; //!< Command not acknowledged character.
-  static constexpr char NO_RSP = 0; //!< No response received yet.
+  static constexpr std::byte STX{0x02}; //!< Command start character.
+  static constexpr std::byte ACK{0x06}; //!< Command acknowledged character.
+  static constexpr std::byte NAK{0x15}; //!< Command not acknowledged character.
+  static constexpr std::byte NO_RSP{0}; //!< No response received yet.
+  static constexpr std::byte RCQ{'S'};  //!< Respond to connection query
+
+  /** Unknown code, received once after power up, STX '8' */
+  static constexpr std::byte UNKNOWN1{'8'};
+  static constexpr std::byte SET_VOLUME{'A'};
+  static constexpr std::byte LOW_BATTERY{'B'};
+  static constexpr std::byte EXCHANGE_FREQUENCIES{'C'};
+  static constexpr std::byte NO_LOW_BATTERY{'D'};
+  static constexpr std::byte PLL_ERROR{'E'};
+  static constexpr std::byte NO_PLL_ERROR{'F'};
+  static constexpr std::byte RX{'J'};
+  static constexpr std::byte TX{'K'};
+  static constexpr std::byte TE{'L'};
+  static constexpr std::byte RX_ON_ACTIVE_FREQUENCY{'M'};
+  static constexpr std::byte DUAL_ON{'O'};
+  static constexpr std::byte STANDBY_FREQUENCY{'R'};
+  static constexpr std::byte ACTIVE_FREQUENCY{'U'};
+  static constexpr std::byte NO_RX{'V'};
+  static constexpr std::byte PLL_ERROR2{'W'};
+  static constexpr std::byte NO_TX_RX{'Y'};
+  static constexpr std::byte SET_FREQUENCY{'Z'};
+  static constexpr std::byte DUAL_OFF{'o'};
+  static constexpr std::byte NO_RX_ON_ACTIVE_FREQUENCY{'m'};
 
   static constexpr size_t MAX_NAME_LENGTH = 8; //!< Max. radio station name length.
 
+  struct stx_msg {
+    std::byte start = STX;
+    std::byte command;
+    uint8_t mhz;
+    uint8_t khz;
+    char station[MAX_NAME_LENGTH];
+    uint8_t checksum;
+  };
+
   //! Port the radio is connected to.
   Port &port;
-  //! Expected length of the message just receiving.
-  size_t expected_msg_length{};
   //! Buffer which receives the messages send from the radio.
-  StaticFifoBuffer<uint8_t, 256u> rx_buf;
+  StaticFifoBuffer<std::byte, 256u> rx_buf;
   //! Last response received from the radio.
-  uint8_t response;
+  std::byte response;
   //! Condition to signal that a response was received from the radio.
   Cond rx_cond;
   //! Mutex to be locked to access response.
@@ -81,29 +93,16 @@ private:
    *
    * @param msg Message to be send to the radio.
    */
-  bool Send(const uint8_t *msg, unsigned msg_size, OperationEnvironment &env);
-  /**
-   * Calculates the length of the message just receiving.
-   *
-   * @param data Pointer to the first character of the message.
-   * @param length Number of characters received.
-   * @return Expected message length.
-   */
-  static size_t ExpectedMsgLength(const uint8_t *data, size_t length);
-  /**
-   * Calculates the length of the command message just receiving.
-   *
-   * @param code Command code received after the STX character.
-   * @return Expected message length after the code character.
-   */
-  static size_t ExpectedMsgLengthSTX(uint8_t code);
+  [[nodiscard]]
+  bool Send(std::span<const std::byte> msg, OperationEnvironment &env);
+
   /**
    * Gets the displayable station name.
    *
    * @param name Name of the radio station.
    * @return Name of the radio station (printable ASCII, MAX_NAME_LENGTH characters).
    */
-  static void GetStationName(char *station_name, const TCHAR *name);
+  static void GetStationName(char *station_name, const char *name);
   /**
    * Sends the frequency to the radio.
    *
@@ -115,24 +114,64 @@ private:
    * @param env Operation environment.
    * @return true if the frequency is defined.
    */
-  bool PutFrequency(char cmd,
+  bool PutFrequency(std::byte cmd,
                     RadioFrequency frequency,
-                    const TCHAR *name,
+                    const char *name,
                     OperationEnvironment &env);
+
+  void LockSetResponse(std::byte _response) noexcept {
+    const std::lock_guard lock{response_mutex};
+    response = _response;
+    // Signal the response to the TX thread
+    rx_cond.notify_one();
+  }
+
+  std::byte LockWaitResponse() noexcept {
+    std::unique_lock lock{response_mutex};
+    rx_cond.wait_for(lock, CMD_TIMEOUT, [this]{ return response != NO_RSP; });
+    return response;
+  }
+
+  /**
+   * Handle an STX command from the radio.
+   *
+   * Handles STX commands from the radio, when these indicate a change in either
+   * active of passive frequency.
+   */
+  static void HandleFrequency(const struct stx_msg &msg, NMEAInfo &info) noexcept;
+
+  static std::size_t HandleSTX(std::span<const std::byte> src, NMEAInfo &info) noexcept;
+
+  /**
+   * Handle a raw message data received on the port.  It may be called
+   * repeatedly until all data has been consumed.
+   *
+   * @return the number of bytes consumed or 0 if the message is
+   * incomplete
+   */
+  std::size_t HandleMessage(std::span<const std::byte> src, NMEAInfo &info) noexcept;
 
 public:
   /**
    * Sets the active frequency on the radio.
    */
   virtual bool PutActiveFrequency(RadioFrequency frequency,
-                                  const TCHAR *name,
+                                  const char *name,
                                   OperationEnvironment &env) override;
   /**
    * Sets the standby frequency on the radio.
    */
   virtual bool PutStandbyFrequency(RadioFrequency frequency,
-                                   const TCHAR *name,
+                                   const char *name,
                                    OperationEnvironment &env) override;
+  /**
+   * Exchanges active and standby frequencies on the radio.
+   */
+  virtual bool ExchangeRadioFrequencies(OperationEnvironment &env,
+                                        NMEAInfo &info) override;
+
+  static void UpdateRadioFrequencies(NMEAInfo &basic);
+
   /**
    * Receives and handles data from the radio.
    *
@@ -146,8 +185,8 @@ public:
    * the sender. This could trigger a retransmission in case of a
    * failure.
    */
-  virtual bool DataReceived(const void *data, size_t length,
-                            struct NMEAInfo &info) override;
+  virtual bool DataReceived(std::span<const std::byte> s,
+                            NMEAInfo &info) noexcept override;
 };
 
 KRT2Device::KRT2Device(Port &_port)
@@ -156,28 +195,25 @@ KRT2Device::KRT2Device(Port &_port)
 }
 
 bool
-KRT2Device::Send(const uint8_t *msg, unsigned msg_size,
+KRT2Device::Send(std::span<const std::byte> msg,
                  OperationEnvironment &env)
 {
+  assert(!msg.empty());
+
   //! Number of tries to send a message
   unsigned retries = NR_RETRIES;
 
-  assert(msg_size > 0);
-
   do {
-    response_mutex.Lock();
-    response = NO_RSP;
-    response_mutex.Unlock();
-    // Send the message
-    if (!port.FullWrite(msg, msg_size, env, CMD_TIMEOUT))
-      return false;
-    // Wait for the response
-    response_mutex.Lock();
-    rx_cond.timed_wait(response_mutex, CMD_TIMEOUT);
-    auto _response = response;
-    response_mutex.Unlock();
+    {
+      const std::lock_guard lock{response_mutex};
+      response = NO_RSP;
+    }
 
-    if (_response == ACK)
+    // Send the message
+    port.FullWrite(msg, env, CMD_TIMEOUT);
+
+    // Wait for the response
+    if (LockWaitResponse() == ACK)
       // ACK received, finish
       return true;
 
@@ -189,162 +225,48 @@ KRT2Device::Send(const uint8_t *msg, unsigned msg_size,
 }
 
 bool
-KRT2Device::DataReceived(const void *_data, size_t length,
-                         struct NMEAInfo &info)
+KRT2Device::DataReceived(std::span<const std::byte> s,
+                         NMEAInfo &info) noexcept
 {
-  assert(_data != nullptr);
-  assert(length > 0);
-
-  const uint8_t *data = (const uint8_t *)_data;
-  const uint8_t *end = data + length;
+  assert(!s.empty());
 
   do {
     // Append new data to the buffer, as much as fits in there
-    auto range = rx_buf.Write();
-    if (rx_buf.IsFull()) {
+    const auto nbytes = rx_buf.MoveFrom(s);
+    if (nbytes == 0) {
       // Overflow: reset buffer to recover quickly
       rx_buf.Clear();
-      expected_msg_length = 0;
       continue;
     }
-    size_t nbytes = std::min(range.size, size_t(end - data));
-    memcpy(range.data, data, nbytes);
-    data += nbytes;
-    rx_buf.Append(nbytes);
+
+    s = s.subspan(nbytes);
 
     for (;;) {
       // Read data from buffer to handle the messages
-      range = rx_buf.Read();
-      if (range.empty())
+      const auto consumed = HandleMessage(rx_buf.Read(), info);
+      if (consumed == 0)
+        // need more data
         break;
 
-      if (range.size < expected_msg_length)
-        break;
-
-      expected_msg_length = ExpectedMsgLength(range.data, range.size);
-
-      if (range.size >= expected_msg_length) {
-        switch (*(const uint8_t *) range.data) {
-          case ACK:
-          case NAK:
-            // Received a response to a normal command (STX)
-            response_mutex.Lock();
-            response = *(const uint8_t *) range.data;
-            // Signal the response to the TX thread
-            rx_cond.signal();
-            response_mutex.Unlock();
-            break;
-          default:
-            // Received a command from the radio -> ignore it
-            break;
-        }
-        // Message handled -> remove message
-        rx_buf.Consume(expected_msg_length);
-        expected_msg_length = 0;
-        // Received something from the radio -> the connection is alive
-        info.alive.Update(info.clock);
-      }
+      // Message handled -> remove message
+      rx_buf.Consume(consumed);
+      // Received something from the radio -> the connection is alive
+      info.alive.Update(info.clock);
     }
-  } while (data < end);
+  } while (!s.empty());
 
   return true;
 }
 
-/**
-  The expected length of a received message may change,
-  when the first character is STX and the second character
-  is not received yet.
-*/
-size_t
-KRT2Device::ExpectedMsgLength(const uint8_t *data, size_t length)
+inline void
+KRT2Device::GetStationName(char *station_name, const char *name)
 {
-  size_t expected_length;
+  if(name == nullptr)
+      name = "";
 
-  assert(data != nullptr);
-  assert(length > 0);
-
-  if (data[0] == STX) {
-    if (length > 1) {
-      expected_length = 2 + ExpectedMsgLengthSTX(data[1]);
-    } else {
-      // minimum 2 chars
-      expected_length = 2;
-    }
-  } else
-    expected_length = 1;
-
-  return expected_length;
-}
-
-size_t
-KRT2Device::ExpectedMsgLengthSTX(uint8_t code)
-{
-  size_t expected_length;
-
-  switch (code) {
-  case 'U':
-    // Active frequency
-  case 'R':
-    // Standby frequency
-    expected_length = 11;
-    break;
-  case 'Z':
-    // Set frequency
-    expected_length = 12;
-    break;
-  case 'A':
-    // Set volume
-    expected_length = 4;
-    break;
-  case 'C':
-    // Exchange frequencies
-  case '8':
-    // Unknown code, received once after power up, STX '8'
-  case 'B':
-    // Low batt
-  case 'D':
-    // !Low batt
-  case 'E':
-    // PLL error
-  case 'W':
-    // PLL error
-  case 'F':
-    // !PLL error
-  case 'J':
-    // RX
-  case 'V':
-    // !RX
-  case 'K':
-    // TX
-  case 'L':
-    // Te
-  case 'Y':
-    // !TX || !RX
-  case 'O':
-    // Dual on
-  case 'o':
-    // Dual off
-  case 'M':
-    // RX on active frequency on (DUAL^)
-  case 'm':
-    // RX on active frequency off (DUAL)
-    expected_length = 0;
-    break;
-  default:
-    // Received unknown STX code
-    expected_length = 0;
-    break;
-  }
-
-  return expected_length;
-}
-
-void
-KRT2Device::GetStationName(char *station_name, const TCHAR *name)
-{
   size_t s_idx = 0; //!< Source name index
   size_t d_idx = 0; //!< Destination name index
-  TCHAR c; //!< Character at source name index
+  char c; //!< Character at source name index
 
   while ((c = name[s_idx++])) {
     // KRT2 supports printable ASCII only
@@ -360,29 +282,151 @@ KRT2Device::GetStationName(char *station_name, const TCHAR *name)
   }
 }
 
+inline void
+KRT2Device::HandleFrequency(const struct stx_msg &msg, NMEAInfo &info) noexcept
+{
+  if (msg.checksum != (msg.mhz ^ msg.khz)) {
+    return;
+  }
+
+  const auto freq = RadioFrequency::FromMegaKiloHertz(msg.mhz, msg.khz * 5);
+
+  StaticString<MAX_NAME_LENGTH> freq_name;
+  freq_name.SetASCII(msg.station);
+
+  if (msg.command == ACTIVE_FREQUENCY) {
+    info.settings.has_active_frequency.Update(info.clock);
+    info.settings.active_frequency = freq;
+    info.settings.active_freq_name = freq_name;
+  } else if (msg.command == STANDBY_FREQUENCY) {
+    info.settings.has_standby_frequency.Update(info.clock);
+    info.settings.standby_frequency = freq;
+    info.settings.standby_freq_name = freq_name;
+  }
+}
+
+inline std::size_t
+KRT2Device::HandleSTX(std::span<const std::byte> src, NMEAInfo &info) noexcept
+{
+  if (src.size() < 2)
+    return 0;
+
+  switch (src[1]) {
+  case ACTIVE_FREQUENCY:
+  case STANDBY_FREQUENCY:
+    if (src.size() < sizeof(struct stx_msg))
+      return 0;
+
+    HandleFrequency(*(const struct stx_msg *)src.data(), info);
+    return sizeof(struct stx_msg);
+
+  case SET_FREQUENCY:
+    return src.size() < 14 ? 0 : 14;
+
+  case SET_VOLUME:
+    return src.size() < 6 ? 0 : 6;
+
+  case EXCHANGE_FREQUENCIES:
+    /**
+     * Optimistic update: KRT2 doesn't send frequencies back after
+     * exchange command, so we update state immediately. If the device
+     * sends an unsolicited EXCHANGE_FREQUENCIES message later, it will
+     * be handled by HandleSTX which also calls UpdateRadioFrequencies.
+     */
+    UpdateRadioFrequencies(info);
+    return 2;
+
+  case UNKNOWN1:
+  case LOW_BATTERY:
+  case NO_LOW_BATTERY:
+  case PLL_ERROR:
+  case PLL_ERROR2:
+  case NO_PLL_ERROR:
+  case RX:
+  case NO_RX:
+  case TX:
+  case TE:
+  case NO_TX_RX:
+  case DUAL_ON:
+  case DUAL_OFF:
+  case RX_ON_ACTIVE_FREQUENCY:
+  case NO_RX_ON_ACTIVE_FREQUENCY:
+    return 2;
+
+  default:
+    // Received unknown STX code
+    return 2;
+  }
+}
+
+inline std::size_t
+KRT2Device::HandleMessage(std::span<const std::byte> src,
+                          NMEAInfo &info) noexcept
+{
+  if (src.empty())
+    return 0;
+
+  switch (src.front()) {
+  case RCQ:
+    // Respond to connection query.
+    port.Write(0x01);
+    return 1;
+
+  case ACK:
+  case NAK:
+    // Received a response to a normal command (STX)
+    LockSetResponse(src.front());
+    return 1;
+
+  case STX:
+    // Received a command from the radio (STX). Handle what we know.
+    return HandleSTX(src, info);
+
+  default:
+    return 1;
+  }
+}
+
 bool
-KRT2Device::PutFrequency(char cmd,
+KRT2Device::PutFrequency(std::byte cmd,
                          RadioFrequency frequency,
-                         const TCHAR *name,
+                         const char *name,
                          OperationEnvironment &env)
 {
-  if (frequency.IsDefined()) {
-    struct {
-      uint8_t start = STX;
-      uint8_t command;
-      uint8_t mhz;
-      uint8_t khz;
-      char station[MAX_NAME_LENGTH];
-      uint8_t checksum;
-    } msg;
+  stx_msg msg;
 
-    msg.command = cmd;
-    msg.mhz = frequency.GetKiloHertz() / 1000;
-    msg.khz = (frequency.GetKiloHertz() % 1000) / 5;
-    GetStationName(msg.station, name);
-    msg.checksum = msg.mhz ^ msg.khz;
+  msg.command = cmd;
+  msg.mhz = frequency.GetKiloHertz() / 1000;
+  msg.khz = (frequency.GetKiloHertz() % 1000) / 5;
+  GetStationName(msg.station, name);
+  msg.checksum = msg.mhz ^ msg.khz;
 
-    Send((uint8_t *) &msg, sizeof(msg), env);
+  return Send(ReferenceAsBytes(msg), env);
+}
+
+bool
+KRT2Device::PutActiveFrequency(RadioFrequency frequency,
+                               const char *name,
+                               OperationEnvironment &env)
+{
+  return PutFrequency(ACTIVE_FREQUENCY, frequency, name, env);
+}
+
+bool
+KRT2Device::PutStandbyFrequency(RadioFrequency frequency,
+                                const char *name,
+                                OperationEnvironment &env)
+{
+  return PutFrequency(STANDBY_FREQUENCY, frequency, name, env);
+}
+
+bool
+KRT2Device::ExchangeRadioFrequencies(OperationEnvironment &env,
+                                     NMEAInfo &info)
+{
+  const std::byte msg[] = {STX, EXCHANGE_FREQUENCIES};
+  if (Send(msg, env)) {
+    UpdateRadioFrequencies(info);
 
     return true;
   }
@@ -390,33 +434,30 @@ KRT2Device::PutFrequency(char cmd,
   return false;
 }
 
-bool
-KRT2Device::PutActiveFrequency(RadioFrequency frequency,
-                               const TCHAR *name,
-                               OperationEnvironment &env)
+void
+KRT2Device::UpdateRadioFrequencies(NMEAInfo &info)
 {
-  return PutFrequency('U', frequency, name, env);
-}
-
-bool
-KRT2Device::PutStandbyFrequency(RadioFrequency frequency,
-                                const TCHAR *name,
-                                OperationEnvironment &env)
-{
-  return PutFrequency('R', frequency, name, env);
+  auto &settings = info.settings;
+  const auto old_freq = settings.active_frequency;
+  const auto old_freq_name = settings.active_freq_name;
+  settings.active_frequency = settings.standby_frequency;
+  settings.active_freq_name = settings.standby_freq_name;
+  settings.standby_frequency = old_freq;
+  settings.standby_freq_name = old_freq_name;
+  settings.has_active_frequency.Update(info.clock);
+  settings.has_standby_frequency.Update(info.clock);
+  settings.swap_frequencies.Update(info.clock);
 }
 
 static Device *
-KRT2CreateOnPort(const DeviceConfig &config, Port &comPort)
+KRT2CreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &comPort)
 {
-  Device *dev = new KRT2Device(comPort);
-
-  return dev;
+  return new KRT2Device(comPort);
 }
 
-const struct DeviceRegister krt2_driver = {
-  _T("KRT2"),
-  _T("KRT2"),
+const DeviceRegister krt2_driver = {
+  "KRT2",
+  "KRT2",
   DeviceRegister::NO_TIMEOUT
    | DeviceRegister::RAW_GPS_DATA,
   KRT2CreateOnPort,

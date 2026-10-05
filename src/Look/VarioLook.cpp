@@ -1,36 +1,23 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "VarioLook.hpp"
+#include "AutoFont.hpp"
 #include "FontDescription.hpp"
+#include "Resources.hpp"
 #include "Screen/Layout.hpp"
 #include "Units/Units.hpp"
-#include "Resources.hpp"
+#include "ui/canvas/Features.hpp" // for HAVE_TEXT_CACHE
+
+#ifdef HAVE_TEXT_CACHE
+#include "ui/canvas/custom/Cache.hpp"
+#endif
 
 #include <algorithm>
 
 void
 VarioLook::Initialise(bool _inverse, bool _colors,
+                      unsigned width,
                       const Font &_text_font)
 {
   inverse = _inverse;
@@ -53,22 +40,58 @@ VarioLook::Initialise(bool _inverse, bool _colors,
   sink_brush.Create(sink_color);
   lift_brush.Create(lift_color);
 
+  arc_pen.Create(Layout::ScalePenWidth(2), text_color);
+  tick_pen.Create(Layout::ScalePenWidth(1), text_color);
+
   thick_background_pen.Create(Layout::Scale(5), background_color);
   thick_sink_pen.Create(Layout::Scale(5), sink_color);
   thick_lift_pen.Create(Layout::Scale(5), lift_color);
 
-  background_bitmap.Load(Units::GetUserVerticalSpeedUnit() == Unit::KNOTS
-                         ? IDB_VARIOSCALEC : IDB_VARIOSCALEA);
-  background_x = inverse ? 58 : 0;
-
-  climb_bitmap.Load(inverse ? IDB_CLIMBSMALLINV : IDB_CLIMBSMALL);
+  climb_icon.LoadResource(IDB_CLIMB_ALL);
 
   text_font = &_text_font;
 
-  const unsigned value_font_height = Layout::FontScale(10);
-  value_font.Load(FontDescription(value_font_height, false, false, true));
+  ReinitialiseLayout(width);
+}
 
-  unsigned unit_font_height = std::max(value_font_height * 2u / 5u, 7u);
-  unit_font.Load(FontDescription(unit_font_height));
-  unit_fraction_pen.Create(1, COLOR_GRAY);
+void
+VarioLook::ReinitialiseLayout(unsigned width, unsigned reference_width)
+{
+  geometry_width = width;
+  geometry_scale_percent = reference_width > 0
+    ? width * 100 / reference_width
+    : 100;
+
+  arc_pen.Create(Layout::ScalePenWidth(2), text_color);
+  tick_pen.Create(Layout::ScalePenWidth(1), text_color);
+  thick_background_pen.Create(Layout::Scale(5), background_color);
+  thick_sink_pen.Create(Layout::Scale(5), sink_color);
+  thick_lift_pen.Create(Layout::Scale(5), lift_color);
+
+  /* Keep the value column legible when the dial has to shrink to fit a
+     compact portrait Vario window. */
+  const unsigned font_width = reference_width > 0
+    ? std::clamp(reference_width * 4 / 5, width, width * 4 / 3)
+    : width;
+
+  FontDescription arc_label_font_d(8);
+  AutoSizeFont(arc_label_font_d, font_width / 10, "-5");
+  arc_label_font.Load(arc_label_font_d);
+
+  FontDescription value_font_d(14);
+  AutoSizeFont(value_font_d, font_width / 1.5, "-00.0m");
+  value_font.Load(value_font_d);
+
+  FontDescription unit_font_d(8);
+  AutoSizeFont(unit_font_d, font_width / 4.22, "00.0m");
+  unit_font.Load(unit_font_d);
+  unit_fraction_pen.Create(Layout::ScaleFinePenWidth(1), COLOR_GRAY);
+
+  FontDescription label_font_d(8);
+  AutoSizeFont(label_font_d, font_width / 2, "Auto MC");
+  label_font.Load(label_font_d);
+
+#ifdef HAVE_TEXT_CACHE
+  TextCache::Flush();
+#endif
 }

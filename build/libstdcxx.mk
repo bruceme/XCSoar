@@ -1,12 +1,8 @@
 # This file provides "make" rules for the C++ standard library.
 
-ifeq ($(TARGET),ANDROID)
-  LIBSTDCXX_CPPFLAGS = -isystem $(ANDROID_NDK)/sources/cxx-stl/gnu-libstdc++/$(ANDROID_GCC_VERSION)/include \
-	-isystem $(ANDROID_NDK)/sources/cxx-stl/gnu-libstdc++/$(ANDROID_GCC_VERSION)/libs/$(ANDROID_ABI3)/include
-  LIBSTDCXX_LDADD = $(ANDROID_NDK)/sources/cxx-stl/gnu-libstdc++/$(ANDROID_GCC_VERSION)/libs/$(ANDROID_ABI3)/libgnustl_static.a
-endif
+LIBCXX ?= $(CLANG)
 
-ifneq ($(LIBCXX),)
+ifeq ($(LIBCXX),y)
   # using libc++
 
   include $(topdir)/build/libcxx.mk
@@ -16,6 +12,8 @@ ifneq ($(LIBCXX),)
   LIBSTDCXX_LDFLAGS = $(LIBCXX_LDFLAGS)
 else
   # using GNU libstdc++
+
+  LIBSTDCXX_CPPFLAGS += -D_GLIBCXX_ASSERTIONS
 
   ifeq ($(DEBUG_GLIBCXX),y)
     LIBSTDCXX_CPPFLAGS += -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC

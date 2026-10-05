@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Audio/Features.hpp"
 #include "Audio/Sound.hpp"
@@ -30,33 +10,34 @@ Copyright_License {
 #include "Android/Context.hpp"
 #endif
 
-#if defined(WIN32)
-#include "ResourceLoader.hpp"
-#include <windows.h>
-#include <mmsystem.h>
-#elif defined(HAVE_PCM_PLAYER)
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include "Apple/SoundUtil.hpp"
+#endif
+#endif
+
+#if defined(HAVE_PCM_PLAYER)
 #include "GlobalPCMResourcePlayer.hpp"
 #include "PCMResourcePlayer.hpp"
+#elif defined(_WIN32)
+// On Windows without SDL we use sndPlaySound
+#include "ResourceLoader.hpp"
+#include <mmsystem.h>
 #endif
 
 bool
-PlayResource(const TCHAR *resource_name)
+PlayResource(const char *resource_name)
 {
 #ifdef ANDROID
 
-  if (_tcsstr(resource_name, _T(".wav")))
+  if (strstr(resource_name, ".wav"))
     return SoundUtil::PlayExternal(Java::GetEnv(), context->Get(), resource_name);
   return SoundUtil::Play(Java::GetEnv(), context->Get(), resource_name);
 
-#elif defined(WIN32)
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
 
-  if (_tcsstr(resource_name, TEXT(".wav")))
-    return sndPlaySound(resource_name, SND_ASYNC | SND_NODEFAULT);
-
-  ResourceLoader::Data data = ResourceLoader::Load(resource_name, _T("WAVE"));
-  return !data.IsNull() &&
-         sndPlaySound((LPCTSTR)data.data,
-                      SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+  return SoundUtil::Play(resource_name);
 
 #elif defined(HAVE_PCM_PLAYER)
 
@@ -64,6 +45,15 @@ PlayResource(const TCHAR *resource_name)
     return false;
 
   return pcm_resource_player->PlayResource(resource_name);
+
+#elif defined(_WIN32)
+
+  if (strstr(resource_name, TEXT(".wav")))
+    return sndPlaySound(resource_name, SND_ASYNC | SND_NODEFAULT);
+
+  ResourceLoader::Data data = ResourceLoader::Load(resource_name, "WAVE");
+  return data.data() != nullptr &&
+    sndPlaySound((LPCTSTR)data.data(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 
 #else
   return false;

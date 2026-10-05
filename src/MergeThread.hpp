@@ -1,35 +1,16 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MERGE_THREAD_HPP
-#define XCSOAR_MERGE_THREAD_HPP
-
-#include "Thread/WorkerThread.hpp"
+#include "thread/WorkerThread.hpp"
 #include "Computer/BasicComputer.hpp"
-#include "FLARM/FlarmComputer.hpp"
+#include "FLARM/Computer.hpp"
 #include "NMEA/MoreData.hpp"
 
 class DeviceBlackboard;
+class MultipleDevices;
+class TraceComputer;
 
 /**
  * The MergeThread collects new data from the DeviceBlackboard, merges
@@ -37,6 +18,14 @@ class DeviceBlackboard;
  */
 class MergeThread final : public WorkerThread {
   DeviceBlackboard &device_blackboard;
+
+  MultipleDevices *const devices;
+
+  /**
+   * Optional sink for high-rate netto vario (snail trail colouring).
+   * Must not be called while #DeviceBlackboard::mutex is locked.
+   */
+  TraceComputer *trail_vario_sink = nullptr;
 
   /**
    * The previous values at the time of the last GPS fix (last
@@ -54,31 +43,43 @@ class MergeThread final : public WorkerThread {
   FlarmComputer flarm_computer;
 
 public:
-  MergeThread(DeviceBlackboard &_device_blackboard);
+  MergeThread(DeviceBlackboard &_device_blackboard,
+              MultipleDevices *_devices,
+              TraceComputer *_trail_vario_sink=nullptr) noexcept;
 
   /**
    * This method is called during XCSoar startup, for the initial run
    * of the MergeThread.
    */
-  void FirstRun() {
+  void FirstRun() noexcept {
     assert(!IsDefined());
 
     Process();
   }
 
-  bool Start(bool suspended=false) {
-    if (!WorkerThread::Start(suspended))
-      return false;
+  /**
+   * Process one replay fix through merge and trail-vario (no UI triggers).
+   * Call only while the worker thread is suspended.
+   */
+  void ProcessReplayFix() noexcept;
 
+  /**
+   * Throws on error.
+   */
+  void Start(bool suspended=false) {
+    WorkerThread::Start(suspended);
     SetLowPriority();
-    return true;
   }
 
 private:
-  void Process();
+  void Process() noexcept;
+
+  /**
+   * Merge and basic-computer update.  No thread assertion; caller must
+   * ensure the worker thread is not running concurrently.
+   */
+  void ProcessUnlocked() noexcept;
 
 protected:
-  virtual void Tick();
+  void Tick() noexcept override;
 };
-
-#endif

@@ -1,129 +1,84 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Waypoints.hpp"
-#include "WaypointVisitor.hpp"
-#include "Util/StringUtil.hpp"
+#include "NameSearch.hpp"
+#include "util/AllocatedArray.hxx"
+#include "util/StringAPI.hxx"
+#include "util/StringCompare.hxx"
+#include "util/StringUtil.hpp"
+#include "Math/Classify.hpp"
 
-// global, used for test harness
-unsigned n_queries = 0;
+#include <cassert>
 
-/**
- * Container accessor to allow a WaypointVisitor to visit
- * WaypointEnvelopes.
- */
-class WaypointEnvelopeVisitor {
-  WaypointVisitor *const waypoint_visitor;
-
-public:
-  /**
-   * Constructor
-   *
-   * @param wve Contained visitor
-   *
-   * @return Initialised object
-   */
-  WaypointEnvelopeVisitor(WaypointVisitor* wve):waypoint_visitor(wve) {};
-
-  /**
-   * Accessor operator to perform visit
-   */
-  void
-  operator()(const WaypointPtr &wp)
-  {
-    Visit(wp);
-  }
-
-  /**
-   * Visit item inside envelope
-   */
-  void
-  Visit(const WaypointPtr &wp)
-  {
-    waypoint_visitor->Visit(wp);
-  }
-};
-
-struct VisitorAdapter {
-  WaypointVisitor &visitor;
-  VisitorAdapter(WaypointVisitor &_visitor):visitor(_visitor) {}
-
-  void operator()(const WaypointPtr &wp) {
-    visitor.Visit(wp);
-  }
-};
-
-WaypointPtr
-Waypoints::WaypointNameTree::Get(const TCHAR *name) const
+inline WaypointPtr
+Waypoints::WaypointNameTree::Get(std::string_view name) const noexcept
 {
-  TCHAR normalized_name[_tcslen(name) + 1];
+  if (name.size() >= NAME_SEARCH_BUFFER_SIZE)
+    return {};
+
+  char normalized_name[NAME_SEARCH_BUFFER_SIZE];
   NormalizeSearchString(normalized_name, name);
   return RadixTree<WaypointPtr>::Get(normalized_name, nullptr);
 }
 
-void
-Waypoints::WaypointNameTree::VisitNormalisedPrefix(const TCHAR *prefix,
-                                                   WaypointVisitor &visitor) const
+inline void
+Waypoints::WaypointNameTree::VisitNormalisedPrefix(std::string_view prefix,
+                                                   const WaypointVisitor &visitor) const
 {
-  TCHAR normalized[_tcslen(prefix) + 1];
+  if (prefix.size() >= NAME_SEARCH_BUFFER_SIZE)
+    return;
+
+  char normalized[NAME_SEARCH_BUFFER_SIZE];
   NormalizeSearchString(normalized, prefix);
-  VisitorAdapter adapter(visitor);
-  VisitPrefix(normalized, adapter);
+  VisitPrefix(normalized, visitor);
 }
 
-TCHAR *
-Waypoints::WaypointNameTree::SuggestNormalisedPrefix(const TCHAR *prefix,
-                                                     TCHAR *dest,
-                                                     size_t max_length) const
+char *
+Waypoints::WaypointNameTree::SuggestNormalisedPrefix(std::string_view prefix,
+                                                     char *dest,
+                                                     size_t max_length) const noexcept
 {
-  TCHAR normalized[_tcslen(prefix) + 1];
+  if (prefix.size() >= NAME_SEARCH_BUFFER_SIZE)
+    return nullptr;
+
+  char normalized[NAME_SEARCH_BUFFER_SIZE];
   NormalizeSearchString(normalized, prefix);
   return Suggest(normalized, dest, max_length);
 }
 
-void
-Waypoints::WaypointNameTree::Add(WaypointPtr wp)
+inline void
+Waypoints::WaypointNameTree::Add(WaypointPtr wp) noexcept
 {
-  TCHAR normalized_name[wp->name.length() + 1];
-  NormalizeSearchString(normalized_name, wp->name.c_str());
-  RadixTree<WaypointPtr>::Add(normalized_name, std::move(wp));
+  AllocatedArray<char> buffer(wp->name.length() + 1);
+  NormalizeSearchString(buffer.data(), wp->name);
+  RadixTree<WaypointPtr>::Add(buffer.data(), wp);
+
+  if (!wp->shortname.empty()) {
+    buffer.GrowDiscard(wp->shortname.length() + 1);
+    NormalizeSearchString(buffer.data(), wp->shortname);
+    RadixTree<WaypointPtr>::Add(buffer.data(), std::move(wp));
+  }
 }
 
-void
-Waypoints::WaypointNameTree::Remove(const WaypointPtr &wp)
+inline void
+Waypoints::WaypointNameTree::Remove(const WaypointPtr &wp) noexcept
 {
-  TCHAR normalized_name[wp->name.length() + 1];
-  NormalizeSearchString(normalized_name, wp->name.c_str());
-  RadixTree<WaypointPtr>::Remove(normalized_name, wp);
+  AllocatedArray<char> buffer(wp->name.length() + 1);
+  NormalizeSearchString(buffer.data(), wp->name);
+  RadixTree<WaypointPtr>::Remove(buffer.data(), wp);
+
+  if (!wp->shortname.empty()) {
+    buffer.GrowDiscard(wp->shortname.length() + 1);
+    NormalizeSearchString(buffer.data(), wp->shortname);
+    RadixTree<WaypointPtr>::Remove(buffer.data(), wp);
+  }
 }
 
-Waypoints::Waypoints()
-  :next_id(1),
-   home(nullptr)
-{
-}
+Waypoints::Waypoints() noexcept = default;
 
 void
-Waypoints::Optimise()
+Waypoints::Optimise() noexcept
 {
   if (waypoint_tree.IsEmpty() || waypoint_tree.HaveBounds())
     /* empty or already optimised */
@@ -141,7 +96,7 @@ Waypoints::Optimise()
 }
 
 void
-Waypoints::Append(WaypointPtr wp)
+Waypoints::Append(WaypointPtr wp) noexcept
 {
   // TODO: eliminate this const_cast hack
   Waypoint &w = const_cast<Waypoint &>(*wp);
@@ -165,7 +120,7 @@ Waypoints::Append(WaypointPtr wp)
 }
 
 WaypointPtr
-Waypoints::GetNearest(const GeoPoint &loc, double range) const
+Waypoints::GetNearest(const GeoPoint &loc, double range) const noexcept
 {
   if (IsEmpty())
     return nullptr;
@@ -181,21 +136,21 @@ Waypoints::GetNearest(const GeoPoint &loc, double range) const
   return *found.first;
 }
 
-static bool
-IsLandable(const Waypoint &wp)
+static constexpr bool
+IsLandable(const Waypoint &wp) noexcept
 {
   return wp.IsLandable();
 }
 
 WaypointPtr
-Waypoints::GetNearestLandable(const GeoPoint &loc, double range) const
+Waypoints::GetNearestLandable(const GeoPoint &loc, double range) const noexcept
 {
   return GetNearestIf(loc, range, IsLandable);
 }
 
 WaypointPtr
 Waypoints::GetNearestIf(const GeoPoint &loc, double range,
-                        bool (*predicate)(const Waypoint &)) const
+                        bool (*predicate)(const Waypoint &)) const noexcept
 {
   if (IsEmpty())
     return nullptr;
@@ -215,13 +170,14 @@ Waypoints::GetNearestIf(const GeoPoint &loc, double range,
 }
 
 WaypointPtr
-Waypoints::LookupName(const TCHAR *name) const
+Waypoints::LookupName(std::string_view name) const noexcept
 {
   return name_tree.Get(name);
 }
 
 WaypointPtr
-Waypoints::LookupLocation(const GeoPoint &loc, const double range) const
+Waypoints::LookupLocation(const GeoPoint &loc,
+                          const double range) const noexcept
 {
   auto wp = GetNearest(loc, range);
   if (!wp)
@@ -236,7 +192,7 @@ Waypoints::LookupLocation(const GeoPoint &loc, const double range) const
 }
 
 WaypointPtr
-Waypoints::FindHome()
+Waypoints::FindHome() noexcept
 {
   for (const auto &wp : waypoint_tree) {
     if (wp->flags.home) {
@@ -249,7 +205,7 @@ Waypoints::FindHome()
 }
 
 bool
-Waypoints::SetHome(const unsigned id)
+Waypoints::SetHome(const unsigned id) noexcept
 {
   home = LookupId(id);
   if (home == nullptr)
@@ -261,7 +217,7 @@ Waypoints::SetHome(const unsigned id)
 }
 
 WaypointPtr
-Waypoints::LookupId(const unsigned id) const
+Waypoints::LookupId(const unsigned id) const noexcept
 {
   for (const auto &wp : waypoint_tree)
     if (wp->id == id)
@@ -272,7 +228,7 @@ Waypoints::LookupId(const unsigned id) const
 
 void
 Waypoints::VisitWithinRange(const GeoPoint &loc, const double range,
-    WaypointVisitor& visitor) const
+                            WaypointVisitor visitor) const
 {
   if (IsEmpty())
     return; // nothing to do
@@ -281,20 +237,136 @@ Waypoints::VisitWithinRange(const GeoPoint &loc, const double range,
   const WaypointTree::Point point(flat_location.x, flat_location.y);
   const unsigned mrange = task_projection.ProjectRangeInteger(loc, range);
 
-  WaypointEnvelopeVisitor wve(&visitor);
-
-  waypoint_tree.VisitWithinRange(point, mrange, wve);
+  waypoint_tree.VisitWithinRange(point, mrange, visitor);
 }
 
 void
-Waypoints::VisitNamePrefix(const TCHAR *prefix,
-                           WaypointVisitor& visitor) const
+Waypoints::VisitNamePrefix(std::string_view prefix,
+                           WaypointVisitor visitor) const
 {
   name_tree.VisitNormalisedPrefix(prefix, visitor);
 }
 
+/* Bitset of ASCII codepoints, indexed by unsigned char value.
+   Normalised waypoint names contain only uppercase alphanumerics
+   (0..127), so a 128-entry table is sufficient. */
+using SeenSet = bool[128];
+
+/**
+ * Mark every distinct character of the NUL-terminated normalised
+ * @p haystack in @p seen.  Used when the search needle is empty:
+ * every character that appears anywhere is a candidate next key.
+ */
+static void
+CollectAllChars(const char *haystack, SeenSet &seen) noexcept
+{
+  for (const char *p = haystack; *p != '\0'; ++p) {
+    const auto c = static_cast<unsigned char>(*p);
+    if (c < std::size(seen))
+      seen[c] = true;
+  }
+}
+
+/**
+ * Find every occurrence of NUL-terminated @p needle in
+ * NUL-terminated normalised @p haystack and mark the character
+ * immediately following each occurrence in @p seen.  Overlapping
+ * matches are considered (e.g. "AA" appears twice in "AAA").
+ *
+ * @return true if at least one occurrence was found.
+ */
+static bool
+CollectFollowingChars(const char *haystack, const char *needle,
+                      std::size_t needle_len, SeenSet &seen) noexcept
+{
+  bool any = false;
+
+  for (const char *p = haystack;
+       (p = StringFind(p, needle)) != nullptr;
+       ++p) {
+    any = true;
+    const char next = p[needle_len];
+    if (next == '\0')
+      continue;
+    const auto c = static_cast<unsigned char>(next);
+    if (c < std::size(seen))
+      seen[c] = true;
+  }
+
+  return any;
+}
+
+char *
+Waypoints::SuggestNameSubstring(std::string_view input,
+                                char *dest,
+                                size_t max_length) const noexcept
+{
+  if (max_length == 0)
+    return nullptr;
+
+  if (input.size() >= NAME_SEARCH_BUFFER_SIZE)
+    return nullptr;
+
+  char needle[NAME_SEARCH_BUFFER_SIZE];
+  NormalizeSearchString(needle, input);
+  const std::size_t needle_len = strlen(needle);
+
+  SeenSet seen{};
+  bool any_match = false;
+
+  char haystack[NAME_SEARCH_BUFFER_SIZE];
+
+  auto scan = [&](std::string_view src) noexcept {
+    if (src.size() >= NAME_SEARCH_BUFFER_SIZE)
+      return;
+    NormalizeSearchString(haystack, src);
+
+    if (needle_len == 0) {
+      CollectAllChars(haystack, seen);
+      if (haystack[0] != '\0')
+        any_match = true;
+    } else if (CollectFollowingChars(haystack, needle, needle_len, seen)) {
+      any_match = true;
+    }
+  };
+
+  for (const auto &wp : waypoint_tree) {
+    scan(wp->name);
+    if (!wp->shortname.empty())
+      scan(wp->shortname);
+  }
+
+  if (!any_match)
+    /* tell the keyboard to enable every key so the user can
+       backspace and try a different pattern */
+    return nullptr;
+
+  char *const retval = dest;
+  char *const end = dest + max_length - 1;
+  for (unsigned c = 0; c < std::size(seen) && dest < end; ++c)
+    if (seen[c])
+      *dest++ = static_cast<char>(c);
+  *dest = '\0';
+  return retval;
+}
+
 void
-Waypoints::Clear()
+Waypoints::VisitNameSubstring(std::string_view substring,
+                              WaypointVisitor visitor) const
+{
+  if (substring.size() >= NAME_SEARCH_BUFFER_SIZE)
+    return;
+
+  char needle[NAME_SEARCH_BUFFER_SIZE];
+  NormalizeSearchString(needle, substring);
+
+  for (const auto &wp : waypoint_tree)
+    if (WaypointMatchesNormalisedSubstring(*wp, needle))
+      visitor(wp);
+}
+
+void
+Waypoints::Clear() noexcept
 {
   ++serial;
   home = nullptr;
@@ -304,7 +376,7 @@ Waypoints::Clear()
 }
 
 void
-Waypoints::Erase(WaypointPtr &&wp)
+Waypoints::Erase(WaypointPtr &&wp) noexcept
 {
   if (home == wp)
     home = nullptr;
@@ -321,7 +393,7 @@ Waypoints::Erase(WaypointPtr &&wp)
 }
 
 void
-Waypoints::EraseUserMarkers()
+Waypoints::EraseUserMarkers() noexcept
 {
   waypoint_tree.EraseIf([this](const WaypointPtr &wp){
       if (wp->origin == WaypointOrigin::USER &&
@@ -338,7 +410,7 @@ Waypoints::EraseUserMarkers()
 }
 
 void
-Waypoints::Replace(const WaypointPtr &orig, Waypoint &&replacement)
+Waypoints::Replace(const WaypointPtr &orig, Waypoint &&replacement) noexcept
 {
   assert(!waypoint_tree.IsEmpty());
 
@@ -370,7 +442,7 @@ Waypoints::Replace(const WaypointPtr &orig, Waypoint &&replacement)
 }
 
 Waypoint
-Waypoints::Create(const GeoPoint &location)
+Waypoints::Create(const GeoPoint &location) noexcept
 {
   Waypoint edit_waypoint(location);
 
@@ -381,7 +453,7 @@ Waypoints::Create(const GeoPoint &location)
 }
 
 WaypointPtr
-Waypoints::CheckExistsOrAppend(WaypointPtr waypoint)
+Waypoints::CheckExistsOrAppend(WaypointPtr waypoint) noexcept
 {
   auto found = LookupName(waypoint->name);
   if (found && found->IsCloseTo(waypoint->location, 100))
@@ -392,31 +464,58 @@ Waypoints::CheckExistsOrAppend(WaypointPtr waypoint)
 }
 
 Waypoint
-Waypoints::GenerateTakeoffPoint(const GeoPoint& location,
-                                const double terrain_alt) const
+Waypoints::GenerateTempPoint(const GeoPoint& location, const double terrain_alt,
+                             const char *name) const noexcept
 {
-  // fallback: create a takeoff point
+  assert(name != nullptr);
+
+  // fallback: create a temporary point
   Waypoint to_point(location);
   to_point.elevation = terrain_alt;
-  to_point.name = _T("(takeoff)");
-  to_point.type = Waypoint::Type::OUTLANDING;
+  to_point.has_elevation = IsFinite(terrain_alt);
+  to_point.name = name;
+  to_point.shortname = name;
+  const bool is_takeoff = StringIsEqual(name, "(takeoff)");
+  to_point.type = is_takeoff ? Waypoint::Type::OUTLANDING
+                             : Waypoint::Type::NORMAL;
   return to_point;
 }
 
 void
-Waypoints::AddTakeoffPoint(const GeoPoint& location,
-                           const double terrain_alt)
+Waypoints::AddTempPoint(const GeoPoint& location, const double terrain_alt,
+                        const char *name) noexcept
 {
+  if (name == nullptr)
+    return;
+
+  const bool is_takeoff = StringIsEqual(name, "(takeoff)");
+#if 0  // August2111: removed this part from XCSoa? 
   // remove old one first
-  WaypointPtr old_takeoff_point = LookupName(_T("(takeoff)"));
+  WaypointPtr old_takeoff_point = LookupName("(takeoff)");
   if (old_takeoff_point != nullptr)
     Erase(std::move(old_takeoff_point));
+#endif
 
-  if (!GetNearestLandable(location, 5000)) {
+  // remove old temporary waypoint first (only if it's a temporary one)
+  WaypointPtr old_point = LookupName(name);
+  if (old_point != nullptr && old_point->origin == WaypointOrigin::NONE)
+    Erase(std::move(old_point));
+
+  if (!is_takeoff || !GetNearestLandable(location, 5000)) {
     // now add new and update database
-    Waypoint new_waypoint = GenerateTakeoffPoint(location, terrain_alt);
+    Waypoint new_waypoint = GenerateTempPoint(location, terrain_alt, name);
     Append(std::move(new_waypoint));
   }
 
   Optimise();
+}
+
+void
+Waypoints::EraseTempGoto() noexcept
+{
+  WaypointPtr old_goto = LookupName("(goto)");
+  if (old_goto != nullptr && old_goto->origin == WaypointOrigin::NONE) {
+    Erase(std::move(old_goto));
+    Optimise();
+  }
 }

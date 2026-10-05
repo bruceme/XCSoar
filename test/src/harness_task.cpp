@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "harness_task.hpp"
 #include "Task/Factory/AbstractTaskFactory.hpp"
@@ -29,10 +10,11 @@
 #include "Engine/Task/Ordered/Points/ASTPoint.hpp"
 #include "Engine/Task/Ordered/Points/AATPoint.hpp"
 #include "Task/ObservationZones/CylinderZone.hpp"
+#include "Task/ObservationZones/LineSectorZone.hpp"
 #include "Task/ObservationZones/SymmetricSectorZone.hpp"
 #include "Task/Visitors/TaskPointVisitor.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
-#include "Util/StaticArray.hxx"
+#include "util/StaticArray.hxx"
 #include "test_debug.hpp"
 
 #include "harness_waypoints.hpp"
@@ -46,24 +28,23 @@ class AnnularSectorZone;
 class ObservationZoneVisitorPrint
 {
 public:
-  void Visit(const KeyholeZone& oz) {
+  void Visit([[maybe_unused]] const KeyholeZone& oz) {
     printf("# kehole zone\n");
   }
-  void Visit(const SectorZone& oz) {
+  void Visit([[maybe_unused]] const SectorZone& oz) {
     printf("# sector zone\n");
   }
-  void Visit(const AnnularSectorZone& oz) {
+  void Visit([[maybe_unused]] const AnnularSectorZone& oz) {
     printf("# annular sector zone\n");
   }
-  void Visit(const LineSectorZone& oz) {
-    printf("# line zone\n");
+  void Visit([[maybe_unused]] const LineSectorZone& oz) {
+    printf("# line zone, length = %f\n", oz.GetLength());
   }
-  void Visit(const CylinderZone& oz) {
-    printf("# cylinder zone\n");
+  void Visit([[maybe_unused]] const CylinderZone& oz) {
+    printf("# cylinder zone, radius = %f\n", oz.GetRadius());
   }
-
-  void Visit(const SymmetricSectorZone &oz) {
-    printf("# symmetric quadrant\n");
+  void Visit([[maybe_unused]] const SymmetricSectorZone &oz) {
+    printf("# Symmetric Sector\n");
   }
 
   void Visit(const ObservationZonePoint &oz) {
@@ -94,7 +75,7 @@ public:
       Visit((const AnnularSectorZone &)oz);
       break;
 
-    case ObservationZone::Shape::SYMMETRIC_QUADRANT:
+    case ObservationZone::Shape::SYMMETRIC_SECTOR:
       Visit((const SymmetricSectorZone &)oz);
       break;
     }
@@ -219,7 +200,7 @@ bool test_task_manip(TaskManager& task_manager,
     return false;
   }
 
-  OrderedTaskPoint *tp;
+  std::unique_ptr<OrderedTaskPoint> tp;
   WaypointPtr wp;
 
   task_report(task_manager, "# inserting at 3\n");
@@ -228,7 +209,6 @@ bool test_task_manip(TaskManager& task_manager,
     tp = fact.CreateIntermediate(TaskPointFactoryType::AST_CYLINDER,
                                  std::move(wp));
     if (!fact.Insert(*tp,3)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# auto-replacing at 2 (no morph)\n");
@@ -237,7 +217,6 @@ bool test_task_manip(TaskManager& task_manager,
     tp = fact.CreateIntermediate(TaskPointFactoryType::AST_CYLINDER,
                                  std::move(wp));
     if (!fact.Replace(*tp,2)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# auto-replacing at 2 (morph)\n");
@@ -245,7 +224,6 @@ bool test_task_manip(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateStart(std::move(wp));
     if (!fact.Replace(*tp,2)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# auto-replacing at 0 (morph this)\n");
@@ -254,7 +232,6 @@ bool test_task_manip(TaskManager& task_manager,
     tp = fact.CreateIntermediate(TaskPointFactoryType::AST_CYLINDER,
                                  std::move(wp));
     if (!fact.Replace(*tp,0)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# auto-replacing at end (morph this)\n");
@@ -262,12 +239,12 @@ bool test_task_manip(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateIntermediate(TaskPointFactoryType::AST_CYLINDER,
                                  std::move(wp));
-    if (!fact.Replace(*tp,task_manager.TaskSize()-1)) return false;
-    delete tp;
+    if (!fact.Replace(*tp, task_manager.GetOrderedTask().TaskSize() - 1))
+      return false;
   }
 
   task_report(task_manager, "# removing finish point\n");
-  if (!fact.Remove(task_manager.TaskSize()-1)) {
+  if (!fact.Remove(task_manager.GetOrderedTask().TaskSize() - 1)) {
     return false;
   }
 
@@ -276,7 +253,6 @@ bool test_task_manip(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateFinish(std::move(wp));
     if (!fact.Insert(*tp,50)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# inserting at 0 (morph this)\n");
@@ -284,7 +260,6 @@ bool test_task_manip(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateFinish(std::move(wp));
     if (!fact.Insert(*tp,0)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# inserting at 2 (morph this)\n");
@@ -292,7 +267,6 @@ bool test_task_manip(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateStart(std::move(wp));
     if (!fact.Insert(*tp,2)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# inserting at 2 (direct)\n");
@@ -300,17 +274,17 @@ bool test_task_manip(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateIntermediate(std::move(wp));
     if (!fact.Insert(*tp,2,false)) return false;
-    delete tp;
   }
 
   task_report(task_manager, "# checking task\n");
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   if (task_manager.CheckOrderedTask()) {
     task_manager.Reset();
     task_manager.SetActiveTaskPoint(0);
-    task_manager.Resume();
+    if (!task_manager.Resume())
+      return false;
   } else {
     return false;
   }
@@ -346,7 +320,7 @@ bool test_task_type_manip(TaskManager& task_manager,
 
   AbstractTaskFactory &fact = task_manager.GetFactory();
   fact.MutateTPsToTaskType();
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   test_note("# checking mutated start..\n");
   if (!fact.IsValidStartType(fact.GetType(task_manager.GetOrderedTask().GetTaskPoint(0))))
@@ -355,10 +329,10 @@ bool test_task_type_manip(TaskManager& task_manager,
 
   char tmp[255];
   sprintf(tmp, "# checking mutated intermediates.  task_size():%d..\n",
-      task_manager.TaskSize());
+          task_manager.GetOrderedTask().TaskSize());
   test_note(tmp);
 
-  for (unsigned i = 1; i < (task_manager.TaskSize() - 1); i++) {
+  for (unsigned i = 1; i < task_manager.GetOrderedTask().TaskSize() - 1; i++) {
     sprintf(tmp, "# checking mutated intermediate point %d..\n", i);
     test_note(tmp);
     if (!fact.IsValidIntermediateType(fact.GetType(task_manager.GetOrderedTask().GetTaskPoint(i))))
@@ -367,11 +341,11 @@ bool test_task_type_manip(TaskManager& task_manager,
 
   test_note("# checking mutated finish..\n");
   if (!fact.IsValidFinishType(
-      fact.GetType(task_manager.GetOrderedTask().GetTaskPoint(task_manager.TaskSize() - 1))))
+      fact.GetType(task_manager.GetOrderedTask().GetTaskPoint(task_manager.GetOrderedTask().TaskSize() - 1))))
     return false;
 
   test_note("# validating task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
   test_note("# checking task..\n");
@@ -382,14 +356,14 @@ bool test_task_type_manip(TaskManager& task_manager,
   if (task_manager.GetOrderedTask().GetFactoryType() ==
                                       TaskFactoryType::FAI_GENERAL) {
     test_note("# checking OZs for FAI task..\n");
-    if (!fact.ValidateFAIOZs())
+    if (IsError(fact.ValidateFAIOZs()))
       return false;
   }
 
   if (task_manager.GetOrderedTask().GetFactoryType() ==
                                       TaskFactoryType::MAT) {
     test_note("# checking OZs for MAT task..\n");
-    if (!fact.ValidateMATOZs())
+    if (IsError(fact.ValidateMATOZs()))
       return false;
   }
   return true;
@@ -398,7 +372,7 @@ bool test_task_type_manip(TaskManager& task_manager,
 bool test_task_mixed(TaskManager& task_manager,
                      const Waypoints &waypoints)
 {
-  OrderedTaskPoint *tp;
+  std::unique_ptr<OrderedTaskPoint> tp;
   WaypointPtr wp;
 
   task_manager.SetFactory(TaskFactoryType::MIXED);
@@ -413,13 +387,13 @@ bool test_task_mixed(TaskManager& task_manager,
       cz.SetRadius(5000.0);
     }
     if (!fact.Append(*tp,false)) return false;
-    delete tp;
   } else {
     return false;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding intermdiate\n");
   wp = waypoints.LookupId(2);
@@ -427,7 +401,6 @@ bool test_task_mixed(TaskManager& task_manager,
     tp = fact.CreateIntermediate(TaskPointFactoryType::AST_CYLINDER,
                                  std::move(wp));
     if (!fact.Append(*tp,false)) return false;
-    delete tp;
   } else {
     return false;
   }
@@ -442,7 +415,6 @@ bool test_task_mixed(TaskManager& task_manager,
       cz.SetRadius(30000.0);
     }
     if (!fact.Append(*tp,false)) return false;
-    delete tp;
   } else {
     return false;
   }
@@ -453,7 +425,6 @@ bool test_task_mixed(TaskManager& task_manager,
     tp = fact.CreateIntermediate(TaskPointFactoryType::AAT_CYLINDER,
                                  std::move(wp));
     if (!fact.Append(*tp,false)) return false;
-    delete tp;
   } else {
     return false;
   }
@@ -468,7 +439,6 @@ bool test_task_mixed(TaskManager& task_manager,
       cz.SetRadius(30000.0);
     }
     if (!fact.Append(*tp,false)) return false;
-    delete tp;
   } else {
     return false;
   }
@@ -478,15 +448,14 @@ bool test_task_mixed(TaskManager& task_manager,
   if (wp) {
     tp = fact.CreateFinish(TaskPointFactoryType::FINISH_LINE, std::move(wp));
     if (!fact.Append(*tp,false)) return false;
-    delete tp;
   } else {
     return false;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -507,50 +476,47 @@ bool test_task_fai(TaskManager& task_manager,
   task_report(task_manager, "# adding start\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateStart(std::move(wp));
+    auto tp = fact.CreateStart(std::move(wp));
     if (!fact.Append(*tp)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding intermdiate\n");
   wp = waypoints.LookupId(2);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateIntermediate(std::move(wp));
+    auto tp = fact.CreateIntermediate(std::move(wp));
     if (!fact.Append(*tp, false)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding intermdiate\n");
   wp = waypoints.LookupId(3);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateIntermediate(std::move(wp));
+    auto tp = fact.CreateIntermediate(std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding finish\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateFinish(std::move(wp));
+    auto tp = fact.CreateFinish(std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -571,21 +537,21 @@ bool test_task_aat(TaskManager& task_manager,
   task_report(task_manager, "# adding start\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateStart(std::move(wp));
+    auto tp = fact.CreateStart(std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding intermediate\n");
   wp = waypoints.LookupId(2);
   if (wp) {
-    OrderedTaskPoint* tp = fact.CreateIntermediate(TaskPointFactoryType::AAT_CYLINDER,
-                                                   std::move(wp));
+    auto tp = fact.CreateIntermediate(TaskPointFactoryType::AAT_CYLINDER,
+                                      std::move(wp));
     if (tp->GetObservationZone().GetShape() == ObservationZone::Shape::CYLINDER) {
       CylinderZone &cz = (CylinderZone &)tp->GetObservationZone();
       cz.SetRadius(30000.0);
@@ -593,14 +559,13 @@ bool test_task_aat(TaskManager& task_manager,
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding intermediate\n");
   wp = waypoints.LookupId(3);
   if (wp) {
-    OrderedTaskPoint* tp = fact.CreateIntermediate(TaskPointFactoryType::AAT_CYLINDER,
-                                                   std::move(wp));
+    auto tp = fact.CreateIntermediate(TaskPointFactoryType::AAT_CYLINDER,
+                                      std::move(wp));
     if (tp->GetObservationZone().GetShape() == ObservationZone::Shape::CYLINDER) {
       CylinderZone &cz = (CylinderZone &)tp->GetObservationZone();
       cz.SetRadius(40000.0);
@@ -608,23 +573,21 @@ bool test_task_aat(TaskManager& task_manager,
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding finish\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateFinish(std::move(wp));
+    auto tp = fact.CreateFinish(std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -644,52 +607,49 @@ test_task_mat(TaskManager &task_manager, const Waypoints &waypoints)
   task_report(task_manager, "# adding start\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateStart(std::move(wp));
+    auto tp = fact.CreateStart(std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding intermediate\n");
   wp = waypoints.LookupId(2);
   if (wp) {
-    OrderedTaskPoint* tp = fact.CreateIntermediate(TaskPointFactoryType::MAT_CYLINDER,
-                                                   std::move(wp));
+    auto tp = fact.CreateIntermediate(TaskPointFactoryType::MAT_CYLINDER,
+                                      std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding intermediate\n");
   wp = waypoints.LookupId(3);
   if (wp) {
-    OrderedTaskPoint* tp = fact.CreateIntermediate(TaskPointFactoryType::MAT_CYLINDER,
-                                                   std::move(wp));
+    auto tp = fact.CreateIntermediate(TaskPointFactoryType::MAT_CYLINDER,
+                                      std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding finish\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateFinish(std::move(wp));
+    auto tp = fact.CreateFinish(std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -711,40 +671,38 @@ bool test_task_or(TaskManager& task_manager,
   task_report(task_manager, "# adding start\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateStart(std::move(wp));
+    auto tp = fact.CreateStart(std::move(wp));
     if (!fact.Append(*tp)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding intermediate\n");
   wp = waypoints.LookupId(2);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateIntermediate(std::move(wp));
+    auto tp = fact.CreateIntermediate(std::move(wp));
     if (!fact.Append(*tp)) {
       return false;
     }
-    delete tp;
   }
 
   task_report(task_manager, "# adding finish\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateFinish(std::move(wp));
+    auto tp = fact.CreateFinish(std::move(wp));
     if (!fact.Append(*tp)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -767,30 +725,29 @@ bool test_task_dash(TaskManager& task_manager,
   task_report(task_manager, "# adding start\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateStart(std::move(wp));
+    auto tp = fact.CreateStart(std::move(wp));
     if (!fact.Append(*tp)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding finish\n");
   wp = waypoints.LookupId(3);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateFinish(std::move(wp));
+    auto tp = fact.CreateFinish(std::move(wp));
     if (!fact.Append(*tp)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -813,30 +770,29 @@ bool test_task_fg(TaskManager& task_manager,
   task_report(task_manager, "# adding start\n");
   wp = waypoints.LookupId(1);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateStart(std::move(wp));
+    auto tp = fact.CreateStart(std::move(wp));
     if (!fact.Append(*tp, false)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   task_report(task_manager, "# adding finish\n");
   wp = waypoints.LookupId(6);
   if (wp) {
-    OrderedTaskPoint *tp = fact.CreateFinish(std::move(wp));
+    auto tp = fact.CreateFinish(std::move(wp));
     if (!fact.Append(*tp, false)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# checking task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
 
@@ -872,7 +828,7 @@ bool test_task_random(TaskManager& task_manager,
 {
   WaypointPtr wp;
 
-  OrderedTaskPoint *tp;
+  std::unique_ptr<OrderedTaskPoint> tp;
 
   task_manager.SetFactory(TaskFactoryType::MIXED);
   AbstractTaskFactory &fact = task_manager.GetFactory();
@@ -886,11 +842,11 @@ bool test_task_random(TaskManager& task_manager,
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   task_manager.SetActiveTaskPoint(0);
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
 
   for (unsigned i=0; i<num_points; i++) {
     task_report(task_manager, "# adding intermediate\n");
@@ -902,7 +858,6 @@ bool test_task_random(TaskManager& task_manager,
       if (!fact.Append(*tp,false)) {
         return false;
       }
-      delete tp;
     }
   }
 
@@ -915,13 +870,12 @@ bool test_task_random(TaskManager& task_manager,
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   task_report(task_manager, "# validating task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
   task_report(task_manager, "# checking task..\n");
@@ -937,7 +891,6 @@ bool test_task_random_RT_AAT_FAI(TaskManager& task_manager,
 {
   WaypointPtr wp;
 
-  OrderedTaskPoint *tp;
   char tmp[255];
   char tskType[20];
   tskType[0] = '\0';
@@ -976,11 +929,10 @@ bool test_task_random_RT_AAT_FAI(TaskManager& task_manager,
   if (wp) {
     const TaskPointFactoryType s = GetRandomType(fact.GetStartTypes());
 
-    tp = fact.CreateStart(s,std::move(wp));
+    auto tp = fact.CreateStart(s,std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
   for (unsigned i=0; i<num_int_points; i++) {
@@ -989,11 +941,10 @@ bool test_task_random_RT_AAT_FAI(TaskManager& task_manager,
     if (wp) {
       const TaskPointFactoryType s = GetRandomType(fact.GetIntermediateTypes());
 
-      tp = fact.CreateIntermediate(s,std::move(wp));
+      auto tp = fact.CreateIntermediate(s,std::move(wp));
       if (!fact.Append(*tp,false)) {
         return false;
       }
-      delete tp;
     }
   }
 
@@ -1002,24 +953,23 @@ bool test_task_random_RT_AAT_FAI(TaskManager& task_manager,
   if (wp) {
     const TaskPointFactoryType s = GetRandomType(fact.GetFinishTypes());
 
-    tp = fact.CreateFinish(s,std::move(wp));
+    auto tp = fact.CreateFinish(s,std::move(wp));
     if (!fact.Append(*tp,false)) {
       return false;
     }
-    delete tp;
   }
 
-  fact.UpdateStatsGeometry();
+  fact.UpdateGeometry();
 
   test_note("# validating task..\n");
-  if (!fact.Validate()) {
+  if (IsError(fact.Validate())) {
     return false;
   }
   if (task_manager.GetOrderedTask().GetFactoryType()
       == TaskFactoryType::FAI_GENERAL)
   {
     test_note("# checking OZs for FAI General..\n");
-    if (!fact.ValidateFAIOZs())
+    if (IsError(fact.ValidateFAIOZs()))
       return false;
   }
 
@@ -1027,13 +977,14 @@ bool test_task_random_RT_AAT_FAI(TaskManager& task_manager,
       == TaskFactoryType::MAT)
   {
     test_note("# checking OZs for MAT General..\n");
-    if (!fact.ValidateMATOZs())
+    if (IsError(fact.ValidateMATOZs()))
       return false;
   }
-  task_manager.Resume();
+  if (!task_manager.Resume())
+    return false;
   sprintf(tmp, "# SUCCESS CREATING %s task! task_size():%d..\n",
       tskType,
-      task_manager.TaskSize());
+      task_manager.GetOrderedTask().TaskSize());
   test_note(tmp);
   return true;
 }
@@ -1091,5 +1042,4 @@ const char* task_name(int test_num)
     return "unknown";
   }
 }
-
 

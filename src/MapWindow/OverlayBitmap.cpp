@@ -1,42 +1,23 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "OverlayBitmap.hpp"
-#include "Screen/Canvas.hpp"
-#include "Screen/OpenGL/Texture.hpp"
-#include "Screen/OpenGL/Scope.hpp"
-#include "Screen/OpenGL/ConstantAlpha.hpp"
-#include "Screen/OpenGL/VertexPointer.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/canvas/opengl/Texture.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
+#include "ui/canvas/opengl/ConstantAlpha.hpp"
+#include "ui/canvas/opengl/VertexPointer.hpp"
 #include "Projection/WindowProjection.hpp"
 #include "Math/Point2D.hpp"
 #include "Math/Quadrilateral.hpp"
 #include "Math/Boost/Point.hpp"
-#include "OS/Path.hpp"
-#include "Util/StaticArray.hxx"
+#include "system/Path.hpp"
+#include "util/StaticArray.hxx"
 
+#include <algorithm>
 #include <boost/geometry/geometries/register/ring.hpp>
 #include <boost/geometry/geometries/polygon.hpp>
-#include <boost/geometry/multi/geometries/multi_polygon.hpp>
+#include <boost/geometry/geometries/multi_polygon.hpp>
 #include <boost/geometry/algorithms/intersection.hpp>
 #include <boost/geometry/algorithms/covered_by.hpp>
 #include <boost/geometry/strategies/strategies.hpp>
@@ -60,8 +41,8 @@ MapOverlayBitmap::MapOverlayBitmap(Path path)
  * Convert a GeoPoint to a "fake" flat DoublePoint2D.  This conversion
  * is flawed in many ways, but good enough for clipping polygons.
  */
-static inline constexpr DoublePoint2D
-GeoTo2D(GeoPoint p)
+static constexpr DoublePoint2D
+GeoTo2D(GeoPoint p) noexcept
 {
   return {p.longitude.Native(), p.latitude.Native()};
 }
@@ -69,28 +50,42 @@ GeoTo2D(GeoPoint p)
 /**
  * Inverse of GeoTo2D().
  */
-static inline constexpr GeoPoint
-GeoFrom2D(DoublePoint2D p)
+static constexpr GeoPoint
+GeoFrom2D(DoublePoint2D p) noexcept
 {
   return {Angle::Native(p.x), Angle::Native(p.y)};
 }
 
 /**
  * Convert a #GeoBounds instance to a boost::geometry box.
+ *
+ * Longitude must not wrap (west native <= east native).  Callers that
+ * may pass antimeridian-wrapping bounds must split first.
  */
-gcc_const
+[[gnu::const]]
 static boost::geometry::model::box<DoublePoint2D>
-ToBox(const GeoBounds b)
+ToBox(const GeoBounds b) noexcept
 {
   return {GeoTo2D(b.GetSouthWest()), GeoTo2D(b.GetNorthEast())};
 }
 
 /**
+ * True when #GeoBounds longitude crosses ±180° in native coordinates
+ * (west > east), so a single cartesian box would be inverted/empty.
+ */
+[[gnu::const]]
+static bool
+LongitudeWraps(const GeoBounds &b) noexcept
+{
+  return b.GetWest().Native() > b.GetEast().Native();
+}
+
+/**
  * Convert a #GeoQuadrilateral instance to a boost::geometry ring.
  */
-gcc_const
+[[gnu::const]]
 static ArrayQuadrilateral
-ToArrayQuadrilateral(const GeoQuadrilateral q)
+ToArrayQuadrilateral(const GeoQuadrilateral q) noexcept
 {
   return {GeoTo2D(q.top_left), GeoTo2D(q.top_right),
       GeoTo2D(q.bottom_right), GeoTo2D(q.bottom_left),
@@ -99,52 +94,109 @@ ToArrayQuadrilateral(const GeoQuadrilateral q)
 }
 
 /**
- * Clip the quadrilateral inside the screen bounds.
+ * Intersect @p geo with one non-wrapping screen box; append into @p out.
  */
-gcc_pure
+static void
+ClipAgainstBox(const ArrayQuadrilateral &geo,
+               const GeoBounds &box,
+               ClippedMultiPolygon &out) noexcept
+{
+  ClippedMultiPolygon piece;
+  try {
+    boost::geometry::intersection(geo, ToBox(box), piece);
+  } catch (const boost::geometry::exception &) {
+    /* self-intersecting geometries → skip this piece */
+    return;
+  }
+
+  for (auto &polygon : piece)
+    out.push_back(std::move(polygon));
+}
+
+/**
+ * Clip the quadrilateral inside the screen bounds.
+ *
+ * Screen bounds that wrap the antimeridian are split into two ordinary
+ * boxes (±180° seam); a single boost box cannot represent that wrap.
+ */
+[[gnu::pure]]
 static ClippedMultiPolygon
-Clip(const GeoQuadrilateral &_geo, const GeoBounds &_bounds)
+Clip(const GeoQuadrilateral &_geo, const GeoBounds &_bounds) noexcept
 {
   const auto geo = ToArrayQuadrilateral(_geo);
-  const auto bounds = ToBox(_bounds);
-
   ClippedMultiPolygon clipped;
-  boost::geometry::intersection(geo, bounds, clipped);
+
+  if (!LongitudeWraps(_bounds)) {
+    ClipAgainstBox(geo, _bounds, clipped);
+    return clipped;
+  }
+
+  /* west..+180° and -180°..east */
+  const GeoBounds west_side(
+    GeoPoint(_bounds.GetWest(), _bounds.GetNorth()),
+    GeoPoint(Angle::HalfCircle(), _bounds.GetSouth()));
+  const GeoBounds east_side(
+    GeoPoint(-Angle::HalfCircle(), _bounds.GetNorth()),
+    GeoPoint(_bounds.GetEast(), _bounds.GetSouth()));
+
+  ClipAgainstBox(geo, west_side, clipped);
+  ClipAgainstBox(geo, east_side, clipped);
   return clipped;
 }
 
-gcc_pure
+[[gnu::pure]]
 static DoublePoint2D
-MapInQuadrilateral(const GeoQuadrilateral &q, const GeoPoint p)
+MapInQuadrilateral(const GeoQuadrilateral &q, const GeoPoint p) noexcept
 {
   return MapInQuadrilateral(GeoTo2D(q.top_left), GeoTo2D(q.top_right),
                             GeoTo2D(q.bottom_right), GeoTo2D(q.bottom_left),
                             GeoTo2D(p));
 }
 
+[[gnu::pure]]
+static GeoPoint
+InterpolateQuadrilateral(const GeoQuadrilateral &q,
+                         double u, double v) noexcept
+{
+  const auto top = q.top_left.Interpolate(q.top_right, u);
+  const auto bottom = q.bottom_left.Interpolate(q.bottom_right, u);
+  return top.Interpolate(bottom, v);
+}
+
+[[gnu::pure]]
+static GeoQuadrilateral
+SliceQuadrilateral(const GeoQuadrilateral &q,
+                   double u0, double v0,
+                   double u1, double v1) noexcept
+{
+  return {
+    InterpolateQuadrilateral(q, u0, v0),
+    InterpolateQuadrilateral(q, u1, v0),
+    InterpolateQuadrilateral(q, u0, v1),
+    InterpolateQuadrilateral(q, u1, v1),
+  };
+}
+
 bool
-MapOverlayBitmap::IsInside(GeoPoint p) const
+MapOverlayBitmap::IsInside(GeoPoint p) const noexcept
 {
   return simple_bounds.IsInside(p) &&
     boost::geometry::covered_by(GeoTo2D(p), ToArrayQuadrilateral(bounds));
 }
 
 void
-MapOverlayBitmap::Draw(Canvas &canvas,
-                       const WindowProjection &projection) noexcept
+MapOverlayBitmap::Draw([[maybe_unused]] Canvas &canvas,
+                       [[maybe_unused]] const WindowProjection &projection) noexcept
 {
-  if (!simple_bounds.Overlaps(projection.GetScreenBounds()))
+  const auto screen_bounds = projection.GetScreenBounds();
+  if (!simple_bounds.Overlaps(screen_bounds))
     /* not visible, outside of screen area */
-    return;
-
-  auto clipped = Clip(bounds, projection.GetScreenBounds());
-  if (clipped.empty())
     return;
 
   GLTexture &texture = *bitmap.GetNative();
   const PixelSize allocated = texture.GetAllocatedSize();
-  const double x_factor = double(texture.GetWidth()) / allocated.cx;
-  const double y_factor = double(texture.GetHeight()) / allocated.cy;
+  const double x_factor = double(texture.GetWidth()) / allocated.width;
+  const double y_factor = double(texture.GetHeight()) / allocated.height;
 
   Point2D<GLfloat> coord[16];
   BulkPixelPoint vertices[16];
@@ -159,6 +211,58 @@ MapOverlayBitmap::Draw(Canvas &canvas,
   glVertexAttribPointer(OpenGL::Attribute::TEXCOORD, 2, GL_FLOAT, GL_FALSE,
                         0, coord);
 
+  if (texture.GetWidth() > 512 || texture.GetHeight() > 512) {
+    const unsigned x_steps = std::clamp((texture.GetWidth() + 127u) / 128u,
+                                        1u, 32u);
+    const unsigned y_steps = std::clamp((texture.GetHeight() + 127u) / 128u,
+                                        1u, 32u);
+
+    for (unsigned y = 0; y < y_steps; ++y) {
+      const double v0 = double(y) / y_steps;
+      const double v1 = double(y + 1) / y_steps;
+
+      for (unsigned x = 0; x < x_steps; ++x) {
+        const double u0 = double(x) / x_steps;
+        const double u1 = double(x + 1) / x_steps;
+
+        const auto cell = SliceQuadrilateral(bounds, u0, v0, u1, v1);
+        if (!cell.GetBounds().Overlaps(screen_bounds))
+          continue;
+
+        const GeoPoint geo[4] = {
+          cell.top_left,
+          cell.top_right,
+          cell.bottom_right,
+          cell.bottom_left,
+        };
+        const double uv[4][2] = {
+          {u0, v0},
+          {u1, v0},
+          {u1, v1},
+          {u0, v1},
+        };
+
+        for (unsigned i = 0; i < 4; ++i) {
+          coord[i].x = uv[i][0] * x_factor;
+          coord[i].y = (bitmap.IsFlipped() ? 1 - uv[i][1] : uv[i][1]) * y_factor;
+
+          vertices[i] = projection.GeoToScreen(geo[i]);
+        }
+
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+      }
+    }
+
+    glDisableVertexAttribArray(OpenGL::Attribute::TEXCOORD);
+    return;
+  }
+
+  auto clipped = Clip(bounds, screen_bounds);
+  if (clipped.empty()) {
+    glDisableVertexAttribArray(OpenGL::Attribute::TEXCOORD);
+    return;
+  }
+
   for (const auto &polygon : clipped) {
     const auto &ring = polygon.outer();
 
@@ -171,10 +275,7 @@ MapOverlayBitmap::Draw(Canvas &canvas,
 
       auto p = MapInQuadrilateral(bounds, v);
       coord[i].x = p.x * x_factor;
-      coord[i].y = p.y * y_factor;
-
-      if (bitmap.IsFlipped())
-        coord[i].y = 1 - coord[i].y;
+      coord[i].y = (bitmap.IsFlipped() ? 1 - p.y : p.y) * y_factor;
 
       vertices[i] = projection.GeoToScreen(v);
     }

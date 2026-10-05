@@ -1,5 +1,8 @@
-#ifndef _ZZIP__STDINT_H /* zzip-stdint.h */
-#define _ZZIP__STDINT_H 1
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
+
 /* this file ensures that we have some kind of typedef declarations for
    unsigned C9X typedefs. The ISO C 9X: 7.18 Integer types file is stdint.h
  */
@@ -38,8 +41,17 @@
     typedef unsigned long uint32_t;     typedef signed long int32_t;
 # endif
 
+/* either (long long) on Unix or (__int64) on Windows */
 typedef unsigned _zzip___int64 uint64_t; typedef _zzip___int64 int64_t;
-#endif
 
-#endif /*_ZZIP_STDINT_H*/
+# if defined ZZIP_SIZEOF_INT_P 
+#  if ZZIP_SIZEOF_INT_P == ZZIP_SIZEOF_LONG+0
+    typedef long intptr_t;
+#  elif ZZIP_SIZEOF_INT_P == ZZIP_SIZEOF_INT+0
+    typedef int intptr_t;
+#  else
+    typedef int64_t intptr_t;
+#  endif
+# endif
 
+#endif /* ZZIP_HAVE_... */

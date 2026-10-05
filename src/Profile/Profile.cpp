@@ -1,111 +1,122 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Profile.hpp"
-#include "Map.hpp"
-#include "File.hpp"
-#include "Current.hpp"
-#include "LogFile.hpp"
 #include "Asset.hpp"
+#include "Current.hpp"
+#include "File.hpp"
 #include "LocalPath.hpp"
-#include "Util/StringUtil.hpp"
-#include "Util/StringCompare.hxx"
-#include "Util/StringAPI.hxx"
-#include "Util/tstring.hpp"
-#include "OS/FileUtil.hpp"
-#include "OS/Path.hpp"
+#include "LogFile.hpp"
+#include "Map.hpp"
+#include "lib/fmt/PathFormatter.hpp"
+#include "system/FileUtil.hpp"
+#include "system/Path.hpp"
+#include "util/StringAPI.hxx"
+#include "util/StringCompare.hxx"
+#include "util/StringUtil.hpp"
 
+#include <string>
+#include <cassert>
 #include <windef.h> /* for MAX_PATH */
-#include <assert.h>
 
 #define XCSPROFILE "default.prf"
 #define OLDXCSPROFILE "xcsoar-registry.prf"
 
 static AllocatedPath startProfileFile = nullptr;
 
+/** True after Load() has been called for startProfileFile. */
+static bool loaded = false;
+
+static AllocatedPath
+BuildProfilePath(Path base_name) noexcept
+{
+  return LocalPath(AllocatedPath::Build(Path("profiles"), base_name));
+}
+
 Path
-Profile::GetPath()
+Profile::GetPath() noexcept
 {
   return startProfileFile;
 }
 
 void
-Profile::Load()
+Profile::Clear() noexcept
 {
-  assert(!startProfileFile.IsNull());
+  map.Clear();
+  SetModified(false);
+  loaded = false;
+}
 
-  LogFormat("Loading profiles");
+void
+Profile::Load() noexcept
+{
+  assert(startProfileFile != nullptr);
+
+  LogString("Loading profiles");
   LoadFile(startProfileFile);
+  loaded = true;
   SetModified(false);
 }
 
 void
-Profile::LoadFile(Path path)
+Profile::LoadFile(Path path) noexcept
 {
   try {
     LoadFile(map, path);
-    LogFormat(_T("Loaded profile from %s"), path.c_str());
-  } catch (const std::runtime_error &e) {
-    LogError("Failed to load profile", e);
+    LogFmt("Loaded profile from {}", path);
+  } catch (...) {
+    LogError(std::current_exception(), "Failed to load profile");
   }
 }
 
 void
-Profile::Save()
+Profile::Save() noexcept
 {
+  if (!loaded) {
+    if (startProfileFile != nullptr)
+      LogString("Skipping profile save: profile was never loaded");
+    return;
+  }
+
   if (!IsModified())
     return;
 
-  LogFormat("Saving profiles");
-  if (startProfileFile.IsNull())
+  LogString("Saving profiles");
+  if (startProfileFile == nullptr)
     SetFiles(nullptr);
 
-  assert(!startProfileFile.IsNull());
-  SaveFile(startProfileFile);
+  assert(startProfileFile != nullptr);
+
+  try {
+    SaveFile(startProfileFile);
+  } catch (...) {
+    LogError(std::current_exception(), "Failed to save profile");
+  }
 }
 
 void
 Profile::SaveFile(Path path)
 {
-  LogFormat(_T("Saving profile to %s"), path.c_str());
+  LogFmt("Saving profile to {}", path);
   SaveFile(map, path);
 }
 
 void
-Profile::SetFiles(Path override_path)
+Profile::SetFiles(Path override_path) noexcept
 {
-  /* set the "modified" flag, because we are potentially saving to a
-     new file now */
-  SetModified(true);
+  /* only dirty the map after Load(): SetFiles() from -profile= runs
+     while the map is still empty, and Save() must not persist that */
+  if (loaded)
+    SetModified(true);
 
-  if (!override_path.IsNull()) {
+  if (override_path != nullptr) {
     if (override_path.IsBase()) {
       if (StringFind(override_path.c_str(), '.') != nullptr)
-        startProfileFile = LocalPath(override_path);
+        startProfileFile = BuildProfilePath(override_path);
       else {
-        tstring t(override_path.c_str());
-        t += _T(".prf");
-        startProfileFile = LocalPath(t.c_str());
+        std::string t(override_path.c_str());
+        t += ".prf";
+        startProfileFile = BuildProfilePath(Path(t.c_str()));
       }
     } else
       startProfileFile = Path(override_path);
@@ -113,23 +124,5 @@ Profile::SetFiles(Path override_path)
   }
 
   // Set the default profile file
-  startProfileFile = LocalPath(_T(XCSPROFILE));
-}
-
-AllocatedPath
-Profile::GetPath(const char *key)
-{
-  return map.GetPath(key);
-}
-
-bool
-Profile::GetPathIsEqual(const char *key, Path value)
-{
-  return map.GetPathIsEqual(key, value);
-}
-
-void
-Profile::SetPath(const char *key, Path value)
-{
-  map.SetPath(key, value);
+  startProfileFile = BuildProfilePath(Path(XCSPROFILE));
 }

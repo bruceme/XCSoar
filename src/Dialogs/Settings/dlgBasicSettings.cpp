@@ -1,29 +1,8 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Dialogs/Dialogs.h"
 #include "Dialogs/WidgetDialog.hpp"
-#include "Blackboard/DeviceBlackboard.hpp"
 #include "Computer/Settings.hpp"
 #include "Units/Units.hpp"
 #include "Units/Group.hpp"
@@ -33,18 +12,19 @@ Copyright_License {
 #include "Form/DataField/Listener.hpp"
 #include "UIGlobals.hpp"
 #include "Interface.hpp"
-#include "Components.hpp"
+#include "ActionInterface.hpp"
 #include "GlideSolvers/GlidePolar.hpp"
-#include "Task/ProtectedTaskManager.hpp"
+#include "Dialogs/Message.hpp"
+#include "Dialogs/InternalLink.hpp"
 #include "Widget/RowFormWidget.hpp"
 #include "Form/Button.hpp"
 #include "Language/Language.hpp"
-#include "Operation/MessageOperationEnvironment.hpp"
-#include "Event/Timer.hpp"
+#include "ui/event/PeriodicTimer.hpp"
 
 #include <math.h>
 
 enum ControlIndex {
+  Crew,
   Ballast,
   WingLoading,
   Bugs,
@@ -53,14 +33,10 @@ enum ControlIndex {
   Temperature,
 };
 
-enum Actions {
-  DUMP = 100,
-};
-
 class FlightSetupPanel final
-  : public RowFormWidget, DataFieldListener,
-    private Timer,
-    public ActionListener {
+  : public RowFormWidget, DataFieldListener {
+  UI::PeriodicTimer timer{[this]{ OnTimer(); }};
+
   Button *dump_button;
 
   PolarSettings &polar_settings;
@@ -80,18 +56,17 @@ public:
   }
 
   void SetButtons();
+  void SetCrewMass(double _crew_mass) {
+    ActionInterface::SetCrewMass(_crew_mass);
+    SetBallast();
+  }
+
   void SetBallast();
   void SetBallastTimer(bool active);
   void FlipBallastTimer();
 
-  void PublishPolarSettings() {
-    if (protected_task_manager != NULL)
-      protected_task_manager->SetGlidePolar(polar_settings.glide_polar_task);
-  }
-
   void SetBallastLitres(double ballast_litres) {
-    polar_settings.glide_polar_task.SetBallastLitres(ballast_litres);
-    PublishPolarSettings();
+    ActionInterface::SetBallastLitres(ballast_litres);
     SetButtons();
     SetBallast();
   }
@@ -102,39 +77,35 @@ public:
   void SetQNH(AtmosphericPressure qnh);
 
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
-  virtual void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     RowFormWidget::Show(rc);
-    Timer::Schedule(500);
+    timer.Schedule(std::chrono::milliseconds(500));
 
     OnTimer();
     SetButtons();
     SetBallast();
   }
 
-  virtual void Hide() override {
-    Timer::Cancel();
+  void Hide() noexcept override {
+    timer.Cancel();
     RowFormWidget::Hide();
   }
 
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override;
-
 private:
-  /* virtual methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override;
+  void OnTimer();
 
-  /* virtual methods from Timer */
-  virtual void OnTimer() override;
+  /* virtual methods from DataFieldListener */
+  void OnModified(DataField &df) noexcept override;
 };
 
 void
 FlightSetupPanel::SetButtons()
 {
-  dump_button->SetVisible(polar_settings.glide_polar_task.HasBallast());
+  dump_button->SetEnabled(polar_settings.glide_polar_task.HasBallast());
 
   const ComputerSettings &settings = CommonInterface::GetComputerSettings();
   dump_button->SetCaption(settings.polar.ballast_timer_active
@@ -146,30 +117,40 @@ FlightSetupPanel::SetBallast()
 {
   const bool ballastable = polar_settings.glide_polar_task.IsBallastable();
   SetRowVisible(Ballast, ballastable);
-  if (ballastable)
+  if (ballastable) {
+    WndProperty &control = GetControl(Ballast);
+    auto *df = dynamic_cast<DataFieldFloat *>(control.GetDataField());
+    if (df != nullptr) {
+      const double db = 5;
+      /* Use configured max_ballast if available, otherwise
+         fall back to 400 L as a reasonable UI ceiling */
+      double ui_max = polar_settings.glide_polar_task.GetMaxBallast();
+      if (ui_max < db)
+        ui_max = 400.0;
+      df->SetMax(db * ceil(ui_max / db));
+    }
     LoadValue(Ballast, polar_settings.glide_polar_task.GetBallastLitres());
+  }
 
   const auto wl = polar_settings.glide_polar_task.GetWingLoading();
   SetRowVisible(WingLoading, wl > 0);
   if (wl > 0)
     LoadValue(WingLoading, wl, UnitGroup::WING_LOADING);
-
-  if (device_blackboard != NULL) {
-    const Plane &plane = CommonInterface::GetComputerSettings().plane;
-    if (plane.dry_mass > 0) {
-      auto fraction = polar_settings.glide_polar_task.GetBallast();
-      auto overload = (plane.dry_mass + fraction * plane.max_ballast) /
-        plane.dry_mass;
-
-      MessageOperationEnvironment env;
-      device_blackboard->SetBallast(fraction, overload, env);
-    }
-  }
 }
 
 void
 FlightSetupPanel::SetBallastTimer(bool active)
 {
+  if (active && CommonInterface::GetComputerSettings().plane.dump_time == 0) {
+    if (ShowMessageBox(_("Ballast dump time is 0 in plane profile.\n"
+                         "Open Plane configuration now?"),
+                       _("Flight Setup"),
+                       MB_YESNO | MB_ICONEXCLAMATION) == IDYES)
+      HandleInternalLink("xcsoar://config/planes");
+
+    return;
+  }
+
   if (!polar_settings.glide_polar_task.HasBallast())
     active = false;
 
@@ -216,29 +197,13 @@ FlightSetupPanel::RefreshAltitudeControl()
 
 void
 FlightSetupPanel::SetBugs(double bugs) {
-  polar_settings.SetBugs(bugs);
-  PublishPolarSettings();
-
-  if (device_blackboard != NULL) {
-    MessageOperationEnvironment env;
-    device_blackboard->SetBugs(bugs, env);
-  }
+  ActionInterface::SetBugs(bugs);
 }
 
 void
 FlightSetupPanel::SetQNH(AtmosphericPressure qnh)
 {
-  const NMEAInfo &basic = CommonInterface::Basic();
-  ComputerSettings &settings_computer = CommonInterface::SetComputerSettings();
-
-  settings_computer.pressure = qnh;
-  settings_computer.pressure_available.Update(basic.clock);
-
-  if (device_blackboard != NULL) {
-    MessageOperationEnvironment env;
-    device_blackboard->SetQNH(qnh, env);
-  }
-
+  ActionInterface::SetQNH(qnh, true);
   RefreshAltitudeControl();
 }
 
@@ -248,7 +213,10 @@ FlightSetupPanel::OnTimer()
   const PolarSettings &settings = CommonInterface::GetComputerSettings().polar;
 
   if (settings.ballast_timer_active) {
-    /* display the new values on the screen */
+    /* dump updates the polar on the process timer; push that to
+       devices and refresh the dialog */
+    ActionInterface::SetBallastLitres(
+        polar_settings.glide_polar_task.GetBallastLitres());
     SetBallast();
   }
 
@@ -256,37 +224,49 @@ FlightSetupPanel::OnTimer()
 }
 
 void
-FlightSetupPanel::OnModified(DataField &df)
+FlightSetupPanel::OnModified(DataField &df) noexcept
 {
-  if (IsDataField(Ballast, df)) {
+  if (IsDataField(Crew, df)) {
     const DataFieldFloat &dff = (const DataFieldFloat &)df;
-    SetBallastLitres(dff.GetAsFixed());
+    SetCrewMass(Units::ToSysMass(dff.GetValue()));
+  } else if (IsDataField(Ballast, df)) {
+    const DataFieldFloat &dff = (const DataFieldFloat &)df;
+    SetBallastLitres(dff.GetValue());
   } else if (IsDataField(Bugs, df)) {
     const DataFieldFloat &dff = (const DataFieldFloat &)df;
-    SetBugs(1 - (dff.GetAsFixed() / 100));
+    SetBugs(1 - (dff.GetValue() / 100));
   } else if (IsDataField(QNH, df)) {
     const DataFieldFloat &dff = (const DataFieldFloat &)df;
-    SetQNH(Units::FromUserPressure(dff.GetAsFixed()));
+    SetQNH(Units::FromUserPressure(dff.GetValue()));
   }
 }
 
 void
-FlightSetupPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+FlightSetupPanel::Prepare(ContainerWindow &parent,
+                          const PixelRect &rc) noexcept
 {
   RowFormWidget::Prepare(parent, rc);
 
   const ComputerSettings &settings = CommonInterface::GetComputerSettings();
   const Plane &plane = CommonInterface::GetComputerSettings().plane;
 
+  AddFloat(_("Crew"),
+           _("All masses loaded to the glider beyond the empty weight including pilot and copilot, but not water ballast."),
+           "%.0f %s", "%.0f",
+           0, Units::ToUserMass(300), 5, false, UnitGroup::MASS,
+           polar_settings.glide_polar_task.GetCrewMass(),
+           this);
+
   const double db = 5;
   AddFloat(_("Ballast"),
-           _("Ballast of the glider.  Increase this value if the pilot/cockpit load is greater than the reference pilot weight of the glide polar (typically 75kg).  Press ENTER on this field to toggle count-down of the ballast volume according to the dump rate specified in the configuration settings."),
-           _T("%.0f l"), _T("%.0f"),
+           _("Ballast of the glider. Press \"Dump/Stop\" to toggle count-down of the ballast volume according to the dump rate specified in the configuration settings."),
+           "%.0f l", "%.0f",
            0, db*ceil(plane.max_ballast/db), db, false, 0,
            this);
 
-  WndProperty *wing_loading = AddFloat(_("Wing loading"), nullptr,
-                                       _T("%.1f %s"), _T("%.0f"), 0,
+  WndProperty *wing_loading = AddFloat(_("Wing loading"),
+                                       _("The current wing loading, calculated from the glider's empty weight, crew weight, and ballast."),
+                                       "%.1f %s", "%.0f", 0,
                                        300, 5,
                                        false, UnitGroup::WING_LOADING,
                                        0);
@@ -294,15 +274,15 @@ FlightSetupPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
 
   AddFloat(_("Bugs"), /* xgettext:no-c-format */
            _("How clean the glider is. Set to 0% for clean, larger numbers as the wings "
-               "pick up bugs or gets wet.  50% indicates the glider's sink rate is doubled."),
-           _T("%.0f %%"), _T("%.0f"),
+               "pick up bugs or get wet. 50% indicates the glider's sink rate is doubled."),
+           "%.0f %%", "%.0f",
            0, 50, 1, false,
            (1 - polar_settings.bugs) * 100,
            this);
 
   WndProperty *wp;
   wp = AddFloat(_("QNH"),
-                _("Area pressure for barometric altimeter calibration.  This is set automatically if Vega connected."),
+                _("Area pressure for barometric altimeter calibration. This is set automatically if Vega is connected."),
                 GetUserPressureFormat(true), GetUserPressureFormat(),
                 Units::ToUserPressure(Units::ToSysUnit(850, Unit::HECTOPASCAL)),
                 Units::ToUserPressure(Units::ToSysUnit(1300, Unit::HECTOPASCAL)),
@@ -314,12 +294,12 @@ FlightSetupPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
     wp->RefreshDisplay();
   }
 
-  AddReadOnly(_("Altitude"), NULL, _T("%.0f %s"),
+  AddReadOnly(_("Altitude"), NULL, "%.0f %s",
               UnitGroup::ALTITUDE, 0);
 
   wp = AddFloat(_("Max. temp."),
-                _("Set to forecast ground temperature.  Used by convection estimator (temperature trace page of Analysis dialog)"),
-                _T("%.0f %s"), _T("%.0f"),
+                _("Set to forecast ground temperature. Used by convection estimator (temperature trace page of Analysis dialog)."),
+                "%.0f %s", "%.0f",
                 Temperature::FromCelsius(-50).ToUser(),
                 Temperature::FromCelsius(60).ToUser(),
                 1, false,
@@ -332,7 +312,7 @@ FlightSetupPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
 }
 
 bool
-FlightSetupPanel::Save(bool &changed)
+FlightSetupPanel::Save(bool &changed) noexcept
 {
   ComputerSettings &settings = CommonInterface::SetComputerSettings();
 
@@ -346,26 +326,23 @@ FlightSetupPanel::Save(bool &changed)
 }
 
 void
-FlightSetupPanel::OnAction(int id)
-{
-  if (id == DUMP)
-    FlipBallastTimer();
-}
-
-void
 dlgBasicSettingsShowModal()
 {
   FlightSetupPanel *instance = new FlightSetupPanel();
 
   const Plane &plane = CommonInterface::GetComputerSettings().plane;
   StaticString<128> caption(_("Flight Setup"));
-  caption.append(_T(" - "));
+  caption.append(" - ");
   caption.append(plane.polar_name);
 
-  WidgetDialog dialog(UIGlobals::GetDialogLook());
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), caption, instance);
-  instance->SetDumpButton(dialog.AddButton(_("Dump"), *instance, DUMP));
-  dialog.AddButton(_("OK"), mrOK);
+  WidgetDialog dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+                      UIGlobals::GetDialogLook(),
+                      caption, instance);
+  instance->SetDumpButton(dialog.AddButton(_("Dump"), [instance](){
+    instance->FlipBallastTimer();
+  }));
+
+  dialog.AddButton(_("Close"), mrOK);
 
   dialog.ShowModal();
 }

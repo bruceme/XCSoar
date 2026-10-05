@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFOBOX_TYPE_HPP
-#define XCSOAR_INFOBOX_TYPE_HPP
+#pragma once
 
 namespace InfoBoxFactory
 {
@@ -39,7 +18,7 @@ namespace InfoBoxFactory
     e_TL_Gain, /* Total altitude gain/loss in the last thermal */
     e_TL_Time, /* Time spent circling in the last thermal */
     /* 10..19 */
-    e_MacCready, /* The current MacCready setting. This infobox also shows whether MacCready is manual or auto. (Touchscreen/PC only) Also used to adjust the MacCready Setting if the infobox is active, by using the up/down cursor keys */
+    e_MacCready, /* The current MacCready setting and whether it is manual or auto. The comment is the MacCready speed-to-fly. At MacCready 0, with a task or Goto active, that speed is adjusted for wind toward the waypoint. (Touchscreen/PC only) Also used to adjust the MacCready setting if the infobox is active, by using the up/down cursor keys */
     e_WP_Distance, /* The distance to the currently selected waypoint. For AAT tasks, this is the distance to the target within the AAT sector */
     e_WP_AltDiff, /* Next Altitude Difference - Arrival altitude at the next waypoint relative to the safety arrival height */
     e_WP_AltReq, /* Additional altitude required to reach the next turn point */
@@ -65,7 +44,7 @@ namespace InfoBoxFactory
     e_AA_SpeedMin, /* Assigned Area Task average speed achievable if flying minimum possible distance remaining in minimum AAT time */
     e_AirSpeed_Ext, /* Indicated Airspeed reported by a supported external intelligent vario */
     e_H_Baro, /* This is the barometric altitude obtained from a GPS equipped with pressure sensor, or a supported external intelligent vario */
-    e_WP_Speed_MC, /* The MacCready speed-to-fly for optimal flight to the next waypoint. In cruise flight mode, this speed-to-fly is calculated for maintaining altitude. In final glide mode, this speed-to-fly is calculated for descent */
+    e_WP_Speed_MC, /* The MacCready speed-to-fly for optimal flight to the next waypoint. In cruise flight mode, this speed-to-fly is calculated for maintaining altitude. In final glide mode, this speed-to-fly is calculated for descent. At MacCready 0, with a task or Goto active, this speed is adjusted for wind toward the waypoint */
     e_Climb_Perc, /* Percentage of time spent in climb mode. These statistics are reset upon starting the task */
     e_TimeSinceTakeoff, /* Time elapsed since takeoff was detected */
     e_Load_G, /* Magnitude of G loading reported by a supported external intelligent vario. This value is negative for pitch-down manoeuvres */
@@ -75,7 +54,7 @@ namespace InfoBoxFactory
     e_TimeUTC, /* GPS time expressed in UTC */
     e_Fin_Time, /* Estimated time required to complete task, assuming performance of ideal MacCready cruise/climb cycle */
     e_WP_Time, /* Estimated time required to reach next waypoint, assuming performance of ideal MacCready cruise/climb cycle */
-    e_Act_Speed, /* The instantaneous MacCready speed-to-fly, making use of Netto vario calculations to determine dolphin cruise speed in the glider's current bearing. In cruise flight mode, this speed-to-fly is calculated for maintaining altitude. In final glide mode, this speed-to-fly is calculated for descent. In climb mode, this switches to the speed for minimum sink at the current load factor (if an accelerometer is connected). When Block mode speed to fly is selected, this infobox displays the MacCready speed */
+    e_Act_Speed, /* The instantaneous MacCready speed-to-fly, making use of Netto vario calculations to determine dolphin cruise speed in the glider's current bearing. In cruise flight mode, this speed-to-fly is calculated for maintaining altitude. In final glide mode, this speed-to-fly is calculated for descent. In climb mode, this switches to the speed for minimum sink at the current load factor (if an accelerometer is connected). When Block mode speed to fly is selected, this infobox displays the MacCready speed. At MacCready 0, with a task or Goto active, this speed is adjusted for wind toward the waypoint */
     e_VerticalSpeed_Netto, /* Instantaneous vertical speed of air-mass, equal to vario value less the glider's estimated sink rate. Best used if airspeed, accelerometers and vario are connected, otherwise calculations are based on GPS measurements and wind estimates */
     e_Fin_TimeLocal, /* Estimated arrival local time at task completion, assuming performance of ideal MacCready cruise/climb cycle */
     e_WP_TimeLocal, /* Estimated arrival local time at next waypoint, assuming performance of ideal MacCready cruise/climb cycle */
@@ -137,33 +116,49 @@ namespace InfoBoxFactory
     CruiseEfficiency,
     WIND_ARROW,
     THERMAL_ASSISTANT,
-
+    /* 100..109 */
     START_OPEN_TIME,
     START_OPEN_ARRIVAL_TIME,
-
     NEXT_RADIAL,
     ATC_RADIAL,
-
     TASK_SPEED_HOUR,
     WP_NOMINAL_DIST, /* The nominal distance to the currently selected waypoint. For AAT tasks, this is the distance to the origin of the AAT sector */
-
     CIRCLE_DIAMETER,
-
     TAKEOFF_DISTANCE,
-    OLC_SPEED,
-
+    CONTEST_SPEED,
     FIN_MC0_ALTD,
-
     /* 110..119 */
     NEXT_ARROW,
     e_WP_ETA_VMG, /* Estimated arrival time at next waypoint assuming current speed is maintained*/
-
     e_NonCircling_Climb_Perc,
-
     e_Climb_Perc_Chart,
-
     e_NbrSat, /* Number of used Sat by GPS module */
-
+    e_ActiveRadio, /* Active Radio Frequency */
+    e_StandbyRadio, /* Standby Radio Frequency */
+    e_Thermal_Time, /* Time in Thermal*/
+    e_Alternate_2_GR, /* Geometric gradient to the arrival height above the second alternate. This is not adjusted for total energy */
+    e_HeartRate,
+    /* 120..129 */
+    e_TransponderCode, /* Transponder code */
+    e_EngineCHT,  /* Engine Cylinder Head Temperature */
+    e_EngineEGT,  /* Engine Exhaust Gas Temperature */
+    e_EngineRPM,  /* Engine Revolutions Per Minute */
+    e_AAT_dT_or_ETA, /* Delta time in AAT task and ETA in racing task */
+    e_SpeedTaskEst, /* Estimated (predicted) whole-task average cross-country speed for current task. Affected by MC setting. */
+    e_Home_AltDiff, /* Arrival altitude at the home waypoint (if defined) relative to the safety arrival height */
+    e_SpeedTaskLeg, /* Average cross country speed while on current task leg, not compensated for altitude */
+    e_Alternate_1_AltDiff, /* Arrival altitude at the best alternate landing location relative to the safety arrival height */
+    e_Alternate_2_AltDiff, /* Arrival altitude at the second-best alternate landing location relative to the safety arrival height */
+    /* 130 */
+    e_Home, /* Combined home waypoint infobox: shows waypoint name, arrival altitude diff, and distance */
+    e_AltitudeIGC, /* Logger or ISA pressure altitude only (no QNH baro / GPS) */
+    e_QNH, /* Current QNH pressure setting; tap to adjust manually */
+    e_ActiveWaypoint, /* Active waypoint infobox: shows the current task's next waypoint name (or Goto waypoint if no task), arrival altitude diff, and distance */
+    e_PreviousWaypoint, /* Previous waypoint infobox: shows the task waypoint before the active leg (start when on the first leg) with arrival altitude diff and distance; selection is informational only and never advances the task or sets a Goto */
+    e_BloodOxygen, /* Blood oxygen saturation (SpO2) from a BLE pulse oximeter */
+    e_Ballast, /* Water ballast on board; the comment shows the wing loading; tap to open the flight setup */
+    e_WP_VMG, /* Speed VMG: the component of ground speed made good towards the next waypoint */
+    e_CustomText, /* Shows the free text configured for this slot instead of a value */
     e_NUM_TYPES /* Last item */
   };
 
@@ -171,5 +166,3 @@ namespace InfoBoxFactory
   static constexpr Type MIN_TYPE_VAL = (Type)0;
   static constexpr Type MAX_TYPE_VAL = (Type)(e_NUM_TYPES - 1);
 }
-
-#endif

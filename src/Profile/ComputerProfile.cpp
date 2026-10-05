@@ -1,32 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ComputerProfile.hpp"
 #include "AirspaceConfig.hpp"
 #include "TaskProfile.hpp"
 #include "TrackingProfile.hpp"
 #include "WeatherProfile.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "ContestProfile.hpp"
 #include "Map.hpp"
 #include "Computer/Settings.hpp"
@@ -40,6 +20,7 @@ namespace Profile {
   static void Load(const ProfileMap &map, FeaturesSettings &settings);
   static void Load(const ProfileMap &map, CirclingSettings &settings);
   static void Load(const ProfileMap &map, WaveSettings &settings);
+  static void Load(const ProfileMap &map, WeGlideSettings &settings);
 };
 
 void
@@ -80,8 +61,25 @@ Profile::Load(const ProfileMap &map, LoggerSettings &settings)
 
   map.Get(ProfileKeys::LoggerID, settings.logger_id);
   map.Get(ProfileKeys::PilotName, settings.pilot_name);
+  map.Get(ProfileKeys::CoPilotName, settings.copilot_name);
+  map.Get(ProfileKeys::CrewWeightTemplate, settings.crew_mass_template);
   map.Get(ProfileKeys::EnableFlightLogger, settings.enable_flight_logger);
   map.Get(ProfileKeys::EnableNMEALogger, settings.enable_nmea_logger);
+}
+
+void
+Profile::Load(const ProfileMap &map, WeGlideSettings &settings)
+{
+  map.Get(ProfileKeys::WeGlideEnabled, settings.enabled);
+  map.Get(ProfileKeys::WeGlideAutomaticUpload, settings.automatic_upload);
+  map.Get(ProfileKeys::WeGlidePilotID, settings.pilot_id);
+
+  const char *date = map.Get(ProfileKeys::WeGlidePilotBirthDate);
+  if (date != nullptr) {
+    unsigned day, month, year;
+    if (sscanf(date, "%04u-%02u-%02u", &year, &month, &day) == 3)
+      settings.pilot_birthdate = {year, month, day};
+  }
 }
 
 void
@@ -111,6 +109,10 @@ Profile::Load(const ProfileMap &map, CirclingSettings &settings)
 {
   map.Get(ProfileKeys::EnableExternalTriggerCruise,
           settings.external_trigger_cruise_enabled);
+  map.Get(ProfileKeys::CruiseToCirclingModeSwitchThreshold,
+          settings.cruise_to_circling_mode_switch_threshold);
+  map.Get(ProfileKeys::CirclingToCruiseModeSwitchThreshold,
+          settings.circling_to_cruise_mode_switch_threshold);
 }
 
 void
@@ -119,8 +121,8 @@ Profile::Load(const ProfileMap &map, WaveSettings &settings)
   map.Get(ProfileKeys::WaveAssistant, settings.enabled);
 }
 
-static bool
-LoadUTCOffset(const ProfileMap &map, RoughTimeDelta &value_r)
+bool
+Profile::LoadUTCOffset(const ProfileMap &map, RoughTimeDelta &value_r) noexcept
 {
   /* NOTE: Until 6.2.4 utc_offset was stored as a positive int in the
      settings file (with negative offsets stored as "utc_offset + 24 *
@@ -135,7 +137,7 @@ LoadUTCOffset(const ProfileMap &map, RoughTimeDelta &value_r)
     /* no profile value present */
     return false;
 
-  if (value > 13 * 3600 || value < -13 * 3600)
+  if (value > MAX_UTC_OFFSET.count() || value < MIN_UTC_OFFSET.count())
     /* illegal value */
     return false;
 
@@ -159,11 +161,23 @@ Profile::Load(const ProfileMap &map, ComputerSettings &settings)
 
   map.Get(ProfileKeys::SetSystemTimeFromGPS, settings.set_system_time_from_gps);
 
-  LoadUTCOffset(map, settings.utc_offset);
+  const bool has_utc_offset = LoadUTCOffset(map, settings.utc_offset);
+
+  map.Get(ProfileKeys::TimeZone, settings.time_zone);
+
+  if (!map.GetEnum(ProfileKeys::LocalTimeSource, settings.local_time_source) &&
+      has_utc_offset)
+    /* migration from a profile written by an older version: keep the
+       UTC offset which the user configured explicitly, and leave the
+       default (which is platform specific) to those who never did */
+    settings.local_time_source = LocalTimeSource::MANUAL_UTC_OFFSET;
+
+  settings.utc_offset = settings.GetCurrentUTCOffset();
 
   Load(map, settings.task);
   Load(map, settings.contest);
   Load(map, settings.logger);
+  Load(map, settings.weglide);
 
 #ifdef HAVE_TRACKING
   Load(map, settings.tracking);

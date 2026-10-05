@@ -1,35 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxes/Content/Glide.hpp"
 #include "Engine/Util/Gradient.hpp"
 #include "InfoBoxes/Data.hpp"
 #include "Interface.hpp"
 
-#include <tchar.h>
-
 void
-UpdateInfoBoxGRInstant(InfoBoxData &data)
+UpdateInfoBoxGRInstant(InfoBoxData &data) noexcept
 {
   const auto gr = CommonInterface::Calculated().gr;
 
@@ -43,7 +21,7 @@ UpdateInfoBoxGRInstant(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxGRCruise(InfoBoxData &data)
+UpdateInfoBoxGRCruise(InfoBoxData &data) noexcept
 {
   const auto &basic = CommonInterface::Basic();
   const auto &calculated = CommonInterface::Calculated();
@@ -64,7 +42,7 @@ UpdateInfoBoxGRCruise(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxGRAvg(InfoBoxData &data)
+UpdateInfoBoxGRAvg(InfoBoxData &data) noexcept
 {
   const auto average_gr = CommonInterface::Calculated().average_gr;
 
@@ -75,15 +53,15 @@ UpdateInfoBoxGRAvg(InfoBoxData &data)
 
   // Set Value
   if (average_gr < 0)
-    data.SetValue(_T("^^^"));
+    data.SetValue("^^^");
   else if (!::GradientValid(average_gr))
-    data.SetValue(_T("+++"));
+    data.SetValue("+++");
   else
     data.SetValueFromGlideRatio(average_gr);
 }
 
 void
-UpdateInfoBoxLDVario(InfoBoxData &data)
+UpdateInfoBoxLDVario(InfoBoxData &data) noexcept
 {
   const auto ld_vario = CommonInterface::Calculated().ld_vario;
 

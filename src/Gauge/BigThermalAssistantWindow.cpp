@@ -1,32 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BigThermalAssistantWindow.hpp"
 #include "Input/InputEvents.hpp"
 #include "Screen/Layout.hpp"
 
 bool
-BigThermalAssistantWindow::OnMouseDouble(PixelPoint p)
+BigThermalAssistantWindow::OnMouseDouble([[maybe_unused]] PixelPoint p) noexcept
 {
   StopDragging();
   InputEvents::ShowMenu();
@@ -34,7 +14,7 @@ BigThermalAssistantWindow::OnMouseDouble(PixelPoint p)
 }
 
 bool
-BigThermalAssistantWindow::OnMouseDown(PixelPoint p)
+BigThermalAssistantWindow::OnMouseDown(PixelPoint p) noexcept
 {
   if (!dragging) {
     dragging = true;
@@ -46,12 +26,12 @@ BigThermalAssistantWindow::OnMouseDown(PixelPoint p)
 }
 
 bool
-BigThermalAssistantWindow::OnMouseUp(PixelPoint p)
+BigThermalAssistantWindow::OnMouseUp([[maybe_unused]] PixelPoint p) noexcept
 {
   if (dragging) {
     StopDragging();
 
-    const TCHAR *gesture = gestures.Finish();
+    const char *gesture = gestures.Finish();
     if (gesture && InputEvents::processGesture(gesture))
       return true;
   }
@@ -60,7 +40,8 @@ BigThermalAssistantWindow::OnMouseUp(PixelPoint p)
 }
 
 bool
-BigThermalAssistantWindow::OnMouseMove(PixelPoint p, gcc_unused unsigned keys)
+BigThermalAssistantWindow::OnMouseMove(PixelPoint p,
+                                       [[maybe_unused]] unsigned keys) noexcept
 {
   if (dragging)
     gestures.Update(p);
@@ -69,14 +50,14 @@ BigThermalAssistantWindow::OnMouseMove(PixelPoint p, gcc_unused unsigned keys)
 }
 
 void
-BigThermalAssistantWindow::OnCancelMode()
+BigThermalAssistantWindow::OnCancelMode() noexcept
 {
   ThermalAssistantWindow::OnCancelMode();
   StopDragging();
 }
 
 bool
-BigThermalAssistantWindow::OnKeyDown(unsigned key_code)
+BigThermalAssistantWindow::OnKeyDown(unsigned key_code) noexcept
 {
   return InputEvents::processKey(key_code);
 }

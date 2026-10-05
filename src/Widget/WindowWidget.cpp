@@ -1,37 +1,39 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WindowWidget.hpp"
-#include "Screen/Window.hpp"
+#include "ui/window/ContainerWindow.hpp"
+#include "ui/window/Window.hpp"
 
-WindowWidget::WindowWidget(Window *_window)
-  :window(_window) {
+WindowWidget::WindowWidget() noexcept = default;
+
+WindowWidget::WindowWidget(std::unique_ptr<Window> _window) noexcept
+  :window(std::move(_window))
+{
   assert(window != nullptr);
   assert(!window->IsDefined() || !window->IsVisible());
 }
 
+WindowWidget::~WindowWidget() noexcept
+{
+  /* we must call Window::Destroy() explicitly here, because when
+     Window::~Window() attempts to do that, it's too late already to
+     invoke virtual overrides */
+  if (window)
+    window->Destroy();
+}
+
 void
-WindowWidget::DeleteWindow()
+WindowWidget::SetWindow(std::unique_ptr<Window> &&_window) noexcept
+{
+  assert(window == nullptr);
+  assert(_window != nullptr);
+
+  window = std::move(_window);
+}
+
+void
+WindowWidget::DeleteWindow() noexcept
 {
   assert(window != nullptr);
 
@@ -39,11 +41,11 @@ WindowWidget::DeleteWindow()
      Window::~Window() attempts to do that, it's too late already to
      invoke virtual overrides */
   window->Destroy();
-  delete window;
+  window.reset();
 }
 
 void
-WindowWidget::Show(const PixelRect &rc)
+WindowWidget::Show(const PixelRect &rc) noexcept
 {
   assert(window != nullptr);
   assert(window->IsDefined());
@@ -53,7 +55,7 @@ WindowWidget::Show(const PixelRect &rc)
 }
 
 void
-WindowWidget::Hide()
+WindowWidget::Hide() noexcept
 {
   assert(window != nullptr);
   assert(window->IsDefined());
@@ -63,11 +65,42 @@ WindowWidget::Hide()
 }
 
 void
-WindowWidget::Move(const PixelRect &rc)
+WindowWidget::Move(const PixelRect &rc) noexcept
 {
   assert(window != nullptr);
   assert(window->IsDefined());
-  assert(window->IsVisible());
 
+  /* Allow repositioning while hidden; supports layout sequences where
+     Move() may be called before or during Show() (e.g. SolidWidget
+     nested UI during Show()). */
   window->Move(rc);
+}
+
+bool
+WindowWidget::SetFocus() noexcept
+{
+  assert(window != nullptr);
+  assert(window->IsDefined());
+
+  /* Prefer a child TabStop (e.g. form rows).  Fall back to the window
+     itself when it is a TabStop (e.g. Configuration TabMenuDisplay).
+     Returning false lets ArrowPager put focus on Close instead. */
+  if (auto *container = dynamic_cast<ContainerWindow *>(window.get()))
+    if (container->FocusFirstControl())
+      return true;
+
+  if (!window->IsTabStop())
+    return false;
+
+  window->SetFocus();
+  return true;
+}
+
+bool
+WindowWidget::HasFocus() const noexcept
+{
+  assert(window != nullptr);
+  assert(window->IsDefined());
+
+  return window->HasFocus();
 }

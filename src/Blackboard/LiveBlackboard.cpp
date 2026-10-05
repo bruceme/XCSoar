@@ -1,33 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "LiveBlackboard.hpp"
 #include "BlackboardListener.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 void
-LiveBlackboard::AddListener(BlackboardListener &listener)
+LiveBlackboard::AddListener(BlackboardListener &listener) noexcept
 {
   assert(!calling_listeners);
   /* must not be registered already */
@@ -38,18 +18,19 @@ LiveBlackboard::AddListener(BlackboardListener &listener)
 }
 
 void
-LiveBlackboard::RemoveListener(BlackboardListener &listener)
+LiveBlackboard::RemoveListener(BlackboardListener &listener) noexcept
 {
   assert(!calling_listeners);
 
   auto i = std::find(listeners.begin(), listeners.end(), &listener);
-  assert(i != listeners.end());
+  if (i == listeners.end())
+    return;
 
   listeners.erase(i);
 }
 
 void
-LiveBlackboard::BroadcastGPSUpdate()
+LiveBlackboard::BroadcastGPSUpdate() noexcept
 {
 #ifndef NDEBUG
   calling_listeners = true;
@@ -64,7 +45,7 @@ LiveBlackboard::BroadcastGPSUpdate()
 }
 
 void
-LiveBlackboard::BroadcastCalculatedUpdate()
+LiveBlackboard::BroadcastCalculatedUpdate() noexcept
 {
 #ifndef NDEBUG
   calling_listeners = true;
@@ -79,7 +60,7 @@ LiveBlackboard::BroadcastCalculatedUpdate()
 }
 
 void
-LiveBlackboard::BroadcastComputerSettingsUpdate()
+LiveBlackboard::BroadcastComputerSettingsUpdate() noexcept
 {
 #ifndef NDEBUG
   calling_listeners = true;
@@ -94,7 +75,7 @@ LiveBlackboard::BroadcastComputerSettingsUpdate()
 }
 
 void
-LiveBlackboard::BroadcastUISettingsUpdate()
+LiveBlackboard::BroadcastUISettingsUpdate() noexcept
 {
 #ifndef NDEBUG
   calling_listeners = true;

@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DATA_FIELD_PREFIX_HPP
-#define XCSOAR_DATA_FIELD_PREFIX_HPP
+#pragma once
 
 #include "String.hpp"
 
@@ -30,38 +9,36 @@ Copyright_License {
 
 class PrefixDataField final : public DataFieldString {
 public:
-  typedef std::function<const TCHAR *(const TCHAR *)> AllowedCharactersFunction;
+  typedef std::function<const char *(const char *)> AllowedCharactersFunction;
 
 private:
   AllowedCharactersFunction allowed_characters;
 
 public:
-  PrefixDataField(const TCHAR *value,
+  PrefixDataField(const char *value,
                   AllowedCharactersFunction _allowed_characters,
-                  DataFieldListener *listener=nullptr)
+                  DataFieldListener *listener=nullptr) noexcept
     :DataFieldString(Type::PREFIX, value, listener),
      allowed_characters(_allowed_characters) {}
 
-  PrefixDataField(const TCHAR *value=_T(""),
-                  DataFieldListener *listener=nullptr)
+  PrefixDataField(const char *value="",
+                  DataFieldListener *listener=nullptr) noexcept
     :DataFieldString(Type::PREFIX, value, listener) {}
 
-  const AllowedCharactersFunction &GetAllowedCharactersFunction() const {
+  const AllowedCharactersFunction &GetAllowedCharactersFunction() const noexcept {
     return allowed_characters;
   }
 
   /* virtual methods from class DataField */
-  void Inc() override;
-  void Dec() override;
-  const TCHAR *GetAsDisplayString() const override;
+  void Inc() noexcept override;
+  void Dec() noexcept override;
+  const char *GetAsDisplayString() const noexcept override;
 
 protected:
-  gcc_pure
-  const TCHAR *GetAllowedCharacters() const {
+  [[gnu::pure]]
+  const char *GetAllowedCharacters() const noexcept {
     return allowed_characters
-      ? allowed_characters(_T(""))
-      : _T("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+      ? allowed_characters("")
+      : "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   }
 };
-
-#endif

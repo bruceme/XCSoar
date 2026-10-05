@@ -1,30 +1,10 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Task/TaskFileIGC.hpp"
 #include "IGC/IGCParser.hpp"
 #include "IGC/IGCDeclaration.hpp"
-#include "IO/FileLineReader.hpp"
+#include "io/FileLineReader.hpp"
 #include "Engine/Task/Factory/AbstractTaskFactory.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
 #include "Engine/Task/Ordered/Points/StartPoint.hpp"
@@ -33,7 +13,7 @@ Copyright_License {
 #include "Waypoint/Waypoint.hpp"
 
 #include <list>
-#include <assert.h>
+#include <cassert>
 
 static bool
 ReadIGCDeclaration(Path path, IGCDeclarationHeader &header,
@@ -47,7 +27,7 @@ try {
   bool header_found = false;
   while ((line = reader.ReadLine()) != nullptr) {
     // Skip lines which are not declaration records
-    if (*line != _T('C'))
+    if (*line != 'C')
       continue;
 
     if (!header_found) {
@@ -64,26 +44,22 @@ try {
   }
 
   return header_found;
-} catch (const std::runtime_error &) {
+} catch (...) {
   return false;
 }
 
 static WaypointPtr
-MakeWaypoint(GeoPoint location, const TCHAR *name)
+MakeWaypoint(GeoPoint location, const char *name)
 {
   Waypoint *wp = new Waypoint(location);
   wp->name = name;
 
-  /* we don't know the elevation, so we just set it to zero; this is
-     not correct, but better than leaving it uninitialised */
-  wp->elevation = 0;
-
   return WaypointPtr(wp);
 }
 
-OrderedTask*
+std::unique_ptr<OrderedTask>
 TaskFileIGC::GetTask(const TaskBehaviour &task_behaviour,
-                     const Waypoints *waypoints, unsigned index) const
+                     [[maybe_unused]] const Waypoints *waypoints, [[maybe_unused]] unsigned index) const
 {
   assert(index == 0);
 
@@ -105,7 +81,7 @@ TaskFileIGC::GetTask(const TaskBehaviour &task_behaviour,
     return nullptr;
 
   // Create a blank task
-  OrderedTask *task = new OrderedTask(task_behaviour);
+  auto task = std::make_unique<OrderedTask>(task_behaviour);
   AbstractTaskFactory &fact = task->GetFactory();
 
   unsigned i = 0;
@@ -115,15 +91,15 @@ TaskFileIGC::GetTask(const TaskBehaviour &task_behaviour,
       waypoint_name.clear();
       waypoint_name.UnsafeAppendASCII(it.name);
     } else if (i == 0)
-      waypoint_name = _T("Start");
+      waypoint_name = "Start";
     else if (i == num_turnpoints - 1)
-      waypoint_name = _T("Finish");
+      waypoint_name = "Finish";
     else
-      waypoint_name.Format(_T("%s #%u"), _T("Turnpoint"), i);
+      waypoint_name.Format("%s #%u", "Turnpoint", i);
 
     auto wp = MakeWaypoint(it.location, waypoint_name.c_str());
 
-    OrderedTaskPoint *tp;
+    std::unique_ptr<OrderedTaskPoint> tp;
 
     if (i == 0)
       tp = fact.CreateStart(std::move(wp));
@@ -134,7 +110,6 @@ TaskFileIGC::GetTask(const TaskBehaviour &task_behaviour,
 
     if (tp != nullptr) {
       fact.Append(*tp);
-      delete tp;
     }
 
     ++i;
@@ -143,9 +118,9 @@ TaskFileIGC::GetTask(const TaskBehaviour &task_behaviour,
   return task;
 }
 
-unsigned
-TaskFileIGC::Count()
-try {
+std::vector<std::string>
+TaskFileIGC::GetList() const
+{
   // Open the IGC file
   FileLineReaderA reader(path);
 
@@ -159,7 +134,9 @@ try {
 
     if (!IGCParseDeclarationHeader(line, header) ||
         header.num_turnpoints == 0)
-      return 0;
+      return {};
+
+    std::vector<std::string> result;
 
     if (!header.task_name.empty() &&
         !StringIsEqual(header.task_name, "Task")) {
@@ -167,13 +144,11 @@ try {
       StaticString<256> task_name;
       task_name.clear();
       task_name.UnsafeAppendASCII(header.task_name.c_str());
-      namesuffixes.append(_tcsdup(task_name.c_str()));
+      result.emplace_back(task_name.c_str());
     }
 
-    return 1;
+    return result;
   }
 
-  return 0;
-} catch (const std::runtime_error &e) {
-  return 0;
+  return {};
 }

@@ -1,116 +1,129 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TRACK_THREAD_HPP
-#define XCSOAR_TRACK_THREAD_HPP
+#pragma once
 
 #include "Tracking/Features.hpp"
 
 #ifdef HAVE_TRACKING
 
-#include "Tracking/TrackingSettings.hpp"
 #include "Tracking/SkyLines/Handler.hpp"
+#include "Tracking/CloudSettings.hpp"
+#include "FLARM/Id.hpp"
+#include "FLARM/List.hpp"
+#include "FLARM/Data.hpp"
 #include "Tracking/SkyLines/Glue.hpp"
 #include "Tracking/SkyLines/Data.hpp"
-#include "Thread/StandbyThread.hpp"
-#include "Tracking/LiveTrack24.hpp"
-#include "Time/PeriodClock.hpp"
-#include "Geo/GeoPoint.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "Tracking/LiveTrack24/Glue.hpp"
+#include "util/StaticString.hxx"
+#include "util/StaticArray.hxx"
+#include "util/TriState.hpp"
+#include "thread/Mutex.hxx"
 
+#include <chrono>
+#include <map>
+
+struct TrackingSettings;
 struct MoreData;
 struct DerivedInfo;
+struct NMEAInfo;
+class CurlGlobal;
 
 class TrackingGlue final
-  : protected StandbyThread,
-    private SkyLinesTracking::Handler
+  : private SkyLinesTracking::Handler
 {
-  struct LiveTrack24State
-  {
-    LiveTrack24::SessionID session_id;
-    unsigned packet_id;
-
-    void ResetSession() {
-      session_id = 0;
-    }
-
-    bool HasSession() {
-      return session_id != 0;
-    }
-  };
-
-  PeriodClock clock;
-
-  TrackingSettings settings;
-
   SkyLinesTracking::Glue skylines;
 
   SkyLinesTracking::Data skylines_data;
 
-  LiveTrack24State state;
+  LiveTrack24::Glue livetrack24;
+
+  mutable Mutex online_mutex;
+
+  TrafficList online_traffic;
+
+  /** SkyLines pilot_id for online #FlarmId (display labels). */
+  std::map<FlarmId, uint32_t> online_pilot_ids;
+
+  /** Last network update per online target (online buffer GC). */
+  std::map<FlarmId, std::chrono::steady_clock::time_point> online_last_received;
+
+  bool shutting_down = false;
+
+  TriState cloud_enabled = TriState::UNKNOWN;
+  bool cloud_show_traffic = true;
+
+  /** Own-ship altitude [m MSL] for online-traffic filtering; -1 if unknown. */
+  int own_altitude = -1;
 
   /**
-   * The Unix UTC time stamp that was last submitted to the tracking
-   * server.  This attribute is used to detect time warps.
+   * Effective own-ship FLARM ids for filtering online self traffic:
+   * configured #CloudSettings::own_flarm_ids plus #device_radio_id when
+   * known (room for one extra id beyond the configured maximum).
    */
-  int64_t last_timestamp = 0;
+  StaticArray<FlarmId, CloudSettings::MAX_OWN_FLARM_IDS + 1> own_flarm_ids;
 
-  BrokenDateTime date_time;
-  GeoPoint location;
-  unsigned altitude;
-  unsigned ground_speed;
-  Angle track;
-  bool flying = false, last_flying;
+  /** Manual own FLARM ids from cloud settings. */
+  CloudSettings::OwnFlarmIdList configured_own_flarm_ids;
+
+  /** Last observed #FlarmHardware::radio_id (device self id). */
+  FlarmId device_radio_id = FlarmId::Undefined();
 
 public:
-  explicit TrackingGlue(boost::asio::io_service &io_service);
-
-  void StopAsync();
-  void WaitStopped();
+  TrackingGlue(EventLoop &event_loop, CurlGlobal &curl) noexcept;
 
   void SetSettings(const TrackingSettings &_settings);
+
+  void BeginShutdown() noexcept;
+
   void OnTimer(const MoreData &basic, const DerivedInfo &calculated);
 
-protected:
-  void Tick() override;
+  void MergeOnlineTraffic(FlarmData &flarm,
+                          const NMEAInfo &basic) noexcept;
+
+  const SkyLinesTracking::Data &GetSkyLinesData() const {
+    return skylines_data;
+  }
+
+  /**
+   * SkyLines pilot_id for an online traffic #FlarmId, or 0 if unknown.
+   */
+  [[gnu::pure]]
+  uint32_t GetOnlinePilotId(FlarmId id) const noexcept;
+
+  /**
+   * Copy the server display name for a SkyLines pilot_id into @dest.
+   * Clears @dest when unknown.
+   */
+  template<std::size_t N>
+  void CopyOnlineUserName(uint32_t pilot_id,
+                          StaticString<N> &dest) const noexcept
+  {
+    dest.clear();
+
+    const std::lock_guard lock{skylines_data.mutex};
+    const auto i = skylines_data.user_names.find(pilot_id);
+    if (i == skylines_data.user_names.end() || i->second.empty())
+      return;
+
+    dest = i->second;
+  }
 
 private:
   /* virtual methods from SkyLinesTracking::Handler */
-  virtual void OnTraffic(uint32_t pilot_id, unsigned time_of_day_ms,
-                         const GeoPoint &location, int altitude) override;
-    virtual void OnUserName(uint32_t user_id, const TCHAR *name) override;
+  void OnTraffic(uint32_t pilot_id, unsigned time_of_day_ms,
+                 const GeoPoint &location, int altitude,
+                 bool altitude_valid,
+                 SkyLinesTracking::TrafficSource source,
+                 unsigned track_deg, bool track_valid,
+                 FlarmId flarm_id, unsigned aircraft_type) override;
+  void OnUserName(uint32_t user_id, const char *name) override;
   void OnWave(unsigned time_of_day_ms,
               const GeoPoint &a, const GeoPoint &b) override;
   void OnThermal(unsigned time_of_day_ms,
                  const AGeoPoint &bottom, const AGeoPoint &top,
                  double lift) override;
-  void OnSkyLinesError(const std::exception &e) override;
-
-public:
-  const SkyLinesTracking::Data &GetSkyLinesData() const {
-    return skylines_data;
-  }
+  void OnSkyLinesError(std::exception_ptr e) override;
 };
 
 #endif /* HAVE_TRACKING */
-#endif

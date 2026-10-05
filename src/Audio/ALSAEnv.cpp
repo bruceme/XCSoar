@@ -1,33 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 
 #include "ALSAEnv.hpp"
 
 #include "LogFile.hpp"
-#include "Util/NumberParser.hpp"
+#include "util/NumberParser.hpp"
 
-#include <assert.h>
+#include <cassert>
 #include <stdlib.h>
 
 
@@ -55,7 +35,7 @@ static const char *InitALSADeviceName()
 
 static unsigned InitALSALatency()
 {
-  unsigned latency = DEFAULT_ALSA_LATENCY;
+  unsigned latency;
   const char *latency_env_value = getenv(ALSA_LATENCY_ENV);
   if ((nullptr == latency_env_value) || ('\0' == *latency_env_value)) {
     latency = DEFAULT_ALSA_LATENCY;
@@ -63,12 +43,12 @@ static unsigned InitALSALatency()
     char *p;
     latency = ParseUnsigned(latency_env_value, &p);
     if (*p != '\0') {
-      LogFormat("Invalid %s value \"%s\"", ALSA_LATENCY_ENV, latency_env_value);
+      LogFormat("Invalid %s value: %s", ALSA_LATENCY_ENV, latency_env_value);
       return false;
     }
   }
-  LogFormat("Using ALSA PCM latency %u μs (use environment variable "
-                "%s to override)", latency, ALSA_LATENCY_ENV);
+  LogFormat("Using ALSA PCM latency: %u μs (use environment variable %s to override)",
+            latency, ALSA_LATENCY_ENV);
   return latency;
 }
 

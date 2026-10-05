@@ -1,29 +1,10 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 package org.xcsoar;
 
-import android.util.Log;
+import java.io.IOException;
+
 import ioio.lib.api.IOIO;
 import ioio.lib.api.TwiMaster;
 import ioio.lib.api.DigitalInput;
@@ -35,16 +16,6 @@ import ioio.lib.api.exception.ConnectionLostException;
  * @see http://www.bosch-sensortec.com/content/language1/html/3477.htm
  */
 final class BMP085 extends Thread {
-  interface Listener {
-    /**
-     * @param pressure the pressure [Pa]
-     */
-    void onBMP085Values(double temperature, int pressure);
-    void onBMP085Error();
-  };
-
-  private static final String TAG = "XCSoar";
-
   static final byte BMP085_DEVICE_ID = 0x77;
   static final byte BMP085_CHIP_ID = 0x55;
   static final byte BMP085_CALIBRATION_DATA_START = (byte)0xaa;
@@ -89,7 +60,7 @@ final class BMP085 extends Thread {
   private TwiMaster twi;
   private DigitalInput eoc;
   private final int oversampling;
-  private final Listener listener;
+  private final SensorListener listener;
 
   /**
    * Pressure calibration coefficients.
@@ -102,7 +73,7 @@ final class BMP085 extends Thread {
   private int ac5, ac6, mc, md;
 
   public BMP085(IOIO ioio, int twiNum, int eocPin, int _oversampling,
-                Listener _listener)
+                SensorListener _listener)
     throws ConnectionLostException {
     super("BMP085");
 
@@ -110,7 +81,7 @@ final class BMP085 extends Thread {
     eoc = ioio.openDigitalInput(eocPin);
 
     oversampling = _oversampling;
-    readPressure[1] += oversampling << 6;
+    readPressure[1] += (byte)(oversampling << 6);
 
     listener = _listener;
 
@@ -145,18 +116,16 @@ final class BMP085 extends Thread {
       | (data[offset + 2] & 0xff);
   }
 
-  private boolean setup()
-    throws ConnectionLostException, InterruptedException {
+  private void setup()
+    throws ConnectionLostException, IOException, InterruptedException {
     /* is it a BMP085 sensor? */
     byte[] responseChipID = new byte[1];
     twi.writeRead(BMP085_DEVICE_ID, false,
                   requestChipID, requestChipID.length,
                   responseChipID, responseChipID.length);
-    if (responseChipID[0] != BMP085_CHIP_ID) {
-      Log.e(TAG, "Not a BMP085: "
-            + Integer.toHexString(responseChipID[0] & 0xff));
-      return false;
-    }
+    if (responseChipID[0] != BMP085_CHIP_ID)
+      throw new IOException("Not a BMP085: "
+                            + Integer.toHexString(responseChipID[0] & 0xff));
 
     /* read the calibration coefficients */
     twi.writeRead(BMP085_DEVICE_ID, false,
@@ -173,8 +142,6 @@ final class BMP085 extends Thread {
     b2 = readS16BE(responseParameters, 14);
     mc = readS16BE(responseParameters, 18);
     md = readS16BE(responseParameters, 20);
-
-    return true;
   }
 
   private void readSensor(byte[] request, byte[] response, int responseLength)
@@ -247,23 +214,24 @@ final class BMP085 extends Thread {
     int up = readU24BE(response, 0) >> (8 - oversampling);
     int pressure_pa = getPressure(up, b5);
 
-    listener.onBMP085Values(temperature_c, pressure_pa);
+    /* ignoring the temperature, because it is measured inside the
+       IOIO box, and NMEAInfo's temperature setting is expected to be
+       "outside air temperature" - maybe someday, somebody builds a
+       IOIO adapter with a real outside air temperature sensor? */
+
+    listener.onBarometricPressureSensor(pressure_pa, 0.05f);
   }
 
   @Override public void run() {
     try {
-      if (!setup())
-        return;
+      setup();
 
       while (true)
         loop();
-    } catch (ConnectionLostException e) {
-      Log.d(TAG, "BMP085.run() failed", e);
-    } catch (IllegalStateException e) {
-      Log.d(TAG, "BMP085.run() failed", e);
     } catch (InterruptedException e) {
-    } finally {
-      listener.onBMP085Error();
+    } catch (Exception e) {
+      listener.onSensorError(e.getMessage());
+      // TODO make GlueBMP085.getState() return STATE_FAILED
     }
   }
 }

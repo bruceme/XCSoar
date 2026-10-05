@@ -1,57 +1,49 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ANDROID_NATIVE_VIEW_HPP
-#define XCSOAR_ANDROID_NATIVE_VIEW_HPP
-
-#include "Java/Object.hxx"
-#include "Java/Class.hxx"
-#include "Java/String.hxx"
-#include "OS/Path.hpp"
+#include "java/Object.hxx"
+#include "java/Class.hxx"
+#include "java/String.hxx"
 
 #ifndef NO_SCREEN
-#include "Screen/Point.hpp"
+#include "ui/dim/Size.hpp"
 #endif
 
-#include <assert.h>
+#include <cassert>
+
+class Path;
+namespace UI { class TopWindow; }
 
 class NativeView {
-  JNIEnv *env;
   Java::GlobalObject obj;
 
   unsigned width, height;
-  unsigned xdpi, ydpi;
   char product[20];
 
   static Java::TrivialClass cls;
+  static jfieldID ptr_field;
   static jfieldID textureNonPowerOfTwo_field;
-  static jmethodID init_surface_method, deinit_surface_method;
+  static jmethodID getSurface_method;
+  static jmethodID acquireWakeLock_method;
+  static jmethodID setFullScreen_method;
   static jmethodID setRequestedOrientationID;
   static jmethodID loadResourceBitmap_method;
   static jmethodID loadFileBitmap_method;
   static jmethodID bitmapToTexture_method;
-  static jmethodID open_file_method;
+  static jmethodID shareText_method;
+  static jmethodID openURL_method;
+  static jmethodID openWifiSettings_method;
+  static jmethodID openWaypointFile_method;
   static jmethodID getNetState_method;
+  static jmethodID getWifiIpAddress_method;
+  static jmethodID isAutoRotateEnabled_method;
+  static jmethodID getPhysicalOrientation_method;
+  static jmethodID getTopGestureClearance_method;
+  static jmethodID startMyService_method;
+  static jmethodID launchSAFTreePicker_method;
+  static jmethodID reportSize_method;
 
   static Java::TrivialClass clsBitmap;
   static jmethodID createBitmap_method;
@@ -75,6 +67,8 @@ public:
     // see http://developer.android.com/reference/android/content/pm/ActivityInfo.html#SCREEN_ORIENTATION_REVERSE_LANDSCAPE
     REVERSE_LANDSCAPE = 8,
     REVERSE_PORTRAIT = 9,
+    // API level 18
+    LOCKED = 14,
   };
 
   static void Initialise(JNIEnv *env);
@@ -82,11 +76,15 @@ public:
 
   NativeView(JNIEnv *_env, jobject _obj, unsigned _width, unsigned _height,
              unsigned _xdpi, unsigned _ydpi,
-             jstring _product)
-    :env(_env), obj(env, _obj),
-     width(_width), height(_height),
-     xdpi(_xdpi), ydpi(_ydpi) {
-    Java::String::CopyTo(env, _product, product, sizeof(product));
+             jstring _product) noexcept;
+
+  void SetPointer(JNIEnv *env, UI::TopWindow *w) noexcept {
+    env->SetLongField(obj, ptr_field, (std::size_t)w);
+  }
+
+  [[gnu::pure]]
+  static UI::TopWindow *GetPointer(JNIEnv *env, jobject obj) noexcept {
+    return (UI::TopWindow *)(void *)env->GetLongField(obj, ptr_field);
   }
 
 #ifndef NO_SCREEN
@@ -94,14 +92,6 @@ public:
     return { width, height };
   }
 #endif
-
-  unsigned GetXDPI() const {
-    return xdpi;
-  }
-
-  unsigned GetYDPI() const {
-    return ydpi;
-  }
 
   void SetSize(unsigned _width, unsigned _height) {
     width = _width;
@@ -112,53 +102,126 @@ public:
     return product;
   }
 
-  bool initSurface() {
-    return env->CallBooleanMethod(obj, init_surface_method);
+  Java::LocalObject GetSurface(JNIEnv *_env) const noexcept {
+    return {_env, _env->CallObjectMethod(obj, getSurface_method)};
   }
 
-  void deinitSurface() {
-    env->CallVoidMethod(obj, deinit_surface_method);
+  void AcquireWakeLock(JNIEnv *env) const noexcept {
+    env->CallVoidMethod(obj, acquireWakeLock_method);
   }
 
-  bool setRequestedOrientation(ScreenOrientation so) {
+  void SetFullScreen(JNIEnv *env, bool full_screen) const noexcept {
+    env->CallVoidMethod(obj, setFullScreen_method, full_screen);
+  }
+
+  /**
+   * Ask Java to report the current surface size and system insets.
+   * Uses the last stored surface size: View.getWidth() is still 0
+   * when this is called from the native thread at startup.
+   */
+  void ReportSize(JNIEnv *env) const noexcept {
+    env->CallVoidMethod(obj, reportSize_method,
+                        (jint)width, (jint)height);
+  }
+
+  bool SetRequestedOrientation(JNIEnv *env, ScreenOrientation so) {
     return env->CallBooleanMethod(obj, setRequestedOrientationID, (jint)so);
   }
 
-  jobject loadResourceBitmap(const char *name) {
-    Java::String name2(env, name);
-    return env->CallObjectMethod(obj, loadResourceBitmap_method, name2.Get());
+  /**
+   * Check if the system auto-rotate setting is enabled.
+   */
+  [[gnu::pure]]
+  bool IsAutoRotateEnabled(JNIEnv *env) const noexcept {
+    return env->CallBooleanMethod(obj, isAutoRotateEnabled_method);
   }
 
-  jobject loadFileTiff(Path path);
+  /**
+   * Return the DisplayOrientation enum value matching the device's
+   * current physical orientation (from the latest sensor reading).
+   * 0=DEFAULT (unknown), 1=PORTRAIT, 2=LANDSCAPE,
+   * 3=REVERSE_PORTRAIT, 4=REVERSE_LANDSCAPE.
+   */
+  [[gnu::pure]]
+  int GetPhysicalOrientation(JNIEnv *env) const noexcept {
+    return env->CallIntMethod(obj, getPhysicalOrientation_method);
+  }
 
-  jobject loadFileBitmap(Path path);
+  /**
+   * Pixels of the system swipe-down band that still cover this view.
+   * Zero when the view already starts below that band.
+   */
+  int GetTopGestureClearance(JNIEnv *env) const noexcept {
+    return env->CallIntMethod(obj, getTopGestureClearance_method);
+  }
 
-  bool bitmapToTexture(jobject bmp, bool alpha, jint *result) {
-    jintArray result2 = env->NewIntArray(5);
+  Java::LocalObject LoadResourceBitmap(JNIEnv *env, const char *name) {
+    Java::String name2(env, name);
+    return {env,
+      env->CallObjectMethod(obj, loadResourceBitmap_method, name2.Get())};
+  }
+
+  Java::LocalObject LoadFileTiff(JNIEnv *env, Path path);
+
+  Java::LocalObject LoadFileBitmap(JNIEnv *env, Path path);
+
+  bool BitmapToTexture(JNIEnv *env, jobject bmp, bool alpha, jint *result) {
+    Java::LocalRef<jintArray> result2{env, env->NewIntArray(5)};
 
     bool success = env->CallBooleanMethod(obj, bitmapToTexture_method,
-                                          bmp, alpha, result2);
+                                          bmp, alpha, result2.Get());
     if (success)
       env->GetIntArrayRegion(result2, 0, 5, result);
-
-    env->DeleteLocalRef(result2);
 
     return success;
   }
 
-  void SetTexturePowerOfTwo(bool value) {
+  void SetTexturePowerOfTwo(JNIEnv *env, bool value) {
     env->SetStaticBooleanField(cls, textureNonPowerOfTwo_field, value);
   }
 
-  void openFile(const char *pathName) {
-    Java::String pathName2(env, pathName);
-    env->CallVoidMethod(obj, open_file_method, pathName2.Get());
+  /**
+   * Deliver plain text data to somebody; the user will be asked to
+   * pick a recipient.
+   */
+  void ShareText(JNIEnv *env, const char *text) noexcept;
+
+  /**
+   * Open a URL in the default browser.
+   */
+  bool OpenURL(JNIEnv *env, const char *url) noexcept;
+
+  /**
+   * Open Android Wi-Fi settings or connectivity controls.
+   */
+  bool OpenWifiSettings(JNIEnv *env) noexcept;
+
+  void OpenWaypointFile(JNIEnv *env, unsigned id, const char *filename) {
+    env->CallVoidMethod(obj, openWaypointFile_method, id,
+                        Java::String(env, filename).Get());
   }
 
-  gcc_pure
-  int getNetState() const {
+  [[gnu::pure]]
+  int GetNetState(JNIEnv *env) const noexcept {
     return env->CallIntMethod(obj, getNetState_method);
   }
-};
 
-#endif
+  /**
+   * Retrieve the current Wi-Fi IP address.
+   * @return true if an address was copied to the buffer
+   */
+  bool GetWifiIpAddress(JNIEnv *env, char *buffer,
+                        size_t max_size) const noexcept;
+
+  /**
+   * Start the foreground service (only in fly mode).
+   */
+  void StartMyService(JNIEnv *env) const noexcept {
+    env->CallVoidMethod(obj, startMyService_method);
+  }
+
+  /**
+   * Launch the SAF document-tree picker for a given volume UUID.
+   */
+  void LaunchSAFTreePicker(JNIEnv *env, const char *volume_uuid) const noexcept;
+};

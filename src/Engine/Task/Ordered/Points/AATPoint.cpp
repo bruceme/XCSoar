@@ -1,32 +1,13 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AATPoint.hpp"
 #include "Geo/Flat/FlatProjection.hpp"
 #include "Geo/Flat/FlatLine.hpp"
-#include "Util/Clamp.hpp"
+#include "util/Compiler.h"
 
-const GeoPoint&
-AATPoint::GetLocationRemaining() const
+const GeoPoint &
+AATPoint::GetLocationRemaining() const noexcept
 {
   if (!IsPast())
     return target_location;
@@ -38,8 +19,8 @@ AATPoint::GetLocationRemaining() const
 }
 
 bool
-AATPoint::UpdateSampleNear(const AircraftState& state,
-                           const FlatProjection &projection)
+AATPoint::UpdateSampleNear(const AircraftState &state,
+                           const FlatProjection &projection) noexcept
 {
   bool retval = OrderedTaskPoint::UpdateSampleNear(state, projection);
   retval |= CheckTarget(state, false);
@@ -48,8 +29,8 @@ AATPoint::UpdateSampleNear(const AircraftState& state,
 }
 
 bool
-AATPoint::UpdateSampleFar(const AircraftState& state,
-                          const FlatProjection &projection)
+AATPoint::UpdateSampleFar(const AircraftState &state,
+                          const FlatProjection &projection) noexcept
 {
   /* the orderedtaskpoint::update_sample_far does nothing for now but
      we are calling this in case that changes */
@@ -57,8 +38,8 @@ AATPoint::UpdateSampleFar(const AircraftState& state,
     CheckTarget(state, true);
 }
 
-bool
-AATPoint::CheckTarget(const AircraftState &state, const bool known_outside)
+inline bool
+AATPoint::CheckTarget(const AircraftState &state, const bool known_outside) noexcept
 {
   if (IsCurrent() && target_locked)
     return false;
@@ -73,7 +54,8 @@ AATPoint::CheckTarget(const AircraftState &state, const bool known_outside)
 }
 
 bool
-AATPoint::IsCloseToTarget(const AircraftState& state, const double threshold) const
+AATPoint::IsCloseToTarget(const AircraftState &state,
+                          const double threshold) const noexcept
 {
   if (!valid())
     return false;
@@ -82,8 +64,8 @@ AATPoint::IsCloseToTarget(const AircraftState& state, const double threshold) co
     - DoubleLegDistance(target_location) > -threshold;
 }
 
-bool
-AATPoint::CheckTargetInside(const AircraftState& state)
+inline bool
+AATPoint::CheckTargetInside(const AircraftState &state) noexcept
 {
   /* target must be moved if d(p_last,t)+d(t,p_next) <
      d(p_last,state)+d(state,p_next) */
@@ -99,40 +81,14 @@ AATPoint::CheckTargetInside(const AircraftState& state)
   return true;
 }
 
-bool
-AATPoint::CheckTargetOutside(const AircraftState& state)
+inline bool
+AATPoint::CheckTargetOutside([[maybe_unused]] const AircraftState &state) noexcept
 {
   return false;
-/*
-  // this is optional, to be replaced!
-  
-  // now uses TaskOptTarget
-
-  if (!GetPrevious()->isInSector(state)) {
-    double b0s = GetPrevious()->get_location_remaining()
-      .bearing(state.Location);
-    GeoVector vst(state.Location,target_location);
-    double da = ::AngleLimit180(b0s-vst.Bearing);
-    if ((fabs(da)>2.0) && (vst.Distance>1.0)) {
-      AATIsolineIntercept ai(*this);
-      AIRCRAFT_STATE si;
-      if (ai.intercept(*this, state, 0.0, si.Location)
-          && isInSector(si)) {
-
-        // Note that this fights with auto-target
-
-        target_location = si.Location;
-
-        return true;
-      }
-    }
-  }
-  return false;
-*/
 }
 
 bool
-AATPoint::SetRange(const double p, const bool force_if_current)
+AATPoint::SetRange(const double p, const bool force_if_current) noexcept
 {
   if (target_locked)
     return false;
@@ -158,14 +114,14 @@ AATPoint::SetRange(const double p, const bool force_if_current)
 }
 
 void
-AATPoint::SetTarget(const GeoPoint &loc, const bool override_lock)
+AATPoint::SetTarget(const GeoPoint &loc, const bool override_lock) noexcept
 {
   if (override_lock || !target_locked)
     target_location = loc;
 }
 
 void
-AATPoint::SetTarget(RangeAndRadial rar, const FlatProjection &proj)
+AATPoint::SetTarget(RangeAndRadial rar, const FlatProjection &proj) noexcept
 {
   const auto fprev =
     proj.ProjectFloat(GetPrevious()->GetLocationRemaining());
@@ -178,9 +134,8 @@ AATPoint::SetTarget(RangeAndRadial rar, const FlatProjection &proj)
   const auto radius = fradius.GetDistance() * fabs(rar.range);
 
   const auto angle = rar.radial - flb.GetAngle();
-
-  const FlatPoint ftarget1(radius * angle.cos(),
-                           radius * -(angle).sin());
+  const auto [angle_sin, angle_cos] = angle.SinCos();
+  const FlatPoint ftarget1{radius * angle_cos, radius * -angle_sin};
 
   const auto ftarget2 = floc + ftarget1;
   const auto targetG = proj.Unproject(ftarget2);
@@ -189,7 +144,7 @@ AATPoint::SetTarget(RangeAndRadial rar, const FlatProjection &proj)
 }
 
 RangeAndRadial
-AATPoint::GetTargetRangeRadial(double oldrange) const
+AATPoint::GetTargetRangeRadial(double oldrange) const noexcept
 {
   const auto fprev = GetPrevious()->GetLocationRemaining();
   const auto floc = GetLocation();
@@ -204,7 +159,7 @@ AATPoint::GetTargetRangeRadial(double oldrange) const
   const auto radius = d < 0
     ? floc.Distance(GetLocationMin())
     : floc.Distance(GetLocationMax());
-  const auto range = Clamp(d / radius, -1., 1.);
+  const auto range = std::clamp(d / radius, -1., 1.);
 
   if (oldrange == 0 && range == 0)
     radial = Angle::Zero();
@@ -213,7 +168,7 @@ AATPoint::GetTargetRangeRadial(double oldrange) const
 }
 
 bool
-AATPoint::Equals(const OrderedTaskPoint &other) const
+AATPoint::Equals(const OrderedTaskPoint &other) const noexcept
 {
   const auto &tp = (const AATPoint &)other;
 

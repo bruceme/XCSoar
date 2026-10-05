@@ -1,47 +1,42 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TrackingProfile.hpp"
 #include "Map.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "Tracking/TrackingSettings.hpp"
-#include "Util/NumberParser.hpp"
+#include "util/NumberParser.hxx"
 
 #ifdef HAVE_TRACKING
 
 namespace Profile {
-static void Load(const ProfileMap &map,
-                 SkyLinesTracking::CloudSettings &settings) {
+static void Load(const ProfileMap &map, CloudSettings &settings) {
   bool bvalue;
   settings.enabled = map.Get(ProfileKeys::CloudEnabled, bvalue)
     ? (bvalue ? TriState::TRUE : TriState::FALSE)
     : TriState::UNKNOWN;
 
+  map.Get(ProfileKeys::CloudShowTraffic, settings.show_traffic);
   map.Get(ProfileKeys::CloudShowThermals, settings.show_thermals);
+  map.Get(ProfileKeys::CloudRoaming, settings.roaming);
+
+  if (!map.Get(ProfileKeys::CloudHost, settings.host) ||
+      settings.host.empty())
+    settings.host = CloudSettings::DEFAULT_HOST;
+
+  unsigned port = 0;
+  if (!map.Get(ProfileKeys::CloudPort, port) ||
+      port == 0 || port > 65535u)
+    settings.port = CloudSettings::DEFAULT_PORT;
+  else
+    settings.port = port;
 
   const char *key = map.Get(ProfileKeys::CloudKey);
   if (key != nullptr)
-    settings.key = ParseUint64(key, nullptr, 16);
+    ParseIntegerTo(key, settings.key, 16);
+
+  settings.own_flarm_ids =
+    CloudSettings::ParseOwnFlarmIds(map.Get(ProfileKeys::CloudOwnFlarmId));
 }
 
 static void Load(const ProfileMap &map,
@@ -50,12 +45,11 @@ static void Load(const ProfileMap &map,
   map.Get(ProfileKeys::SkyLinesRoaming, settings.roaming);
   map.Get(ProfileKeys::SkyLinesTrackingInterval, settings.interval);
   map.Get(ProfileKeys::SkyLinesTrafficEnabled, settings.traffic_enabled);
+  map.Get(ProfileKeys::SkyLinesNearTrafficEnabled, settings.near_traffic_enabled);
 
   const char *key = map.Get(ProfileKeys::SkyLinesTrackingKey);
-  if (key != NULL)
-    settings.key = ParseUint64(key, NULL, 16);
-
-  Load(map, settings.cloud);
+  if (key != nullptr)
+    ParseIntegerTo(key, settings.key, 16);
 }
 
 static void Load(const ProfileMap &map,
@@ -63,10 +57,10 @@ static void Load(const ProfileMap &map,
   map.Get(ProfileKeys::LiveTrack24Enabled, settings.enabled);
 
   if (!map.Get(ProfileKeys::LiveTrack24Server, settings.server))
-    settings.server = _T("www.livetrack24.com");
-  else if (StringIsEqual(settings.server, _T("livexc.dhv1.de"))) {
+    settings.server = "www.livetrack24.com";
+  else if (StringIsEqual(settings.server, "livexc.dhv1.de")) {
     // DHV tracking server moved to new host (#3208)
-    settings.server = _T("livexc.dhv.de");
+    settings.server = "livexc.dhv.de";
   }
 
   map.Get(ProfileKeys::LiveTrack24Username, settings.username);
@@ -82,6 +76,7 @@ void
 Profile::Load(const ProfileMap &map, TrackingSettings &settings)
 {
   Load(map, settings.skylines);
+  Load(map, settings.cloud);
   Load(map, settings.livetrack24);
 }
 

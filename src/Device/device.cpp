@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 // 20070413:sgi add NmeaOut support, allow nmea chaining an double port platforms
 
@@ -27,23 +7,15 @@ Copyright_License {
 #include "Features.hpp"
 #include "Device/MultipleDevices.hpp"
 #include "Device/Descriptor.hpp"
-#include "Components.hpp"
 #include "LogFile.hpp"
-#include "Interface.hpp"
 #include "Operation/PopupOperationEnvironment.hpp"
-#include "Util/Algorithm.hpp"
+#include "SystemSettings.hpp"
 
 static void
 devInitOne(DeviceDescriptor &device, const DeviceConfig &config)
 {
   device.SetConfig(config);
-
-  /* this OperationEnvironment instance must be persistent, because
-     DeviceDescriptor::Open() is asynchronous */
-  static PopupOperationEnvironment env;
-
   device.ResetFailureCounter();
-  device.Open(env);
 }
 
 /**
@@ -51,7 +23,7 @@ devInitOne(DeviceDescriptor &device, const DeviceConfig &config)
  * to an exclusive resource, like the same physical COM port.  If this
  * is detected, then the second device will be disabled.
  */
-gcc_pure
+[[gnu::pure]]
 static bool
 DeviceConfigOverlaps(const DeviceConfig &a, const DeviceConfig &b)
 {
@@ -61,9 +33,13 @@ DeviceConfigOverlaps(const DeviceConfig &a, const DeviceConfig &b)
   switch (a.port_type) {
   case DeviceConfig::PortType::SERIAL:
   case DeviceConfig::PortType::PTY:
+  case DeviceConfig::PortType::ANDROID_USB_SERIAL:
+  case DeviceConfig::PortType::SPECTATE_FILE:
     return a.path.equals(b.path);
 
   case DeviceConfig::PortType::RFCOMM:
+  case DeviceConfig::PortType::BLE_SERIAL:
+  case DeviceConfig::PortType::BLE_SENSOR:
     return a.bluetooth_mac.equals(b.bluetooth_mac);
 
   case DeviceConfig::PortType::IOIOUART:
@@ -73,12 +49,12 @@ DeviceConfigOverlaps(const DeviceConfig &a, const DeviceConfig &b)
     return a.i2c_bus == b.i2c_bus && a.i2c_addr == b.i2c_addr;
 
   case DeviceConfig::PortType::DISABLED:
-  case DeviceConfig::PortType::AUTO:
   case DeviceConfig::PortType::INTERNAL:
   case DeviceConfig::PortType::DROIDSOAR_V2:
   case DeviceConfig::PortType::RFCOMM_SERVER:
   case DeviceConfig::PortType::NUNCHUCK: // Who wants 2 nunchucks ??
   case DeviceConfig::PortType::IOIOVOLTAGE:
+  case DeviceConfig::PortType::GLIDER_LINK:
     return true;
 
   case DeviceConfig::PortType::TCP_CLIENT:
@@ -94,26 +70,24 @@ DeviceConfigOverlaps(const DeviceConfig &a, const DeviceConfig &b)
 }
 
 template<typename I>
-gcc_pure
+[[gnu::pure]]
 static bool
 DeviceConfigOverlaps(const DeviceConfig &config, I begin, I end)
 {
-  return ExistsIf(begin, end,
-                  [&config](const DeviceDescriptor *d) {
-                    return DeviceConfigOverlaps(config, d->GetConfig());
-                  });
+  return std::any_of(begin, end,
+                     [&config](const DeviceDescriptor *d) {
+                       return DeviceConfigOverlaps(config, d->GetConfig());
+                     });
 }
 
 void
-devStartup()
+devStartup(MultipleDevices &devices, const SystemSettings &settings)
 {
-  LogFormat("Register serial devices");
-
-  const SystemSettings &settings = CommonInterface::GetSystemSettings();
+  LogString("Register serial devices");
 
   bool none_available = true;
   for (unsigned i = 0; i < NUMDEV; ++i) {
-    DeviceDescriptor &device = (*devices)[i];
+    DeviceDescriptor &device = devices[i];
     const DeviceConfig &config = settings.devices[i];
     if (!config.IsAvailable()) {
       device.ClearConfig();
@@ -122,7 +96,7 @@ devStartup()
 
     none_available = false;
 
-    if (DeviceConfigOverlaps(config, devices->begin(), devices->begin() + i)) {
+    if (DeviceConfigOverlaps(config, devices.begin(), devices.begin() + i)) {
       device.ClearConfig();
       continue;
     }
@@ -134,55 +108,29 @@ devStartup()
 #ifdef HAVE_INTERNAL_GPS
     /* fall back to built-in GPS when no configured device is
        available on this platform */
-    LogFormat("Falling back to built-in GPS");
+    LogString("Falling back to built-in GPS");
 
     DeviceConfig config;
     config.Clear();
     config.port_type = DeviceConfig::PortType::INTERNAL;
 
-    DeviceDescriptor &device = (*devices)[0];
+    DeviceDescriptor &device = devices[INTERNAL_DEVICE_SLOT];
     devInitOne(device, config);
 #endif
   }
 }
 
 void
-VarioWriteNMEA(const TCHAR *text, OperationEnvironment &env)
+devRestart(MultipleDevices &devices, const SystemSettings &settings)
 {
-  for (DeviceDescriptor *i : *devices)
-    if (i->IsVega())
-      i->WriteNMEA(text, env);
-}
+  LogString("RestartCommPorts");
 
-DeviceDescriptor *
-devVarioFindVega()
-{
-  for (DeviceDescriptor *i : *devices)
-    if (i->IsVega())
-      return i;
+  devices.Close();
 
-  return nullptr;
-}
+  devStartup(devices, settings);
 
-void
-devShutdown()
-{
-  if (devices == nullptr)
-    return;
-
-  // Stop COM devices
-  LogFormat("Stop COM devices");
-
-  for (DeviceDescriptor *i : *devices)
-    i->Close();
-}
-
-void
-devRestart()
-{
-  LogFormat("RestartCommPorts");
-
-  devShutdown();
-
-  devStartup();
+  /* this OperationEnvironment instance must be persistent, because
+     DeviceDescriptor::Open() is asynchronous */
+  static PopupOperationEnvironment env;
+  devices.Open(env);
 }

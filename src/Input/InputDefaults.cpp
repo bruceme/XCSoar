@@ -1,35 +1,16 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InputEvents.hpp"
 #include "InputConfig.hpp"
-#include "Event/KeyCode.hpp"
+#include "ui/event/KeyCode.hpp"
 #include "Asset.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
-#include <assert.h>
+#include <cassert>
+#include <cstdint>
 
-#ifdef WIN32
+#ifdef _WIN32
 /* we don't need that WIN32 API function, it's a macro that will
    disallow using InputConfig::AppendMenu() */
 #undef AppendMenu
@@ -63,13 +44,13 @@ struct flat_event_map {
 struct flat_label {
   unsigned char mode, location;
   unsigned short event;
-  const TCHAR *label;
+  const char *label;
 };
 
 struct flat_gesture_map {
   unsigned char mode;
   unsigned short event;
-  const TCHAR *data;
+  const char *data;
 };
 
 // Make a new label (add to the end each time)
@@ -77,7 +58,7 @@ struct flat_gesture_map {
 // without taking up more data - but when loading from file must copy string
 static void
 makeLabel(InputConfig &input_config,
-          InputEvents::Mode mode_id, const TCHAR* label,
+          InputEvents::Mode mode_id, const char* label,
           unsigned location, unsigned event_id)
 {
   input_config.AppendMenu(mode_id, label, location, event_id);
@@ -85,7 +66,7 @@ makeLabel(InputConfig &input_config,
 
 static void
 apply_defaults(InputConfig &input_config,
-               const TCHAR *const* default_modes,
+               const char *const* default_modes,
                const InputConfig::Event *default_events,
                unsigned num_default_events,
                const flat_gesture_map *default_gesture2event,

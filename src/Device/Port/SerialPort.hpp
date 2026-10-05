@@ -1,30 +1,9 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_SERIAL_PORT_HPP
-#define XCSOAR_DEVICE_SERIAL_PORT_HPP
-
-#include "Thread/StoppableThread.hpp"
+#include "thread/StoppableThread.hpp"
 #include "BufferedPort.hpp"
 
 #include <windef.h>
@@ -52,18 +31,19 @@ public:
   /**
    * Closes the serial port (Destructor)
    */
-  virtual ~SerialPort();
+  ~SerialPort() noexcept override;
 
   /**
    * Opens the serial port
-   * @return True on success, False on failure
+   *
+   * Throws on error.
    */
-  bool Open(const TCHAR *path, unsigned baud_rate);
+  void Open(const char *path, unsigned baud_rate);
 
 protected:
   bool SetRxTimeout(unsigned Timeout);
 
-  bool IsDataPending() const {
+  bool IsDataPending() const noexcept {
     COMSTAT com_stat;
     DWORD errors;
 
@@ -76,36 +56,34 @@ protected:
    *
    * @return the number of bytes, or -1 on error
    */
-  gcc_pure
-  int GetDataQueued() const;
+  [[gnu::pure]]
+  int GetDataQueued() const noexcept;
 
   /**
    * Determine the number of bytes in the driver's receive buffer.
    *
    * @return the number of bytes, or -1 on error
    */
-  int GetDataPending() const;
+  int GetDataPending() const noexcept;
 
   /**
    * Wait until there is data in the driver's receive buffer.
    *
-   * @return the number of bytes, or -1 on error
+   * Throws on error.
    */
-  WaitResult WaitDataPending(OverlappedEvent &overlapped,
-                             unsigned timeout_ms) const;
+  void WaitDataPending(OverlappedEvent &overlapped,
+                       unsigned timeout_ms) const;
 
 public:
   /* virtual methods from class Port */
-  virtual PortState GetState() const override;
-  virtual bool Drain() override;
-  virtual void Flush() override;
-  virtual bool SetBaudrate(unsigned baud_rate) override;
-  virtual unsigned GetBaudrate() const override;
-  virtual size_t Write(const void *data, size_t length) override;
+  PortState GetState() const noexcept override;
+  bool Drain() override;
+  void Flush() override;
+  void SetBaudrate(unsigned baud_rate) override;
+  unsigned GetBaudrate() const noexcept override;
+  std::size_t Write(std::span<const std::byte> src) override;
 
 protected:
   /* virtual methods from class Thread */
-  virtual void Run() override;
+  void Run() noexcept override;
 };
-
-#endif

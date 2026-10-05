@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_CMDLINE
 #define ENABLE_SCREEN
@@ -27,16 +7,14 @@ Copyright_License {
 #define USAGE "flights.log"
 
 #include "Main.hpp"
-#include "Screen/SingleWindow.hpp"
-#include "Screen/Timer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/window/SingleWindow.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
 #include "Fonts.hpp"
 #include "Renderer/FlightListRenderer.hpp"
 #include "FlightInfo.hpp"
 #include "Logger/FlightParser.hpp"
-#include "IO/FileLineReader.hpp"
+#include "io/FileLineReader.hpp"
 
 #include <vector>
 
@@ -52,32 +30,30 @@ public:
   }
 
 protected:
-  virtual void OnPaint(Canvas &canvas) override {
+  void OnPaint(Canvas &canvas) noexcept override {
     canvas.ClearWhite();
     renderer.Draw(canvas, GetClientRect());
   }
 };
 
-class MainWindow final : public SingleWindow, ActionListener
+class MainWindow final : public UI::SingleWindow
 {
-  enum Buttons {
-    CLOSE = 1,
-  };
-
   Button close_button;
   TestWindow test_window;
 
 public:
+  using UI::SingleWindow::SingleWindow;
+
   void Create(PixelSize size) {
-    SingleWindow::Create(_T("Test"), size);
+    SingleWindow::Create("Test", size);
 
     WindowStyle style;
     style.Disable();
 
     const PixelRect rc = GetClientRect();
-    close_button.Create(*this, *button_look, _T("Close"), GetButtonRect(rc),
+    close_button.Create(*this, *button_look, "Close", GetButtonRect(rc),
                         WindowStyle(),
-                        *this, CLOSE);
+                        [this](){ Close(); });
     test_window.Create(*this, rc, style);
   }
 
@@ -89,7 +65,7 @@ private:
   }
 
 protected:
-  void OnResize(PixelSize size) override {
+  void OnResize(PixelSize size) noexcept override {
     SingleWindow::OnResize(size);
 
     const PixelRect rc = GetClientRect();
@@ -100,23 +76,14 @@ protected:
       close_button.Move(GetButtonRect(rc));
   }
 
-  bool OnKeyUp(unsigned key_code) override {
+  bool OnKeyUp([[maybe_unused]] unsigned key_code) noexcept override {
     Close();
     return true;
   }
 
-  bool OnMouseUp(PixelPoint p) override {
+  bool OnMouseUp([[maybe_unused]] PixelPoint p) noexcept override {
     Close();
     return true;
-  }
-
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override {
-    switch (id) {
-    case CLOSE:
-      Close();
-      break;
-    }
   }
 };
 
@@ -132,9 +99,9 @@ ParseCommandLine(Args &args)
 }
 
 static void
-Main()
+Main(UI::Display &display)
 {
-  MainWindow window;
+  MainWindow window{display};
   window.Create({500, 500});
 
   window.Show();

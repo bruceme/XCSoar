@@ -1,76 +1,107 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "SymbolButtonRenderer.hpp"
 #include "SymbolRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Look/ButtonLook.hpp"
 
+bool
+SymbolButtonRenderer::IsSymbolCaption(const char *caption) noexcept
+{
+  if (caption == nullptr)
+    return false;
+
+  const char ch = caption[0];
+  if (caption[1] != '\0')
+    return false;
+
+  return ch == '+' || ch == '-' || ch == '<' || ch == '>' ||
+    ch == '^' || ch == 'v' || ch == 'h' || ch == 'q';
+}
+
+[[gnu::pure]]
+static unsigned
+MenuMaxDrawSize(const ButtonLook &look) noexcept
+{
+  if (look.font == nullptr)
+    return 0;
+
+  const PixelSize text = look.font->TextSize("+");
+  const unsigned font_size = std::max(text.width, text.height);
+  return std::max(1u, font_size / 2);
+}
+
 inline void
-SymbolButtonRenderer::DrawSymbol(Canvas &canvas, PixelRect rc, bool enabled,
-                                 bool focused, bool pressed) const
+SymbolButtonRenderer::DrawSymbol(Canvas &canvas, PixelRect rc,
+                                 ButtonState state) const noexcept
 {
   const ButtonLook &look = GetLook();
+  const unsigned max_draw_size = menu_scale ? MenuMaxDrawSize(look) : 0;
 
   canvas.SelectNullPen();
-  if (!enabled)
+
+  switch (state) {
+  case ButtonState::DISABLED:
     canvas.Select(look.disabled.brush);
-  else if (focused)
+    break;
+
+  case ButtonState::FOCUSED:
+  case ButtonState::PRESSED:
     canvas.Select(look.focused.foreground_brush);
-  else
+    break;
+
+  case ButtonState::SELECTED:
+    canvas.Select(look.selected.foreground_brush);
+    break;
+
+  case ButtonState::ENABLED:
     canvas.Select(look.standard.foreground_brush);
+    break;
+  }
 
   const char ch = (char)caption[0u];
 
   // Draw arrow symbol instead of <
   if (ch == '<')
-    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::LEFT);
+    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::LEFT,
+                              max_draw_size);
 
   // Draw arrow symbol instead of >
   else if (ch == '>')
-    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::RIGHT);
+    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::RIGHT,
+                              max_draw_size);
 
   // Draw arrow symbol instead of ^
   else if (ch == '^')
-    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::UP);
+    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::UP,
+                              max_draw_size);
 
   // Draw arrow symbol instead of v
   else if (ch == 'v')
-    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::DOWN);
+    SymbolRenderer::DrawArrow(canvas, rc, SymbolRenderer::DOWN,
+                              max_draw_size);
 
   // Draw symbols instead of + and -
   else if (ch == '+' || ch == '-')
-    SymbolRenderer::DrawSign(canvas, rc, ch == '+');
+    SymbolRenderer::DrawSign(canvas, rc, ch == '+', max_draw_size);
+
+  // Draw hamburger menu icon (map overlay menu button)
+  else if (ch == 'h')
+    SymbolRenderer::DrawHamburger(canvas, rc);
+
+  // Draw bolt icon (map overlay QuickMenu button)
+  else if (ch == 'q')
+    SymbolRenderer::DrawBolt(canvas, rc);
 }
 
 void
 SymbolButtonRenderer::DrawButton(Canvas &canvas, const PixelRect &rc,
-                                 bool enabled,
-                                 bool focused, bool pressed) const
+                                 ButtonState state) const noexcept
 {
-  frame_renderer.DrawButton(canvas, rc, focused, pressed);
+  frame_renderer.DrawButton(canvas, rc, state);
 
   if (!caption.empty())
-    DrawSymbol(canvas, frame_renderer.GetDrawingRect(rc, pressed),
-               enabled, focused, pressed);
+    DrawSymbol(canvas, frame_renderer.GetDrawingRect(rc, state),
+               state);
 }

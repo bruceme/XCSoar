@@ -1,33 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_MAIN_WINDOW
 #define ENABLE_CLOSE_BUTTON
 
 #include "Main.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
 #include "Renderer/FAITriangleAreaRenderer.hpp"
 #include "Geo/GeoPoint.hpp"
 #include "Projection/WindowProjection.hpp"
@@ -47,9 +26,8 @@ RenderFAISectorDots(Canvas &canvas, const WindowProjection &projection,
   canvas.SelectHollowBrush();
 
   for (auto *i = geo_points; i != geo_end; ++i) {
-    PixelPoint p;
-    if (projection.GeoToScreenIfVisible(*i, p))
-      canvas.DrawCircle(p.x, p.y, 2);
+    if (auto p = projection.GeoToScreenIfVisible(*i))
+      canvas.DrawCircle(*p, 2);
   }
 }
 
@@ -76,15 +54,15 @@ public:
   }
 
 protected:
-  void OnResize(PixelSize new_size) override {
-    projection.SetScreenOrigin(new_size.cx / 2, new_size.cy / 2);
+  void OnResize(PixelSize new_size) noexcept override {
+    projection.SetScreenOrigin(PixelRect{new_size}.GetCenter());
     projection.SetGeoLocation(a.Middle(b));
     projection.SetScreenSize(new_size);
     projection.SetScaleFromRadius(400000);
     projection.UpdateScreenBounds();
   }
 
-  bool OnMouseDown(PixelPoint p) override {
+  bool OnMouseDown(PixelPoint p) noexcept override {
     if (drag_mode != DragMode::NONE)
       return false;
 
@@ -105,7 +83,7 @@ protected:
     return false;
   }
 
-  bool OnMouseUp(PixelPoint p) override {
+  bool OnMouseUp([[maybe_unused]] PixelPoint p) noexcept override {
     if (drag_mode != DragMode::NONE) {
       drag_mode = DragMode::NONE;
       ReleaseCapture();
@@ -115,7 +93,7 @@ protected:
     return false;
   }
 
-  bool OnMouseMove(PixelPoint p, unsigned keys) override {
+  bool OnMouseMove(PixelPoint p, [[maybe_unused]] unsigned keys) noexcept override {
     const GeoPoint gp = projection.ScreenToGeo(p);
     switch (drag_mode) {
     case DragMode::NONE:
@@ -135,17 +113,17 @@ protected:
     gcc_unreachable();
   }
 
-  virtual void OnPaint(Canvas &canvas) override {
+  void OnPaint(Canvas &canvas) noexcept override {
     canvas.ClearWhite();
 
     canvas.SelectBlackPen();
     canvas.SelectHollowBrush();
 
     auto pa = projection.GeoToScreen(a);
-    canvas.DrawCircle(pa.x, pa.y, 4);
+    canvas.DrawCircle(pa, 4);
 
     auto pb = projection.GeoToScreen(b);
-    canvas.DrawCircle(pb.x, pb.y, 4);
+    canvas.DrawCircle(pb, 4);
 
     RenderFAISector(canvas, projection, a, b, false, settings);
     RenderFAISectorDots(canvas, projection, a, b, false, settings);
@@ -153,7 +131,7 @@ protected:
 };
 
 static void
-Main()
+Main(TestMainWindow &main_window)
 {
   FAITriangleWindow triangle_window;
 

@@ -1,65 +1,43 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device.hpp"
 #include "NMEA/InputLine.hpp"
 #include "NMEA/Checksum.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/RecordedFlight.hpp"
-#include "Time/TimeoutClock.hpp"
-#include "Util/Macros.hpp"
-#include "OS/Path.hpp"
-#include "IO/FileOutputStream.hxx"
-#include "IO/BufferedOutputStream.hxx"
+#include "time/TimeoutClock.hpp"
+#include "util/Macros.hpp"
+#include "system/Path.hpp"
+#include "io/FileOutputStream.hxx"
+#include "io/BufferedOutputStream.hxx"
 #include "Operation/Operation.hpp"
 #include "IGC/IGCParser.hpp"
-#include "Util/StringCompare.hxx"
+#include "util/StringCompare.hxx"
 
 #include <stdlib.h>
 #include <string.h>
 
-static bool
-ExpectXOff(Port &port, OperationEnvironment &env, unsigned timeout_ms)
+static void
+ExpectXOff(Port &port, OperationEnvironment &env,
+           std::chrono::steady_clock::duration timeout)
 {
-  return port.WaitForChar(0x13, env, timeout_ms) == Port::WaitResult::READY;
+  port.WaitForChar(0x13, env, timeout);
 }
 
 static bool
-ReceiveLine(Port &port, char *buffer, size_t length, unsigned timeout_ms)
+ReceiveLine(Port &port, char *buffer, size_t length,
+            OperationEnvironment &env,
+            std::chrono::steady_clock::duration _timeout)
 {
-  TimeoutClock timeout(timeout_ms);
+  TimeoutClock timeout(_timeout);
 
   char *p = (char *)buffer, *end = p + length;
   while (p < end) {
-    if (timeout.HasExpired())
-      return false;
+    port.WaitRead(env, timeout.GetRemainingOrZero());
 
     // Read single character from port
-    int c = port.GetChar();
-
-    // On failure try again until timed out
-    if (c == -1)
-      continue;
+    char c = (char)port.ReadByte();
 
     // Break on XOn
     if (c == 0x11) {
@@ -182,17 +160,13 @@ FlytecDevice::ReadFlightList(RecordedFlightList &flight_list,
   strcat(buffer, "\r\n");
 
   port.Write(buffer);
-  if (!ExpectXOff(port, env, 1000))
-    return false;
+  ExpectXOff(port, env, std::chrono::seconds{1});
 
   unsigned tracks = 0;
   while (true) {
-    // Check if the user cancelled the operation
-    if (env.IsCancelled())
-      return false;
-
     // Receive the next line
-    if (!ReceiveLine(port, buffer, ARRAY_SIZE(buffer), 1000))
+    if (!ReceiveLine(port, buffer, ARRAY_SIZE(buffer), env,
+                     std::chrono::seconds(1)))
       return false;
 
     // XON was received, last record was read already
@@ -266,8 +240,7 @@ FlytecDevice::DownloadFlight(const RecordedFlightInfo &flight,
   strcat(buffer, "\r\n");
 
   port.Write(buffer);
-  if (!ExpectXOff(port, env, 1000))
-    return false;
+  ExpectXOff(port, env, std::chrono::seconds{1});
 
   // Open file writer
   FileOutputStream fos(path);
@@ -282,19 +255,16 @@ FlytecDevice::DownloadFlight(const RecordedFlightInfo &flight,
   env.SetProgressRange(range);
 
   while (true) {
-    // Check if the user cancelled the operation
-    if (env.IsCancelled())
-      return false;
-
     // Receive the next line
-    if (!ReceiveLine(port, buffer, ARRAY_SIZE(buffer), 1000))
+    if (!ReceiveLine(port, buffer, ARRAY_SIZE(buffer), env,
+                     std::chrono::seconds(1)))
       return false;
 
     // XON was received
     if (StringIsEmpty(buffer))
       break;
 
-    if (status_clock.CheckUpdate(250) &&
+    if (status_clock.CheckUpdate(std::chrono::milliseconds(250)) &&
         *buffer == 'B') {
       // Parse the fix time
       BrokenTime time;

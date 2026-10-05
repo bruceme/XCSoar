@@ -1,40 +1,32 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device.hpp"
 #include "Device/Port/Port.hpp"
-#include "Util/ConvertString.hpp"
-#include "Util/StaticString.hxx"
-#include "Util/TruncateString.hpp"
-#include "Util/Macros.hpp"
-#include "Util/NumberParser.hpp"
-#include "Util/StringCompare.hxx"
+#include "LogFile.hpp"
+#include "util/StaticString.hxx"
+#include "util/TruncateString.hpp"
+#include "util/Macros.hpp"
+#include "util/NumberParser.hpp"
+#include "util/StringCompare.hxx"
 #include "NMEA/Checksum.hpp"
+
+#include <fmt/format.h>
 
 void
 FlarmDevice::LinkTimeout()
 {
+  if (mode == Mode::BINARY)
+    was_binary = true;
+
   mode = Mode::UNKNOWN;
+}
+
+bool
+FlarmDevice::PutPilotEvent(OperationEnvironment &env)
+{
+  Send("PFLAI,PILOTEVENT", env);
+  return true;
 }
 
 bool
@@ -79,9 +71,7 @@ FlarmDevice::GetRange(unsigned &range, OperationEnvironment &env)
 bool
 FlarmDevice::SetRange(unsigned range, OperationEnvironment &env)
 {
-  NarrowString<32> buffer;
-  buffer.Format("%d", range);
-  return SetConfig("RANGE", buffer, env);
+  return SetConfig("RANGE", fmt::format_int{range}.c_str(), env);
 }
 
 bool
@@ -103,104 +93,119 @@ FlarmDevice::GetBaudRate(unsigned &baud_id, OperationEnvironment &env)
 bool
 FlarmDevice::SetBaudRate(unsigned baud_id, OperationEnvironment &env)
 {
-  NarrowString<32> buffer;
-  buffer.Format("%u", baud_id);
-  return SetConfig("BAUD", buffer, env);
+  return SetConfig("BAUD", fmt::format_int{baud_id}.c_str(), env);
 }
 
 bool
-FlarmDevice::GetPilot(TCHAR *buffer, size_t length, OperationEnvironment &env)
+FlarmDevice::GetPilot(char *buffer, size_t length, OperationEnvironment &env)
 {
   return GetConfig("PILOT", buffer, length, env);
 }
 
 bool
-FlarmDevice::SetPilot(const TCHAR *pilot_name, OperationEnvironment &env)
+FlarmDevice::SetPilot(const char *pilot_name, OperationEnvironment &env)
 {
   return SetConfig("PILOT", pilot_name, env);
 }
 
 bool
-FlarmDevice::GetCoPilot(TCHAR *buffer, size_t length,
+FlarmDevice::GetCoPilot(char *buffer, size_t length,
                         OperationEnvironment &env)
 {
   return GetConfig("COPIL", buffer, length, env);
 }
 
 bool
-FlarmDevice::SetCoPilot(const TCHAR *copilot_name, OperationEnvironment &env)
+FlarmDevice::SetCoPilot(const char *copilot_name, OperationEnvironment &env)
 {
   return SetConfig("COPIL", copilot_name, env);
 }
 
 bool
-FlarmDevice::GetPlaneType(TCHAR *buffer, size_t length,
+FlarmDevice::GetPlaneType(char *buffer, size_t length,
                           OperationEnvironment &env)
 {
   return GetConfig("GLIDERTYPE", buffer, length, env);
 }
 
 bool
-FlarmDevice::SetPlaneType(const TCHAR *plane_type, OperationEnvironment &env)
+FlarmDevice::SetPlaneType(const char *plane_type, OperationEnvironment &env)
 {
   return SetConfig("GLIDERTYPE", plane_type, env);
 }
 
 bool
-FlarmDevice::GetPlaneRegistration(TCHAR *buffer, size_t length,
+FlarmDevice::GetPlaneRegistration(char *buffer, size_t length,
                                   OperationEnvironment &env)
 {
   return GetConfig("GLIDERID", buffer, length, env);
 }
 
 bool
-FlarmDevice::SetPlaneRegistration(const TCHAR *registration,
+FlarmDevice::SetPlaneRegistration(const char *registration,
                                   OperationEnvironment &env)
 {
   return SetConfig("GLIDERID", registration, env);
 }
 
 bool
-FlarmDevice::GetCompetitionId(TCHAR *buffer, size_t length,
+FlarmDevice::GetCompetitionId(char *buffer, size_t length,
                               OperationEnvironment &env)
 {
   return GetConfig("COMPID", buffer, length, env);
 }
 
 bool
-FlarmDevice::SetCompetitionId(const TCHAR *competition_id,
+FlarmDevice::SetCompetitionId(const char *competition_id,
                               OperationEnvironment &env)
 {
   return SetConfig("COMPID", competition_id, env);
 }
 
 bool
-FlarmDevice::GetCompetitionClass(TCHAR *buffer, size_t length,
+FlarmDevice::GetCompetitionClass(char *buffer, size_t length,
                                  OperationEnvironment &env)
 {
   return GetConfig("COMPCLASS", buffer, length, env);
 }
 
 bool
-FlarmDevice::SetCompetitionClass(const TCHAR *competition_class,
+FlarmDevice::SetCompetitionClass(const char *competition_class,
                                  OperationEnvironment &env)
 {
   return SetConfig("COMPCLASS", competition_class, env);
 }
 
 bool
+FlarmDevice::ReadDeviceType(char *buffer, size_t length,
+                            OperationEnvironment &env)
+{
+  if (!TextMode(env))
+    return false;
+
+  if (!GetConfig("DEVTYPE", buffer, length, env)) {
+    LogFormat("FLARM: DEVTYPE request failed");
+    return false;
+  }
+
+  LogFormat("FLARM: DEVTYPE '%s'", buffer);
+  return true;
+}
+
+bool
 FlarmDevice::GetConfig(const char *setting, char *buffer, size_t length,
                        OperationEnvironment &env)
 {
-  NarrowString<90> request;
+  StaticString<90> request;
   request.Format("PFLAC,R,%s", setting);
 
-  NarrowString<90> expected_answer(request);
+  StaticString<90> expected_answer(request);
   expected_answer[6u] = 'A';
   expected_answer.push_back(',');
 
   Send(request, env);
-  return Receive(expected_answer, buffer, length, env, 2000);
+  return Receive(expected_answer, buffer, length,
+                 env, std::chrono::seconds(2));
 }
 
 /**
@@ -211,7 +216,9 @@ static bool
 ExpectChecksum(Port &port, uint8_t checksum, OperationEnvironment &env)
 {
   char data[4];
-  if (!port.FullRead(data, 3, env, 500) || data[0] != '*')
+  port.FullRead(std::as_writable_bytes(std::span{data, 3}),
+                env, std::chrono::milliseconds(500));
+  if (data[0] != '*')
     return false;
 
   data[3] = '\0';
@@ -222,55 +229,27 @@ bool
 FlarmDevice::SetConfig(const char *setting, const char *value,
                        OperationEnvironment &env)
 {
-  NarrowString<90> buffer;
+  StaticString<90> buffer;
   buffer.Format("PFLAC,S,%s,%s", setting, value);
 
-  NarrowString<90> expected_answer(buffer);
+  StaticString<90> expected_answer(buffer);
   expected_answer[6u] = 'A';
 
   Send(buffer, env);
-  return port.ExpectString(expected_answer, env, 2000) &&
-    ExpectChecksum(port, NMEAChecksum(expected_answer), env);
+  port.ExpectString(expected_answer, env, std::chrono::seconds(2));
+  return ExpectChecksum(port, NMEAChecksum(expected_answer), env);
 }
-
-#ifdef _UNICODE
-
-bool
-FlarmDevice::GetConfig(const char *setting, TCHAR *buffer, size_t length,
-                       OperationEnvironment &env)
-{
-  char narrow_buffer[90];
-  if (!GetConfig(setting, narrow_buffer, ARRAY_SIZE(narrow_buffer), env))
-    return false;
-
-  if (StringIsEmpty(narrow_buffer)) {
-    *buffer = _T('\0');
-    return true;
-  }
-
-  UTF8ToWideConverter wide(narrow_buffer);
-  if (!wide.IsValid())
-    return false;
-
-  CopyTruncateString(buffer, length, wide);
-  return true;
-}
-
-bool
-FlarmDevice::SetConfig(const char *setting, const TCHAR *value,
-                       OperationEnvironment &env)
-{
-  WideToUTF8Converter narrow_value(value);
-  if (!narrow_value.IsValid())
-    return false;
-
-  return SetConfig(setting, narrow_value, env);
-}
-
-#endif
 
 void
 FlarmDevice::Restart(OperationEnvironment &env)
 {
   Send("PFLAR,0", env);
+}
+
+void
+FlarmDevice::RunSimulation(unsigned scenario, OperationEnvironment &env)
+{
+  StaticString<32> buffer;
+  buffer.Format("PFLAF,S,%u", scenario);
+  Send(buffer, env);
 }

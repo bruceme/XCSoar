@@ -1,36 +1,18 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "IGC/IGCParser.hpp"
 #include "IGC/IGCFix.hpp"
 #include "IGC/IGCExtensions.hpp"
-#include "IO/FileLineReader.hpp"
-#include "OS/FileUtil.hpp"
-#include "Util/StaticString.hxx"
-#include "Util/PrintException.hxx"
-#include "Compiler.h"
+#include "Repository/FileType.hpp"
+#include "io/FileLineReader.hpp"
+#include "system/FileUtil.hpp"
+#include "time/FloatDuration.hxx"
+#include "util/StaticString.hxx"
+#include "util/PrintException.hxx"
 
 #include <cstdio>
-
+#include <cstring>
 #include <stdlib.h>
 
 class FlightCheck {
@@ -43,7 +25,7 @@ class FlightCheck {
   unsigned slow_count, fast_count;
 
 public:
-  FlightCheck(const TCHAR *_name)
+  FlightCheck(const char *_name)
     :name(_name),
      year(0), month(0), day(0),
      previous_valid(false), takeoff_valid(false),
@@ -56,7 +38,7 @@ public:
   }
 
   void print_flight() {
-    _tprintf(_T("%s,%04u-%02u-%02u,%02u:%02u,%02u:%02u\n"), name.c_str(),
+    printf("%s,%04u-%02u-%02u,%02u:%02u,%02u:%02u\n", name.c_str(),
              year, month, day,
              takeoff.time.hour, takeoff.time.minute,
              landing.time.hour, landing.time.minute);
@@ -74,7 +56,9 @@ FlightCheck::fix(const IGCFix &fix)
 
   if (previous_valid && fix.time > previous.time) {
     auto distance = fix.location.Distance(previous.location);
-    auto speed = distance / (fix.time.GetSecondOfDay() - previous.time.GetSecondOfDay());
+    const auto duration = fix.time.DurationSinceMidnight()
+      - previous.time.DurationSinceMidnight();
+    auto speed = distance / FloatDuration{duration}.count();
     if (speed > 15) {
       if (fast_count == 0)
         fast = fix;
@@ -155,12 +139,18 @@ IGCFileVisitor::Visit(Path path, Path filename)
   flight.finish();
 }
 
-int main(gcc_unused int argc, gcc_unused char **argv)
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 try {
   IGCFileVisitor visitor;
-  Directory::VisitSpecificFiles(Path(_T(".")), _T("*.igc"), visitor);
+  const char *patterns = GetFileTypePatterns(FileType::IGC);
+  size_t length;
+  while ((length = strlen(patterns)) > 0) {
+    Directory::VisitSpecificFiles(Path("."), patterns, visitor);
+    patterns += length + 1;
+  }
+
   return 0;
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

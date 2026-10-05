@@ -1,33 +1,20 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef FLATBOUNDINGBOX_HPP
-#define FLATBOUNDINGBOX_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "FlatGeoPoint.hpp"
-#include "Compiler.h"
 
 #include <algorithm>
 
 class FlatRay;
+
+template<typename I>
+concept FlatGeoPointIterator = requires (I a, I b) {
+  a != b;
+  ++a;
+  static_cast<FlatGeoPoint>(*a);
+};
 
 /**
  * Structure defining 2-d integer projected coordinates defining
@@ -40,7 +27,7 @@ struct FlatBoundingBox
   FlatGeoPoint upper_right;
 
   /** Non-initialising constructor. */
-  FlatBoundingBox() = default;
+  FlatBoundingBox() noexcept = default;
 
   /**
    * Constructor given bounds
@@ -48,9 +35,8 @@ struct FlatBoundingBox
    * @param ll Lower left location
    * @param ur Upper right location
    */
-  constexpr
-  FlatBoundingBox(const FlatGeoPoint ll, const FlatGeoPoint ur)
-    :lower_left(ll.x, ll.y), upper_right(ur.x, ur.y) {}
+  constexpr FlatBoundingBox(FlatGeoPoint ll, FlatGeoPoint ur) noexcept
+    :lower_left(ll), upper_right(ur) {}
 
   /**
    * Constructor given center point and radius
@@ -59,53 +45,64 @@ struct FlatBoundingBox
    * @param loc Location of center point
    * @param range Radius in projected units
    */
-  constexpr
-  FlatBoundingBox(const FlatGeoPoint loc, const unsigned range = 0)
+  constexpr FlatBoundingBox(FlatGeoPoint loc, unsigned range=0) noexcept
     :lower_left(loc.x - range, loc.y - range),
-    upper_right(loc.x + range, loc.y + range) {}
+     upper_right(loc.x + range, loc.y + range) {}
 
-  constexpr const FlatGeoPoint &GetLowerLeft() const {
+  /**
+   * Calculate the bounding box of a non-empty range of FlatGeoPoints
+   * specified by two (non-equal) iterators.
+   */
+  template<FlatGeoPointIterator I>
+  constexpr FlatBoundingBox(I begin, I end) noexcept
+    :lower_left(*begin), upper_right(*begin)
+  {
+    for (auto i = std::next(begin); i != end; ++i)
+      Expand(*i);
+  }
+
+  constexpr const FlatGeoPoint &GetLowerLeft() const noexcept {
     return lower_left;
   }
 
-  constexpr const FlatGeoPoint &GetUpperRight() const {
+  constexpr const FlatGeoPoint &GetUpperRight() const noexcept {
     return upper_right;
   }
 
-  constexpr int GetLeft() const {
+  constexpr int GetLeft() const noexcept {
     return lower_left.x;
   }
 
-  constexpr int GetTop() const {
+  constexpr int GetTop() const noexcept {
     return upper_right.y;
   }
 
-  constexpr int GetRight() const {
+  constexpr int GetRight() const noexcept {
     return upper_right.x;
   }
 
-  constexpr int GetBottom() const {
+  constexpr int GetBottom() const noexcept {
     return lower_left.y;
   }
 
-  constexpr FlatGeoPoint GetTopLeft() const {
+  constexpr FlatGeoPoint GetTopLeft() const noexcept {
     return FlatGeoPoint(GetLeft(), GetTop());
   }
 
-  constexpr FlatGeoPoint GetBottomRight() const {
+  constexpr FlatGeoPoint GetBottomRight() const noexcept {
     return FlatGeoPoint(GetRight(), GetBottom());
   }
 
-  constexpr unsigned GetWidth() const {
+  constexpr unsigned GetWidth() const noexcept {
     return GetRight() - GetLeft();
   }
 
-  constexpr unsigned GetHeight() const {
+  constexpr unsigned GetHeight() const noexcept {
     return GetTop() - GetBottom();
   }
 
-  gcc_pure
-  unsigned SquareDistanceTo(FlatGeoPoint p) const;
+  [[gnu::pure]]
+  unsigned SquareDistanceTo(FlatGeoPoint p) const noexcept;
 
   /**
    * Calculate non-overlapping distance from one box to another.
@@ -114,8 +111,8 @@ struct FlatBoundingBox
    *
    * @return Distance in projected units (or zero if overlapping)
    */
-  gcc_pure
-  unsigned Distance(const FlatBoundingBox &f) const;
+  [[gnu::pure]]
+  unsigned Distance(const FlatBoundingBox &f) const noexcept;
 
   /**
    * Test whether a point is inside the bounding box
@@ -124,8 +121,8 @@ struct FlatBoundingBox
    *
    * @return true if loc is inside the bounding box
    */
-  gcc_pure
-  bool IsInside(const FlatGeoPoint& loc) const;
+  [[gnu::pure]]
+  bool IsInside(const FlatGeoPoint &loc) const noexcept;
 
   /**
    * Test ray-box intersection
@@ -134,27 +131,27 @@ struct FlatBoundingBox
    *
    * @return True if ray intersects with this bounding box
    */
-  gcc_pure
-  bool Intersects(const FlatRay& ray) const;
+  [[gnu::pure]]
+  bool Intersects(const FlatRay &ray) const noexcept;
 
   /**
    * Get center of bounding box
    *
    * @return Center in flat coordinates
    */
-  gcc_pure
-  FlatGeoPoint GetCenter() const;
+  [[gnu::pure]]
+  FlatGeoPoint GetCenter() const noexcept;
 
   /**
    * Determine whether these bounding boxes overlap
    */
-  gcc_pure
-  bool Overlaps(const FlatBoundingBox& other) const;
+  [[gnu::pure]]
+  bool Overlaps(const FlatBoundingBox& other) const noexcept;
 
   /**
    * Expand the bounding box to include this point
    */
-  void Expand(const FlatGeoPoint& p) {
+  constexpr void Expand(const FlatGeoPoint &p) noexcept {
     lower_left.x = std::min(lower_left.x, p.x);
     upper_right.x = std::max(upper_right.x, p.x);
     lower_left.y = std::min(lower_left.y, p.y);
@@ -164,7 +161,7 @@ struct FlatBoundingBox
   /**
    * Expand the bounding box to include this bounding box
    */
-  void Merge(const FlatBoundingBox& p) {
+  void Merge(const FlatBoundingBox &p) noexcept {
     lower_left.x = std::min(lower_left.x, p.lower_left.x);
     upper_right.x = std::max(upper_right.x, p.upper_right.x);
     lower_left.y = std::min(lower_left.y, p.lower_left.y);
@@ -174,12 +171,12 @@ struct FlatBoundingBox
   /**
    * Shift the bounding box by an offset p
    */
-  void Shift(const FlatGeoPoint &offset) {
+  void Shift(const FlatGeoPoint &offset) noexcept {
     lower_left = lower_left + offset;
     upper_right = upper_right + offset;
   }
 
-  FlatBoundingBox &Grow(int delta) {
+  FlatBoundingBox &Grow(int delta) noexcept {
     lower_left.x -= delta;
     lower_left.y -= delta;
     upper_right.x += delta;
@@ -190,12 +187,10 @@ struct FlatBoundingBox
   /**
    * Expand the border by x amount
    */
-  void ExpandByOne() {
+  void ExpandByOne() noexcept {
     --lower_left.x;
     ++upper_right.x;
     --lower_left.y;
     ++upper_right.y;
   }
 };
-
-#endif

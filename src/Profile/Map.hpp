@@ -1,69 +1,71 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_PROFILE_MAP2_HPP
-#define XCSOAR_PROFILE_MAP2_HPP
-
-#include "Util/StringBuffer.hxx"
-#include "Compiler.h"
+#include "time/FloatDuration.hxx"
+#include "util/StringBuffer.hxx"
 
 #include <map>
+#include <span>
 #include <string>
 
-#include <stdint.h>
-#include <tchar.h>
+#include <cstdint>
+#include <new>
+#include <vector>
 
 struct GeoPoint;
 class RGB8Color;
 class Path;
 class AllocatedPath;
 template<typename T> class StringPointer;
-template<typename T> class AllocatedString;
+template<typename T> class BasicAllocatedString;
 
-class ProfileMap : public std::map<std::string, std::string> {
-  bool modified;
+class ProfileMap {
+  std::map<std::string, std::string, std::less<>> map;
+
+  bool modified = false;
 
 public:
-  ProfileMap():modified(false) {}
-
   /**
    * Has the profile been modified since the last SetModified(false)
    * call?
    */
-  bool IsModified() const {
+  bool IsModified() const noexcept {
     return modified;
   }
 
   /**
    * Set the "modified" flag.
    */
-  void SetModified(bool _modified=true) {
+  void SetModified(bool _modified=true) noexcept {
     modified = _modified;
   }
 
-  gcc_pure
-  bool Exists(const char *key) const {
-    return find(key) != end();
+  void Clear() noexcept {
+    map.clear();
+  }
+
+  [[gnu::pure]]
+  bool Exists(std::string_view key) const noexcept {
+    return map.find(key) != map.end();
+  }
+
+  void Remove(std::string_view key) noexcept {
+    if (auto i = map.find(key); i != map.end()) {
+      map.erase(i);
+      SetModified();
+    }
+  }
+
+  [[gnu::pure]]
+  auto begin() const noexcept {
+    return map.begin();
+  }
+
+  [[gnu::pure]]
+  auto end() const noexcept {
+    return map.end();
   }
 
   // basic string values
@@ -76,60 +78,115 @@ public:
    * @return the value (gets Invalidated by any write access to the
    * profile), or default_value if the key does not exist
    */
-  gcc_pure
-  const char *Get(const char *key, const char *default_value=nullptr) const {
-    const auto i = find(key);
-    if (i == end())
+  [[gnu::pure]]
+  const char *Get(const std::string_view key,
+                  const char *default_value=nullptr) const noexcept {
+    const auto i = map.find(key);
+    if (i == map.end())
       return default_value;
 
     return i->second.c_str();
   }
 
-  void Set(const char *key, const char *value);
+  void Set(std::string_view key, const char *value) noexcept;
 
-  // TCHAR string values
+  // Getters for non-(char *) data types
+
+  // char string values
 
   /**
    * Reads a value from the profile map
    *
    * @param key name of the value that should be read
    * @param value Pointer to the output buffer
-   * @param max_size maximum size of the output buffer
    */
-  bool Get(const char *key, TCHAR *value, size_t max_size) const;
+  bool Get(std::string_view key, std::span<char> value) const noexcept;
 
   template<size_t max>
-  bool Get(const char *key, BasicStringBuffer<TCHAR, max> &value) const {
-    return Get(key, value.data(), value.capacity());
+  bool Get(std::string_view key,
+           BasicStringBuffer<char, max> &value) const noexcept {
+    return Get(key, std::span{value.data(), value.capacity()});
   }
 
-#ifdef _UNICODE
-  void Set(const char *key, const TCHAR *value);
-#endif
+  // std::string values
+
+  /**
+   * Reads a value from the profile map
+   *
+   * @param key name of the value that should be read
+   * @param value Reference to the output string
+   */
+  bool Get(std::string_view key, std::string &value) const noexcept {
+    const char *p = Get(key);
+    if (p == nullptr)
+      return false;
+
+    try {
+      value = p;
+    } catch (const std::bad_alloc &) {
+      return false;
+    }
+
+    return true;
+  }
 
   // numeric values
 
-  bool Get(const char *key, int &value) const;
-  bool Get(const char *key, short &value) const;
-  bool Get(const char *key, bool &value) const;
-  bool Get(const char *key, unsigned &value) const;
-  bool Get(const char *key, uint16_t &value) const;
-  bool Get(const char *key, uint8_t &value) const;
-  bool Get(const char *key, double &value) const;
+  bool Get(std::string_view key, int &value) const noexcept;
+  bool Get(std::string_view key, short &value) const noexcept;
+  bool Get(std::string_view key, bool &value) const noexcept;
+  bool Get(std::string_view key, unsigned &value) const noexcept;
+  bool Get(std::string_view key, uint16_t &value) const noexcept;
+  bool Get(std::string_view key, uint8_t &value) const noexcept;
+  bool Get(std::string_view key, double &value) const noexcept;
 
-  void Set(const char *key, bool value) {
+  bool Get(std::string_view key, FloatDuration &value) const noexcept {
+    double _value;
+    bool result = Get(key, _value);
+    if (result)
+      value = FloatDuration{_value};
+    return result;
+  }
+
+  bool Get(std::string_view key,
+           std::chrono::duration<unsigned> &value) const noexcept {
+    unsigned _value;
+    bool result = Get(key, _value);
+    if (result)
+      value = std::chrono::duration<unsigned>{_value};
+    return result;
+  }
+
+  // Value setters for non-(char *) data types
+
+  /**
+   * Sets a value to the profile map from std::string.
+   */
+  void Set(std::string_view key, const std::string &value) noexcept {
+    Set(key, value.c_str());
+  }
+
+  void Set(std::string_view key, bool value) noexcept {
     Set(key, value ? "1" : "0");
   }
 
-  void Set(const char *key, int value);
-  void Set(const char *key, long value);
-  void Set(const char *key, unsigned value);
-  void Set(const char *key, double value);
+  void Set(std::string_view key, int value) noexcept;
+  void Set(std::string_view key, long value) noexcept;
+  void Set(std::string_view key, unsigned value) noexcept;
+  void Set(std::string_view key, double value) noexcept;
+
+  void Set(std::string_view key, FloatDuration value) noexcept {
+    Set(key, value.count());
+  }
+
+  void Set(std::string_view key, std::chrono::duration<unsigned> value) noexcept {
+    Set(key, value.count());
+  }
 
   // enum values
 
   template<typename T>
-  bool GetEnum(const char *key, T &value) const {
+  bool GetEnum(std::string_view key, T &value) const noexcept {
     int i;
     bool success = Get(key, i);
     if (success)
@@ -138,55 +195,52 @@ public:
   }
 
   template<typename T>
-  void SetEnum(const char *key, T value) {
+  void SetEnum(std::string_view key, T value) noexcept {
     Set(key, (int)value);
   }
 
   // path values
 
-  AllocatedPath GetPath(const char *key) const;
+  AllocatedPath GetPath(std::string_view key) const noexcept;
 
-  gcc_pure
-  bool GetPathIsEqual(const char *key, Path value) const;
+  std::vector<AllocatedPath> GetMultiplePaths(std::string_view key,
+                                              const char *patterns) const;
+
+  [[gnu::pure]]
+  bool GetPathIsEqual(std::string_view key, Path value) const noexcept;
 
   /**
    * Gets a path from the profile and return its base name only.
    */
-#ifdef _UNICODE
-  AllocatedString<TCHAR> GetPathBase(const char *key) const;
-#else
-  gcc_pure
-  StringPointer<TCHAR> GetPathBase(const char *key) const;
-#endif
+  [[gnu::pure]]
+  StringPointer<char> GetPathBase(std::string_view key) const noexcept;
 
-  void SetPath(const char *key, Path value);
+  void SetPath(std::string_view key, Path value) noexcept;
 
   // geo value
 
   /**
    * Load a GeoPoint from the profile.
    */
-  bool GetGeoPoint(const char *key, GeoPoint &value) const;
+  bool GetGeoPoint(std::string_view key, GeoPoint &value) const noexcept;
 
   /**
    * Save a GeoPoint to the profile.  It is stored as a string,
    * longitude and latitude formatted in degrees separated by a space
    * character.
    */
-  void SetGeoPoint(const char *key, const GeoPoint &value);
+  void SetGeoPoint(std::string_view key, const GeoPoint &value) noexcept;
 
   // screen values
 
   /**
    * Load a Color from the profile.
    */
-  bool GetColor(const char *key, RGB8Color &value) const;
+  bool GetColor(std::string_view key, RGB8Color &value) const noexcept;
 
   /**
    * Save a Color to the profile.  It is stored as a RGB hex string
    * e.g. #123456
    */
-  void SetColor(const char *key, const RGB8Color value);
+  void SetColor(std::string_view key, const RGB8Color value) noexcept;
 };
-
-#endif

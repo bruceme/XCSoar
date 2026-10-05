@@ -1,35 +1,15 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef ORDEREDTASKPOINT_HPP
-#define ORDEREDTASKPOINT_HPP
+#pragma once
 
 #include "Task/Points/TaskLeg.hpp"
 #include "Task/Points/TaskWaypoint.hpp"
 #include "Task/Points/ScoredTaskPoint.hpp"
 #include "Task/ObservationZones/ObservationZoneClient.hpp"
 #include "Geo/Flat/FlatBoundingBox.hpp"
-#include "Compiler.h"
+
+#include <memory>
 
 struct TaskBehaviour;
 struct OrderedTaskSettings;
@@ -69,9 +49,23 @@ private:
   /** ActiveState determined from ScanActive() */
   ActiveState active_state;
 
-  OrderedTaskPoint* tp_next;
-  OrderedTaskPoint* tp_previous;
-  FlatBoundingBox flat_bb;
+  OrderedTaskPoint *tp_next = nullptr;
+  OrderedTaskPoint *tp_previous = nullptr;
+  FlatBoundingBox flat_bb{}; // empty, not initialised
+
+  /**
+   * A copy of OrderedTaskSettings::navigate_nearest, managed by
+   * SetOrderedTaskSettings().
+   */
+  bool navigate_nearest = false;
+
+  /**
+   * The point of the observation zone nearest to the aircraft, or an
+   * invalid location when navigation refers to the point the task
+   * refers to.  Only OrderedTask fills this in, and only for the start
+   * and the finish.
+   */
+  GeoPoint nearest_point = GeoPoint::Invalid();
 
 public:
   /**
@@ -85,11 +79,12 @@ public:
    *
    * @return Partially initialised object
    */
-  OrderedTaskPoint(TaskPointType _type, ObservationZonePoint *_oz,
+  OrderedTaskPoint(TaskPointType _type,
+                   std::unique_ptr<ObservationZonePoint> &&_oz,
                    WaypointPtr &&wp,
-                   const bool b_scored);
+                   const bool b_scored) noexcept;
 
-  virtual ~OrderedTaskPoint() {}
+  virtual ~OrderedTaskPoint() noexcept = default;
 
   /* choose TaskPoint's implementation, not SampledTaskPoint's */
   using TaskPoint::GetLocation;
@@ -102,29 +97,38 @@ public:
    * @param ordered_task_settings Ordered task behaviour of clone
    * @param waypoint Waypoint to shift to (or NULL)
    */
-  gcc_malloc
-  OrderedTaskPoint *Clone(const TaskBehaviour &task_behaviour,
-                          const OrderedTaskSettings &ordered_task_settings,
-                          WaypointPtr &&waypoint=WaypointPtr()) const;
+  std::unique_ptr<OrderedTaskPoint> Clone(const TaskBehaviour &task_behaviour,
+                                          const OrderedTaskSettings &ordered_task_settings,
+                                          WaypointPtr &&waypoint={}) const noexcept;
 
   /**
    * Update observation zone geometry (or other internal data) when
    * previous/next turnpoint changes.
    */
-  void UpdateGeometry();
+  void UpdateGeometry() noexcept;
 
   /** Is it possible to insert a task point before this one? */
-  bool IsPredecessorAllowed() const {
+  bool IsPredecessorAllowed() const noexcept {
     return GetType() != TaskPointType::START;
   }
 
   /** Is it possible to insert a task point after this one? */
-  bool IsSuccessorAllowed() const {
+  bool IsSuccessorAllowed() const noexcept {
     return GetType() != TaskPointType::FINISH;
   }
 
-  virtual void SetTaskBehaviour(gcc_unused const TaskBehaviour &tb) {}
-  virtual void SetOrderedTaskSettings(gcc_unused const OrderedTaskSettings &otb) {}
+  virtual void SetTaskBehaviour([[maybe_unused]] const TaskBehaviour &tb) noexcept {}
+  virtual void SetOrderedTaskSettings(const OrderedTaskSettings &otb) noexcept;
+
+  /**
+   * Update the point navigation refers to, according to the current
+   * aircraft position and the OrderedTaskSettings.
+   *
+   * @param location the current aircraft location
+   * @param projection the projection used by the task
+   */
+  void UpdateNearestPoint(const GeoPoint &location,
+                          const FlatProjection &projection) noexcept;
 
   /**
    * Set previous/next task points.
@@ -133,18 +137,18 @@ public:
    * @param next Next (outgoing leg's destination) task point
    */
   virtual void SetNeighbours(OrderedTaskPoint *previous,
-                             OrderedTaskPoint *next);
+                             OrderedTaskPoint *next) noexcept;
 
   /**
    * Accessor for previous task point
    *
    * @return Previous task point
    */
-  const OrderedTaskPoint *GetPrevious() const {
+  const OrderedTaskPoint *GetPrevious() const noexcept {
     return tp_previous;
   }
 
-  OrderedTaskPoint *GetPrevious() {
+  OrderedTaskPoint *GetPrevious() noexcept {
     return tp_previous;
   }
 
@@ -153,11 +157,11 @@ public:
    *
    * @return Next task point
    */
-  const OrderedTaskPoint *GetNext() const {
+  const OrderedTaskPoint *GetNext() const noexcept {
     return tp_next;
   }
 
-  OrderedTaskPoint *GetNext() {
+  OrderedTaskPoint *GetNext() noexcept {
     return tp_next;
   }
 
@@ -167,28 +171,28 @@ public:
    *
    * @return Activation state of this task point
    */
-  ActiveState GetActiveState() const {
+  ActiveState GetActiveState() const noexcept {
     return active_state;
   }
 
   /**
    * Are we past this task point?
    */
-  bool IsPast() const {
+  bool IsPast() const noexcept {
     return active_state == BEFORE_ACTIVE;
   }
 
   /**
    * Is this the current task point?
    */
-  bool IsCurrent() const {
+  bool IsCurrent() const noexcept {
     return active_state == CURRENT_ACTIVE;
   }
 
   /**
    * Do we expect to reach this task point in the future?
    */
-  bool IsFuture() const {
+  bool IsFuture() const noexcept {
     return active_state == AFTER_ACTIVE;
   }
 
@@ -201,7 +205,7 @@ public:
    *
    * @return True if the active task point is found
    */
-  bool ScanActive(const OrderedTaskPoint &atp);
+  bool ScanActive(const OrderedTaskPoint &atp) noexcept;
 
   /**
    * Test whether a taskpoint is equivalent to this one
@@ -212,7 +216,8 @@ public:
    *
    * @return True if same WP, type and OZ
    */
-  virtual bool Equals(const OrderedTaskPoint &other) const;
+  [[gnu::pure]]
+  virtual bool Equals(const OrderedTaskPoint &other) const noexcept;
 
   /**
    * Update a GeoBounds to include this taskpoint and observation
@@ -220,32 +225,32 @@ public:
    *
    * @param bounds GeoBounds to update
    */
-  void ScanBounds(GeoBounds &bounds) const;
+  void ScanBounds(GeoBounds &bounds) const noexcept;
 
-  void UpdateOZ(const FlatProjection &projection);
+  void UpdateOZ(const FlatProjection &projection) noexcept;
 
   /**
    * Update the bounding box in flat projected coordinates
    */
-  void UpdateBoundingBox(const FlatProjection &projection);
+  void UpdateBoundingBox(const FlatProjection &projection) noexcept;
 
   /**
    * Test whether a boundingbox overlaps with this oz
    */
-  gcc_pure
-  bool BoundingBoxOverlaps(const FlatBoundingBox &bb) const;
+  [[gnu::pure]]
+  bool BoundingBoxOverlaps(const FlatBoundingBox &bb) const noexcept;
 
-  gcc_pure
-  const SearchPointVector &GetSearchPoints() const;
+  [[gnu::pure]]
+  const SearchPointVector &GetSearchPoints() const noexcept;
 
-  gcc_pure
+  [[gnu::pure]]
   bool CheckEnterTransitionMat(const AircraftState &ref_now,
-                               const AircraftState &ref_last) const {
+                               const AircraftState &ref_last) const noexcept {
     return CheckEnterTransition(ref_now, ref_last);
   }
 
-  gcc_pure
-  virtual bool IsInSector(const AircraftState &ref) const;
+  [[gnu::pure]]
+  virtual bool IsInSector(const AircraftState &ref) const noexcept;
 
   /**
    * Check if aircraft is within observation zone if near, and if so,
@@ -257,7 +262,7 @@ public:
    * @return True if internal state changed
    */
   virtual bool UpdateSampleNear(const AircraftState &state,
-                                const FlatProjection &projection);
+                                const FlatProjection &projection) noexcept;
 
   /**
    * Perform updates to samples as required if known to be far from the OZ
@@ -267,8 +272,8 @@ public:
    *
    * @return True if internal state changed
    */
-  virtual bool UpdateSampleFar(gcc_unused const AircraftState &state,
-                               gcc_unused const FlatProjection &projection) {
+  virtual bool UpdateSampleFar([[maybe_unused]] const AircraftState &state,
+                               [[maybe_unused]] const FlatProjection &projection) noexcept {
     return false;
   }
 
@@ -283,28 +288,30 @@ protected:
    *
    * @return Distance (m)
    */
-  gcc_pure
-  double DoubleLegDistance(const GeoPoint &ref) const;
+  [[gnu::pure]]
+  double DoubleLegDistance(const GeoPoint &ref) const noexcept;
 
 public:
   /* virtual methods from class TaskPoint */
-  const GeoPoint &GetLocationRemaining() const override {
+  const GeoPoint &GetLocationRemaining() const noexcept override {
     return ScoredTaskPoint::GetLocationRemaining();
   }
-  GeoVector GetVectorRemaining(gcc_unused const GeoPoint &reference) const override {
+  const GeoPoint &GetLocationNavigation() const noexcept override;
+  GeoVector GetVectorRemaining(const GeoPoint &) const noexcept override {
     return TaskLeg::GetVectorRemaining();
   }
-  GeoVector GetNextLegVector() const override;
+  GeoVector GetNextLegVector() const noexcept override;
+
+  /* virtual methods from class ScoredTaskPoint */
+  void Reset() noexcept override;
 
 protected:
   /* virtual methods from class ScoredTaskPoint */
   bool CheckEnterTransition(const AircraftState &ref_now,
-                            const AircraftState &ref_last) const override;
+                            const AircraftState &ref_last) const noexcept override;
 
   bool CheckExitTransition(const AircraftState &ref_now,
-                           const AircraftState &ref_last) const override{
+                           const AircraftState &ref_last) const noexcept override {
     return CheckEnterTransition(ref_last, ref_now);
   }
 };
-
-#endif

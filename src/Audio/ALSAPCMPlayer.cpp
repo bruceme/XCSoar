@@ -1,44 +1,21 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ALSAPCMPlayer.hpp"
-
 #include "ALSAEnv.hpp"
 #include "PCMDataSource.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
+#include "event/Call.hxx"
 #include "LogFile.hpp"
 
-#include "IO/Async/AsioUtil.hpp"
-
 #include <alsa/asoundlib.h>
-
 
 static void alsa_error_handler_stub(const char *, int, const char *,
                                     int, const char *, ...) {}
 
 
-ALSAPCMPlayer::ALSAPCMPlayer(boost::asio::io_service &_io_service) :
-  io_service(_io_service)
+ALSAPCMPlayer::ALSAPCMPlayer(EventLoop &_event_loop) noexcept
+  :event_loop(_event_loop)
 {
   snd_lib_error_set_handler(alsa_error_handler_stub);
 }
@@ -54,7 +31,7 @@ ALSAPCMPlayer::TryRecoverFromError(snd_pcm_t &alsa_handle, int error)
   assert(error < 0);
 
   if (-EPIPE == error)
-    LogFormat("ALSA PCM buffer underrun");
+    LogString("ALSA PCM buffer underrun");
   else if ((-EINTR == error) || (-ESTRPIPE == error))
     LogFormat("ALSA PCM error: %s - trying to recover",
               snd_strerror(error));
@@ -67,7 +44,7 @@ ALSAPCMPlayer::TryRecoverFromError(snd_pcm_t &alsa_handle, int error)
 
   int recover_error = snd_pcm_recover(&alsa_handle, error, 1);
   if (0 == recover_error) {
-    LogFormat("ALSA PCM successfully recovered");
+    LogString("ALSA PCM successfully recovered");
     return true;
   } else {
     LogFormat("snd_pcm_recover(0x%p, %d, 1) failed: %d - %s",
@@ -86,13 +63,19 @@ ALSAPCMPlayer::WriteFrames(snd_pcm_t &alsa_handle, int16_t *buffer,
   assert(n > 0);
   assert(nullptr != buffer);
 
-  snd_pcm_sframes_t write_ret =
-      snd_pcm_writei(&alsa_handle, buffer, static_cast<snd_pcm_uframes_t>(n));
-  if (write_ret < static_cast<snd_pcm_sframes_t>(n)) {
+  /* snd_pcm_recover() prepares the device and discards the ring.
+     Retry the same frames once; returning success without that
+     retry is what made every clip underrun again. */
+  bool recovered = false;
+  while (true) {
+    const snd_pcm_sframes_t write_ret =
+        snd_pcm_writei(&alsa_handle, buffer,
+                       static_cast<snd_pcm_uframes_t>(n));
+    if (write_ret == static_cast<snd_pcm_sframes_t>(n))
+      return true;
+
     if (write_ret < 0) {
-      if (try_recover_on_error) {
-        return TryRecoverFromError(alsa_handle, static_cast<int>(write_ret));
-      } else {
+      if (!try_recover_on_error || recovered) {
         LogFormat("snd_pcm_writei(0x%p, 0x%p, %u) failed: %d - %s",
                   &alsa_handle,
                   buffer,
@@ -101,58 +84,26 @@ ALSAPCMPlayer::WriteFrames(snd_pcm_t &alsa_handle, int16_t *buffer,
                   snd_strerror(static_cast<int>(write_ret)));
         return false;
       }
-    } else {
-      // Never observed this case. Should not happen? Cannot happen?
-      LogFormat("Only %u of %u ALSA PCM frames written",
-                static_cast<unsigned>(write_ret),
-                static_cast<unsigned>(n));
+
+      if (!TryRecoverFromError(alsa_handle, static_cast<int>(write_ret)))
+        return false;
+
+      recovered = true;
+      continue;
     }
+
+    // Never observed this case. Should not happen? Cannot happen?
+    LogFormat("Only %u of %u ALSA PCM frames written",
+              static_cast<unsigned>(write_ret),
+              static_cast<unsigned>(n));
     return false;
-  }
-
-  assert(write_ret == static_cast<snd_pcm_sframes_t>(n));
-
-  return true;
-}
-
-void
-ALSAPCMPlayer::StartEventHandling()
-{
-  if (!poll_descs_registered) {
-    for (auto &fd : read_poll_descs) {
-      fd.async_read_some(boost::asio::null_buffers(),
-                          std::bind(&ALSAPCMPlayer::OnReadEvent,
-                                    this,
-                                    std::ref(fd),
-                                    std::placeholders::_1));
-    }
-
-    for (auto &fd : write_poll_descs) {
-      fd.async_write_some(boost::asio::null_buffers(),
-                          std::bind(&ALSAPCMPlayer::OnWriteEvent,
-                                    this,
-                                    std::ref(fd),
-                                    std::placeholders::_1));
-    }
-
-    poll_descs_registered = true;
   }
 }
 
 void
 ALSAPCMPlayer::StopEventHandling()
 {
-  if (poll_descs_registered) {
-    for (auto &sd : read_poll_descs) {
-      sd.cancel();
-    }
-
-    for (auto &sd : write_poll_descs) {
-      sd.cancel();
-    }
-
-    poll_descs_registered = false;
-  }
+  poll_events.clear();
 }
 
 bool
@@ -163,51 +114,36 @@ ALSAPCMPlayer::OnEvent()
     if (!TryRecoverFromError(static_cast<int>(n_available)))
       return false;
 
-    n_available = static_cast<snd_pcm_sframes_t>(buffer_size / channels);
+    n_available = snd_pcm_avail(alsa_handle.get());
+    if (n_available < 0)
+      return false;
   }
 
-  if (n_available < 0)
+  if (channels == 0)
     return false;
-  else if (0 == n_available)
+
+  const auto buffer_frames =
+      static_cast<snd_pcm_sframes_t>(buffer_size / channels);
+  if (n_available > buffer_frames)
+    n_available = buffer_frames;
+  if (n_available <= 0)
     return true;
 
-  size_t n_read = FillPCMBuffer(buffer.get(),
-                                static_cast<size_t>(n_available));
-  if (!WriteFrames(static_cast<size_t>(n_available)))
+  const size_t n_frames = static_cast<size_t>(n_available);
+  const size_t n_read = FillPCMBuffer(buffer.get(), n_frames);
+  if (n_read == 0)
     return false;
 
-  return (n_read == static_cast<size_t>(n_available));
+  if (!WriteFrames(n_frames))
+    return false;
+
+  return n_read == n_frames;
 }
 
 void
-ALSAPCMPlayer::OnReadEvent(boost::asio::posix::stream_descriptor &fd,
-                       const boost::system::error_code &ec) {
-  if (ec == boost::asio::error::operation_aborted)
-    return;
-
-  if (OnEvent())
-    fd.async_read_some(boost::asio::null_buffers(),
-                       std::bind(&ALSAPCMPlayer::OnReadEvent,
-                                 this,
-                                 std::ref(fd),
-                                 std::placeholders::_1));
-  else
-    StopEventHandling();
-}
-
-void
-ALSAPCMPlayer::OnWriteEvent(boost::asio::posix::stream_descriptor &fd,
-                        const boost::system::error_code &ec) {
-  if (ec == boost::asio::error::operation_aborted)
-    return;
-
-  if (OnEvent())
-    fd.async_write_some(boost::asio::null_buffers(),
-                        std::bind(&ALSAPCMPlayer::OnWriteEvent,
-                                  this,
-                                  std::ref(fd),
-                                  std::placeholders::_1));
-  else
+ALSAPCMPlayer::OnSocketReady(unsigned) noexcept
+{
+  if (!OnEvent())
     StopEventHandling();
 }
 
@@ -464,6 +400,33 @@ ALSAPCMPlayer::SetParameters(snd_pcm_t &alsa_handle, unsigned sample_rate,
     return false;
   }
 
+  /* A plugin can consume the whole ring in one cycle. The default
+     stop threshold then reports EPIPE after a write that succeeded. */
+  snd_pcm_uframes_t boundary;
+  alsa_error = snd_pcm_sw_params_get_boundary(sw_params, &boundary);
+  if (0 != alsa_error) {
+    LogFormat("snd_pcm_sw_params_get_boundary(0x%p, 0x%p) failed: %d - %s",
+              sw_params,
+              &boundary,
+              alsa_error,
+              snd_strerror(alsa_error));
+    return false;
+  }
+
+  alsa_error = snd_pcm_sw_params_set_stop_threshold(&alsa_handle,
+                                                    sw_params,
+                                                    boundary);
+  if (0 != alsa_error) {
+    LogFormat("snd_pcm_sw_params_set_stop_threshold(0x%p, 0x%p, %llu) "
+                  "failed: %d - %s",
+              &alsa_handle,
+              sw_params,
+              static_cast<unsigned long long>(boundary),
+              alsa_error,
+              snd_strerror(alsa_error));
+    return false;
+  }
+
   alsa_error = snd_pcm_sw_params(&alsa_handle, sw_params);
   if (0 != alsa_error) {
     LogFormat("snd_pcm_sw_params(0x%p, 0x%p) failed: %d - %s",
@@ -487,17 +450,16 @@ ALSAPCMPlayer::Start(PCMDataSource &_source)
       (source->GetSampleRate() == new_sample_rate)) {
     /* just change the source / resume playback */
     bool success = false;
-    DispatchWait(io_service, [this, &_source, &success]() {
+    BlockingCall(event_loop, [this, &_source, &success]() {
       bool recovered_from_underrun = false;
 
       switch (snd_pcm_state(alsa_handle.get())) {
       case SND_PCM_STATE_XRUN:
         if (0 != snd_pcm_prepare(alsa_handle.get()))
           return;
-        else {
-          recovered_from_underrun = true;
-          success = true;
-        }
+
+        recovered_from_underrun = true;
+        success = true;
         break;
 
       case SND_PCM_STATE_RUNNING:
@@ -514,14 +476,41 @@ ALSAPCMPlayer::Start(PCMDataSource &_source)
         if (recovered_from_underrun) {
           const size_t n = buffer_size / channels;
           const size_t n_read = FillPCMBuffer(buffer.get(), n);
-          if (!WriteFrames(n_read)) {
+          /* Write the silence-padded buffer, not just n_read.
+             start_threshold is the whole ring; a short write
+             never starts playback. */
+          if (n == 0 || n_read == 0 || !WriteFrames(n)) {
             success = false;
             return;
           }
         }
 
-        if (success)
-          StartEventHandling();
+        /* Re-register poll events when they were cleared after running out of
+           data (OnEvent returned false). Otherwise subsequent queued sounds
+           never get callbacks. See GitHub issue #2113. */
+        if (poll_events.empty()) {
+          const int poll_fds_count =
+            snd_pcm_poll_descriptors_count(alsa_handle.get());
+          if (poll_fds_count >= 1) {
+            std::unique_ptr<struct pollfd[]> resume_poll_fds(
+              new struct pollfd[static_cast<unsigned>(poll_fds_count)]);
+            const int ret = snd_pcm_poll_descriptors(
+              alsa_handle.get(), resume_poll_fds.get(),
+              static_cast<unsigned>(poll_fds_count));
+            if (ret >= 0) {
+              const int n_fds = (ret < poll_fds_count) ? ret : poll_fds_count;
+              for (int i = 0; i < n_fds; ++i) {
+                poll_events.emplace_front(event_loop,
+                                         BIND_THIS_METHOD(OnSocketReady),
+                                         SocketDescriptor(resume_poll_fds[i].fd));
+                poll_events.front().Schedule(resume_poll_fds[i].events);
+              }
+            } else {
+              LogFormat("snd_pcm_poll_descriptors(0x%p, ...) failed: %d - %s",
+                        alsa_handle.get(), ret, snd_strerror(ret));
+            }
+          }
+        }
       }
     });
     if (success)
@@ -569,8 +558,6 @@ ALSAPCMPlayer::Start(PCMDataSource &_source)
   buffer_size = static_cast<snd_pcm_uframes_t>(n_available * channels);
   buffer = std::unique_ptr<int16_t[]>(new int16_t[buffer_size]);
 
-  /* Why does Boost.Asio make it so hard to register a set of of standard
-     poll() descriptors (struct pollfd)? */
   int poll_fds_count = snd_pcm_poll_descriptors_count(new_alsa_handle.get());
   if (poll_fds_count < 1) {
     LogFormat("snd_pcm_poll_descriptors_count(0x%p) returned %d",
@@ -581,22 +568,15 @@ ALSAPCMPlayer::Start(PCMDataSource &_source)
 
   std::unique_ptr<struct pollfd[]> poll_fds(
       new struct pollfd[poll_fds_count]);
-  BOOST_VERIFY(
-      poll_fds_count ==
-          snd_pcm_poll_descriptors(new_alsa_handle.get(),
-                                   poll_fds.get(),
-                                   static_cast<unsigned>(poll_fds_count)));
-
-  for (int i = 0; i < poll_fds_count; ++i) {
-    if ((poll_fds[i].events & POLLIN) || (poll_fds[i].events & POLLPRI)) {
-      read_poll_descs.emplace_back(
-          boost::asio::posix::stream_descriptor(io_service, poll_fds[i].fd));
-    }
-    if (poll_fds[i].events & POLLOUT) {
-      write_poll_descs.emplace_back(
-          boost::asio::posix::stream_descriptor(io_service, poll_fds[i].fd));
-    }
+  const int poll_ret = snd_pcm_poll_descriptors(new_alsa_handle.get(),
+                                                poll_fds.get(),
+                                                static_cast<unsigned>(poll_fds_count));
+  if (poll_ret < 0) {
+    LogFormat("snd_pcm_poll_descriptors(0x%p, ...) failed: %d - %s",
+              new_alsa_handle.get(), poll_ret, snd_strerror(poll_ret));
+    return false;
   }
+  const int n_poll_fds = (poll_ret < poll_fds_count) ? poll_ret : poll_fds_count;
 
   source = &_source;
   size_t n_read = FillPCMBuffer(buffer.get(), static_cast<size_t>(n_available));
@@ -613,7 +593,13 @@ ALSAPCMPlayer::Start(PCMDataSource &_source)
 
   alsa_handle = std::move(new_alsa_handle);
 
-  StartEventHandling();
+  BlockingCall(event_loop, [this, n_poll_fds, &poll_fds](){
+    for (int i = 0; i < n_poll_fds; ++i) {
+      poll_events.emplace_front(event_loop, BIND_THIS_METHOD(OnSocketReady),
+                                SocketDescriptor(poll_fds[i].fd));
+      poll_events.front().Schedule(poll_fds[i].events);
+    }
+  });
 
   return true;
 }
@@ -621,19 +607,14 @@ ALSAPCMPlayer::Start(PCMDataSource &_source)
 void
 ALSAPCMPlayer::Stop()
 {
-  if ((nullptr != alsa_handle) || poll_descs_registered) {
-    DispatchWait(io_service, [&]() {
-      StopEventHandling();
+  BlockingCall(event_loop, [&]() {
+    StopEventHandling();
 
-      if (nullptr != alsa_handle) {
-        BOOST_VERIFY(0 == snd_pcm_drop(alsa_handle.get()));
-        alsa_handle.reset();
-      }
-    });
-  }
-
-  read_poll_descs.clear();
-  write_poll_descs.clear();
+    if (nullptr != alsa_handle) {
+      snd_pcm_drop(alsa_handle.get());
+      alsa_handle.reset();
+    }
+  });
 
   source = nullptr;
 }

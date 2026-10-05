@@ -1,42 +1,33 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include <memory>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_CONFIGURED_PORT_HPP
-#define XCSOAR_DEVICE_CONFIGURED_PORT_HPP
-
+namespace Cares { class Channel; }
+class EventLoop;
 class Port;
 class PortListener;
 class DataHandler;
 struct DeviceConfig;
-namespace boost { namespace asio { class io_service; }}
+
+#ifdef ANDROID
+class BluetoothHelper;
+class IOIOHelper;
+class UsbSerialHelper;
+#endif
 
 /**
  * Open the port described by #DeviceConfig.  On error, throws a
  * #std::runtime_error or returns nullptr.
  */
-Port *
-OpenPort(boost::asio::io_service &io_service,
+std::unique_ptr<Port>
+OpenPort(EventLoop &event_loop, Cares::Channel &cares,
+#ifdef ANDROID
+         BluetoothHelper *bluetooth_helper,
+         IOIOHelper *ioio_helper,
+         UsbSerialHelper *usb_serial_helper,
+#endif
          const DeviceConfig &config, PortListener *listener,
          DataHandler &handler);
-
-#endif

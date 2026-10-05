@@ -1,38 +1,20 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_PARSER_HPP
-#define XCSOAR_DEVICE_PARSER_HPP
+#include "time/Stamp.hpp"
 
 struct NMEAInfo;
 class NMEAInputLine;
 struct GeoPoint;
 struct BrokenDate;
 struct BrokenTime;
+struct RangeFilter;
 
 class NMEAParser
 {
-  double last_time;
+  TimeStamp last_time;
 
 public:
   bool real;
@@ -65,19 +47,12 @@ public:
 
 public:
   /**
-   * Calculates the checksum of the provided NMEA string and
-   * compares it to the provided checksum
-   * @param String NMEA string
-   * @return True if checksum correct
-   */
-  static bool NMEAChecksum(const char *string);
-
-  /**
    * Checks whether time has advanced since last call and
    * updates the last_time reference if necessary
    * @return True if time has advanced since last call
    */
-  static bool TimeHasAdvanced(double this_time, double &last_time,
+  static bool TimeHasAdvanced(TimeStamp this_time,
+                              TimeStamp &last_time,
                               NMEAInfo &info);
 
   static bool ReadGeoPoint(NMEAInputLine &line, GeoPoint &value_r);
@@ -88,7 +63,7 @@ public:
    * Read and parse a time stamp in the form "HHMMSS.SSS".
    */
   static bool ReadTime(NMEAInputLine &line, BrokenTime &broken_time,
-                       double &time_of_day_s);
+                       TimeStamp &time_of_day_s) noexcept;
 
 private:
   /**
@@ -98,7 +73,7 @@ private:
    * @param info NMEA_INFO struct to update
    * @return True if time has advanced since last call
    */
-  bool TimeHasAdvanced(double this_time, NMEAInfo &info);
+  bool TimeHasAdvanced(TimeStamp this_time, NMEAInfo &info) noexcept;
 
   /**
    * Parses a GLL sentence
@@ -160,6 +135,16 @@ private:
   static bool PTAS1(NMEAInputLine &line, NMEAInfo &info);
 
   /**
+   * Parses an LK8EX1 sentence (LK8000 External Instrument Series 1).
+   *
+   * Handled in the central NMEA parser so any port/driver combination
+   * accepts the sentence (same approach as #PTAS1 / FLARM).
+   *
+   * @see https://github.com/LK8000/LK8000/blob/master/Docs/LK8EX1.txt
+   */
+  static bool LK8EX1(NMEAInputLine &line, NMEAInfo &info);
+
+  /**
    * Parses a MWV sentence (NMEA Wind information).
    *
    * @param line A NMEAInputLine instance that can be used for parsing
@@ -168,5 +153,3 @@ private:
    */
   static bool MWV(NMEAInputLine &line, NMEAInfo &info);
 };
-
-#endif

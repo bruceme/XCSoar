@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "PageActions.hpp"
 #include "UIActions.hpp"
@@ -27,11 +7,39 @@ Copyright_License {
 #include "Interface.hpp"
 #include "ActionInterface.hpp"
 #include "MainWindow.hpp"
+#include "util/ScopeExit.hxx"
 #include "CrossSection/CrossSectionWidget.hpp"
+#include "DataGlobals.hpp"
+#include "Dialogs/Weather/WeatherDialog.hpp"
 #include "InfoBoxes/InfoBoxSettings.hpp"
 #include "Pan.hpp"
+#include "Input/InputEvents.hpp"
 #include "UIGlobals.hpp"
 #include "MapWindow/GlueMapWindow.hpp"
+#include "Components.hpp"
+#include "Weather/Features.hpp"
+#include "Weather/MapOverlay/ControlsFactory.hpp"
+#include "Weather/MapOverlay/ControlsWidget.hpp"
+#include "Weather/Rasp/FieldControls.hpp"
+#ifdef HAVE_DOWNLOAD_MANAGER
+#include "Weather/Rasp/DownloadGlue.hpp"
+#endif
+#ifdef HAVE_EDL
+#include "Weather/EDL/FieldControls.hpp"
+#include "Weather/EDL/Glue.hpp"
+#include "Weather/EDL/Levels.hpp"
+#include "Weather/EDL/StateController.hpp"
+#endif
+#ifdef HAVE_HTTP
+#include "Weather/SkySight/FieldControls.hpp"
+#include "Weather/SkySight/SkySightClient.hpp"
+#include "Weather/xctherm/FieldControls.hpp"
+#include "Weather/xctherm/XCThermMapOverlay.hpp"
+#ifdef HAVE_WEATHER_OVERLAY
+#include "Weather/OPERA/RadarPageOverlay.hpp"
+#include "Weather/EUMETView/SatellitePageOverlay.hpp"
+#endif
+#endif
 
 #if defined(ENABLE_SDL) && defined(main)
 /* on some platforms, SDL wraps the main() function and clutters our
@@ -56,24 +64,396 @@ namespace PageActions {
    * #UIState.
    */
   static void LoadLayout(const PageLayout &layout);
+
+  static const PageLayout &
+  GetActiveLayout() noexcept;
+
+  static void ClearPageOverlays() noexcept;
+
+  static void LeaveRaspOverlay() noexcept;
+  static void LeaveEdlOverlay() noexcept;
+  static void LeaveXcthermOverlay() noexcept;
+  static void LeaveSkySightOverlay() noexcept;
+  static void LeaveRadarOverlay() noexcept;
+  static void LeaveSatelliteOverlay() noexcept;
+
+  static void LeaveWeatherOverlayPage(const PageLayout &layout) noexcept;
+
+  static void ApplyRaspOverlay(const PageLayout &layout) noexcept;
+  static void ApplyEdlOverlay(const PageLayout &layout) noexcept;
+  static void ApplyXcthermOverlay(const PageLayout &layout) noexcept;
+  static void ApplySkySightOverlay(const PageLayout &layout) noexcept;
+  static void ApplyRadarOverlay() noexcept;
+  static void ApplySatelliteOverlay(const PageLayout &layout) noexcept;
+
+  static void ApplyPageOverlay(const PageLayout &layout) noexcept;
+
+  /**
+   * Let the map show the position of the current page for a short
+   * while.  Call this after switching between configured pages, before
+   * the new #UIState is sent to the map.
+   */
+  static void ShowPageIndicator() noexcept;
 };
+
+const PageLayout &
+PageActions::GetActiveLayout() noexcept
+{
+  const PagesState &state = CommonInterface::GetUIState().pages;
+
+  return state.special_page.IsDefined()
+    ? state.special_page
+    : GetConfiguredLayout();
+}
+
+void
+PageActions::ClearPageOverlays() noexcept
+{
+  WeatherUIState &weather = CommonInterface::SetUIState().weather;
+  if (!weather.rasp.IsSuspendedForPan())
+    weather.map = -1;
+
+#ifdef HAVE_EDL
+  if (!weather.edl.session.IsSuspendedForPan())
+    EDL::ClearOverlay();
+#endif
+
+#ifdef HAVE_HTTP
+  if (!weather.skysight.IsSuspendedForPan())
+    if (auto skysight = DataGlobals::GetSkySight(); skysight != nullptr)
+      if (!skysight->GetActiveLayerId().empty())
+        skysight->DeactivateLayer();
+#endif
+}
+
+void
+PageActions::LeaveEdlOverlay() noexcept
+{
+#ifdef HAVE_EDL
+  auto &weather = CommonInterface::SetUIState().weather;
+  if (weather.edl.session.IsSuspendedForPan())
+    return;
+
+  weather.edl.session.LeavePage();
+  EDL::ClearOverlay();
+#endif
+}
+
+void
+PageActions::LeaveRaspOverlay() noexcept
+{
+  WeatherUIState &weather = CommonInterface::SetUIState().weather;
+  if (weather.rasp.IsSuspendedForPan())
+    return;
+
+  ClearPageOverlays();
+  weather.rasp.LeavePage();
+}
+
+void
+PageActions::LeaveXcthermOverlay() noexcept
+{
+  auto &xctherm = CommonInterface::SetUIState().weather.xctherm;
+  if (xctherm.IsSuspendedForPan())
+    return;
+
+  xctherm.LeavePage();
+#ifdef HAVE_HTTP
+  XCTherm::ClearMapOverlay();
+#endif
+}
+
+void
+PageActions::LeaveSkySightOverlay() noexcept
+{
+#ifdef HAVE_HTTP
+  auto &session = CommonInterface::SetUIState().weather.skysight;
+  if (session.IsSuspendedForPan())
+    return;
+
+  session.LeavePage();
+  if (auto skysight = DataGlobals::GetSkySight(); skysight != nullptr)
+    if (!skysight->GetActiveLayerId().empty())
+      skysight->DeactivateLayer();
+#endif
+}
+
+void
+PageActions::LeaveRadarOverlay() noexcept
+{
+#ifdef HAVE_WEATHER_OVERLAY
+  OPERA::DeactivatePageOverlay();
+#endif
+}
+
+void
+PageActions::OnMapProjectionModified() noexcept
+{
+#ifdef HAVE_WEATHER_OVERLAY
+  OPERA::OnProjectionModified();
+  EUMETView::OnProjectionModified();
+#endif
+}
+
+void
+PageActions::ApplyRadarOverlay() noexcept
+{
+#ifdef HAVE_WEATHER_OVERLAY
+  OPERA::ActivatePageOverlay();
+#endif
+}
+
+void
+PageActions::LeaveSatelliteOverlay() noexcept
+{
+#ifdef HAVE_WEATHER_OVERLAY
+  EUMETView::DeactivatePageOverlay();
+#endif
+}
+
+void
+PageActions::ApplySatelliteOverlay([[maybe_unused]] const PageLayout &layout)
+  noexcept
+{
+#ifdef HAVE_WEATHER_OVERLAY
+  EUMETView::ActivatePageOverlay(layout.satellite_layer);
+#endif
+}
+
+void
+PageActions::LeaveWeatherOverlayPage(const PageLayout &layout) noexcept
+{
+  if (layout.UsesEdlOverlay())
+    LeaveEdlOverlay();
+  else if (layout.overlay == PageLayout::Overlay::RASP)
+    LeaveRaspOverlay();
+  else if (layout.UsesXcthermOverlay())
+    LeaveXcthermOverlay();
+  else if (layout.UsesSkySightOverlay())
+    LeaveSkySightOverlay();
+  else if (layout.UsesRadarOverlay())
+    LeaveRadarOverlay();
+  else if (layout.UsesSatelliteOverlay())
+    LeaveSatelliteOverlay();
+}
+
+void
+PageActions::ApplyRaspOverlay(const PageLayout &layout) noexcept
+{
+  WeatherUIState &weather = CommonInterface::SetUIState().weather;
+  weather.map = Rasp::GetFieldIndex(layout);
+  Rasp::ApplyTimeFromPageLayout(layout);
+
+  if (!weather.time_auto_advance)
+    weather.rasp.cursor_initialized = true;
+
+  const bool first_enter = weather.rasp.EnterPage();
+
+  if (!weather.rasp.cursor_initialized) {
+    /* Page still uses Auto: resync effective time from GPS. */
+    weather.ResetRaspForDedicatedPage();
+  }
+
+  ActionInterface::ScheduleSendUIState();
+
+#ifdef HAVE_DOWNLOAD_MANAGER
+  if (!weather.rasp.cursor_initialized || first_enter)
+    RequestConfiguredRaspUpdateIfOutOfDate();
+#endif
+}
+
+void
+PageActions::ApplyEdlOverlay(const PageLayout &layout) noexcept
+{
+#ifdef HAVE_EDL
+  auto &edl = CommonInterface::SetUIState().weather.edl;
+  EDL::ApplyTimeFromPageLayout(layout);
+
+  if (layout.edl_isobar > 0 &&
+      EDL::IsSupportedIsobar(unsigned(layout.edl_isobar))) {
+    edl.SelectIsobar(unsigned(layout.edl_isobar));
+    edl.level_auto_advance = false;
+  } else {
+    edl.level_auto_advance = true;
+    EDL::UpdateCurrentLevel();
+  }
+
+  edl.session.cursor_initialized =
+    !edl.forecast_auto_advance || !edl.level_auto_advance;
+
+  const bool first_enter = edl.session.EnterPage();
+
+  if (!edl.session.cursor_initialized) {
+    EDL::ResetForDedicatedPage();
+    EDL::RequestOverlayRefresh();
+  } else if (first_enter) {
+    EDL::ApplyOverlayFromSession();
+    EDL::RequestOverlayRefresh();
+  }
+#else
+  (void)layout;
+#endif
+}
+
+void
+PageActions::ApplyXcthermOverlay(const PageLayout &layout) noexcept
+{
+  auto &xctherm = CommonInterface::SetUIState().weather.xctherm;
+  const bool first_enter = xctherm.EnterPage();
+#ifdef HAVE_HTTP
+  XCTherm::ApplyCursorFromPageLayout(layout);
+  if (first_enter)
+    XCTherm::ActivatePageOverlay();
+  else
+    XCTherm::ApplyCursorOverlayFromSession();
+#else
+  (void)layout;
+  (void)first_enter;
+#endif
+}
+
+void
+PageActions::ApplySkySightOverlay(const PageLayout &layout) noexcept
+{
+#ifdef HAVE_HTTP
+  auto &session = CommonInterface::SetUIState().weather.skysight;
+  session.cursor_initialized =
+    layout.skysight_time != PageLayout::SKYSIGHT_TIME_AUTO;
+  session.EnterPage();
+  SkySight::ApplyCursorFromPageLayout(layout);
+#else
+  (void)layout;
+#endif
+}
+
+void
+PageActions::SuspendWeatherOverlaysForPan() noexcept
+{
+  WeatherUIState &weather = CommonInterface::SetUIState().weather;
+  const PageLayout &layout = GetCurrentLayout();
+
+  if (layout.UsesEdlOverlay())
+    weather.edl.session.SuspendForPan();
+  if (layout.UsesRaspOverlay())
+    weather.rasp.SuspendForPan();
+  if (layout.UsesXcthermOverlay())
+    weather.xctherm.SuspendForPan();
+  if (layout.UsesSkySightOverlay())
+    weather.skysight.SuspendForPan();
+#ifdef HAVE_WEATHER_OVERLAY
+  if (layout.UsesRadarOverlay())
+    OPERA::SuspendForPan();
+  if (layout.UsesSatelliteOverlay())
+    EUMETView::SuspendForPan();
+#endif
+}
+
+void
+PageActions::ResumeWeatherOverlaysAfterPan() noexcept
+{
+  WeatherUIState &weather = CommonInterface::SetUIState().weather;
+  weather.edl.session.ResumeAfterPan();
+  weather.rasp.ResumeAfterPan();
+  weather.xctherm.ResumeAfterPan();
+  weather.skysight.ResumeAfterPan();
+#ifdef HAVE_WEATHER_OVERLAY
+  OPERA::ResumeAfterPan();
+  EUMETView::ResumeAfterPan();
+#endif
+}
+
+void
+PageActions::ApplyPageOverlay(const PageLayout &layout) noexcept
+{
+  /*
+   * Update() may reload a page after its layout was edited in place.  In
+   * that case, LeavePage() has not seen the old overlay, so retire any
+   * stale overlay session before applying the replacement.
+   */
+  if (!layout.UsesRaspOverlay())
+    LeaveRaspOverlay();
+  if (!layout.UsesEdlOverlay())
+    LeaveEdlOverlay();
+  if (!layout.UsesXcthermOverlay())
+    LeaveXcthermOverlay();
+  if (!layout.UsesSkySightOverlay())
+    LeaveSkySightOverlay();
+  if (!layout.UsesRadarOverlay())
+    LeaveRadarOverlay();
+  if (!layout.UsesSatelliteOverlay())
+    LeaveSatelliteOverlay();
+
+  ClearPageOverlays();
+
+  switch (layout.overlay) {
+  case PageLayout::Overlay::NONE:
+    break;
+
+  case PageLayout::Overlay::RASP:
+    ApplyRaspOverlay(layout);
+    break;
+
+  case PageLayout::Overlay::EDL:
+    ApplyEdlOverlay(layout);
+    break;
+
+  case PageLayout::Overlay::XCTHERM:
+    ApplyXcthermOverlay(layout);
+    break;
+
+  case PageLayout::Overlay::SKYSIGHT:
+    ApplySkySightOverlay(layout);
+    break;
+
+  case PageLayout::Overlay::RADAR:
+    ApplyRadarOverlay();
+    break;
+
+  case PageLayout::Overlay::SATELLITE:
+    ApplySatelliteOverlay(layout);
+    break;
+
+  case PageLayout::Overlay::MAX:
+    gcc_unreachable();
+  }
+
+  if (layout.UsesWeatherOverlay())
+    ActionInterface::SendUIState(true);
+}
 
 void
 PageActions::LeavePage()
 {
   PagesState &state = CommonInterface::SetUIState().pages;
 
+  LeaveWeatherOverlayPage(GetActiveLayout());
+
   if (state.special_page.IsDefined())
     return;
-
-  PageState &page = state.pages[state.current_index];
 
   const GlueMapWindow *map = UIGlobals::GetMapIfActive();
   if (map != nullptr) {
     const MapSettings &map_settings = CommonInterface::GetMapSettings();
+    PageState &page = state.pages[state.current_index];
     page.cruise_scale = map_settings.cruise_scale;
     page.circling_scale = map_settings.circling_scale;
+    page.auto_zoom_enabled = map_settings.auto_zoom_enabled;
   }
+}
+
+void
+PageActions::Restore()
+{
+  PageLayout &special_page = CommonInterface::SetUIState().pages.special_page;
+  if (!special_page.IsDefined())
+    return;
+
+  LeaveWeatherOverlayPage(special_page);
+
+  special_page.SetUndefined();
+
+  LoadLayout(GetConfiguredLayout());
+  RestoreMapZoom();
 }
 
 void
@@ -93,6 +473,8 @@ PageActions::RestoreMapZoom()
       map_settings.cruise_scale = page.cruise_scale;
     if (page.circling_scale > 0)
       map_settings.circling_scale = page.circling_scale;
+
+    map_settings.auto_zoom_enabled = page.auto_zoom_enabled;
 
     GlueMapWindow *map = UIGlobals::GetMapIfActive();
     if (map != nullptr) {
@@ -121,10 +503,38 @@ PageActions::GetCurrentLayout()
     : GetConfiguredLayout();
 }
 
+bool
+PageActions::IsStuckPanFullScreenLayout() noexcept
+{
+  const PagesState &state = CommonInterface::GetUIState().pages;
+
+  return state.special_page.IsDefined() &&
+    state.special_page == PageLayout::FullScreen() &&
+    GetConfiguredLayout() != state.special_page;
+}
+
 void
 PageActions::Update()
 {
+  /* While panning, GetCurrentLayout() is the transient FullScreen page.
+     LoadLayout() calls DisablePan() without Restore(), which would leave
+     the UI stuck on FullScreen without the configured bottom widget. */
+  if (IsPanning())
+    return;
+
+  if (IsStuckPanFullScreenLayout()) {
+    Restore();
+    return;
+  }
+
   LoadLayout(GetCurrentLayout());
+}
+
+void
+PageActions::ScheduleUpdate() noexcept
+{
+  if (CommonInterface::main_window != nullptr)
+    CommonInterface::main_window->SchedulePageActionsUpdate();
 }
 
 
@@ -144,14 +554,31 @@ PageActions::NextIndex()
 
 
 void
+PageActions::ShowPageIndicator() noexcept
+{
+  const unsigned n_pages = CommonInterface::GetUISettings().pages.n_pages;
+  if (n_pages < 2)
+    return;
+
+  UIState &ui_state = CommonInterface::SetUIState();
+  ui_state.page_indicator_time = std::chrono::steady_clock::now();
+  ui_state.page_indicator_count = n_pages;
+}
+
+void
 PageActions::Next()
 {
   LeavePage();
 
   PagesState &state = CommonInterface::SetUIState().pages;
 
+  const unsigned old_index = state.current_index;
   state.current_index = NextIndex();
   state.special_page.SetUndefined();
+
+  /* not when just returning from a "special" page */
+  if (state.current_index != old_index)
+    ShowPageIndicator();
 
   Update();
   RestoreMapZoom();
@@ -180,8 +607,13 @@ PageActions::Prev()
 
   PagesState &state = CommonInterface::SetUIState().pages;
 
+  const unsigned old_index = state.current_index;
   state.current_index = PrevIndex();
   state.special_page.SetUndefined();
+
+  /* not when just returning from a "special" page */
+  if (state.current_index != old_index)
+    ShowPageIndicator();
 
   Update();
   RestoreMapZoom();
@@ -192,6 +624,8 @@ LoadMain(PageLayout::Main main)
 {
   switch (main) {
   case PageLayout::Main::MAP:
+  case PageLayout::Main::MAP_NORTH_UP:
+  case PageLayout::Main::EDL_MAP:
     CommonInterface::main_window->ActivateMap();
     break;
 
@@ -213,15 +647,27 @@ LoadMain(PageLayout::Main main)
 }
 
 static void
-LoadBottom(PageLayout::Bottom bottom)
+LoadBottom(const PageLayout &layout)
 {
-  switch (bottom) {
+  /* Weather controls bottom widget is opt-in (Config → System → Pages).
+     Weather overlays share WeatherMapOverlay::ControlsWidget. Same opt-in
+     model as Cross Section. */
+  switch (layout.bottom) {
   case PageLayout::Bottom::NOTHING:
     CommonInterface::main_window->SetBottomWidget(nullptr);
     break;
 
   case PageLayout::Bottom::CROSS_SECTION:
-    CommonInterface::main_window->SetBottomWidget(new CrossSectionWidget());
+    CommonInterface::main_window->SetBottomWidget(new CrossSectionWidget(*data_components));
+    break;
+
+  case PageLayout::Bottom::WEATHER_CONTROLS:
+    if (auto model = WeatherMapOverlay::CreateControlsModel(layout)) {
+      CommonInterface::main_window->SetBottomWidget(
+        new WeatherMapOverlay::ControlsWidget(std::move(model)));
+      break;
+    }
+    CommonInterface::main_window->SetBottomWidget(nullptr);
     break;
 
   case PageLayout::Bottom::CUSTOM:
@@ -260,14 +706,33 @@ PageActions::LoadLayout(const PageLayout &layout)
   if (!layout.valid)
     return;
 
+  PageLayout active = layout;
+  active.Normalise();
+
+  /* InfoBoxes and the bottom widget each resize the map; coalesce so
+     the map jumps once to the final rectangle. */
+  auto &main_window = *CommonInterface::main_window;
+  main_window.BeginCoalesceMapLayout();
+  AtScopeExit(&main_window) { main_window.EndCoalesceMapLayout(); };
+
   DisablePan();
 
-  LoadInfoBoxes(layout.infobox_config);
-  LoadBottom(layout.bottom);
-  LoadMain(layout.main);
+  LoadInfoBoxes(active.infobox_config);
+  LoadMain(active.main);
+  ApplyPageOverlay(active);
+  LoadBottom(active);
+
+  if (!active.UsesWeatherOverlay() && InputEvents::IsMode("weather"))
+    InputEvents::setMode(InputEvents::MODE_DEFAULT);
 
   ActionInterface::UpdateDisplayMode();
-  ActionInterface::SendUIState();
+  ActionInterface::SendUIState(false);
+  main_window.ScheduleRefreshInfoBoxes();
+
+  /* SetFullScreen() skips this when the page was already fullscreen.
+     Pan still marks a special page, and the overlay buttons stop
+     drawing, so the north arrow's clearance has to be refreshed. */
+  main_window.UpdateMapOverlayButtonLayout();
 }
 
 void
@@ -281,18 +746,6 @@ PageActions::OpenLayout(const PageLayout &layout)
   LoadLayout(layout);
 }
 
-void
-PageActions::Restore()
-{
-  PageLayout &special_page = CommonInterface::SetUIState().pages.special_page;
-  if (!special_page.IsDefined())
-    return;
-
-  special_page.SetUndefined();
-
-  LoadLayout(GetConfiguredLayout());
-  RestoreMapZoom();
-}
 
 void
 PageActions::DeferredRestore()
@@ -308,29 +761,32 @@ PageActions::RestoreBottom()
     return;
 
   const PageLayout &configured_page = GetConfiguredLayout();
-  if (special_page.bottom == configured_page.bottom)
-    return;
 
-  special_page.bottom = configured_page.bottom;
-  if (special_page == configured_page)
-    special_page.SetUndefined();
+  if (special_page.bottom != configured_page.bottom) {
+    special_page.bottom = configured_page.bottom;
+    if (special_page == configured_page)
+      special_page.SetUndefined();
+  }
 
-  LoadBottom(configured_page.bottom);
+  /* Always apply the configured bottom.  A prior restore may have updated
+     special_page.bottom without tearing down a SetCustomBottom widget. */
+  LoadBottom(configured_page);
 }
 
 GlueMapWindow *
 PageActions::ShowMap()
 {
   PageLayout layout = GetCurrentLayout();
-  if (layout.main != PageLayout::Main::MAP) {
+  if (!layout.IsMapMain()) {
     /* not showing map currently: activate it */
 
-    if (GetConfiguredLayout().main == PageLayout::Main::MAP)
+    if (GetConfiguredLayout().IsMapMain())
       /* the configured page is a map page: restore it */
       Restore();
     else {
       /* generate a "special" map page based on the current page */
       layout.main = PageLayout::Main::MAP;
+      layout.overlay = PageLayout::Overlay::NONE;
       OpenLayout(layout);
     }
   }
@@ -385,6 +841,21 @@ PageActions::ShowThermalAssistant()
 }
 
 void
+PageActions::ShowWeatherPage()
+{
+#ifdef HAVE_EDL
+  PageLayout layout = GetCurrentLayout();
+  if (!layout.IsMapMain())
+    layout.main = PageLayout::Main::MAP;
+  layout.overlay = PageLayout::Overlay::EDL;
+  layout.bottom = PageLayout::Bottom::WEATHER_CONTROLS;
+  OpenLayout(layout);
+#else
+  ShowWeatherDialog("edl");
+#endif
+}
+
+void
 PageActions::SetCustomBottom(Widget *widget)
 {
   assert(widget != nullptr);
@@ -394,4 +865,18 @@ PageActions::SetCustomBottom(Widget *widget)
   state.special_page = GetCurrentLayout();
   state.special_page.bottom = PageLayout::Bottom::CUSTOM;
   CommonInterface::main_window->SetBottomWidget(widget);
+}
+
+bool
+PageActions::AllowMapOverlayButtons() noexcept
+{
+  const PageLayout &special_page =
+    CommonInterface::GetUIState().pages.special_page;
+  if (!special_page.IsDefined())
+    return true;
+
+  /* SetCustomBottom() marks special_page so RestoreBottom() can undo
+     it; the map remains active and overlay buttons should stay. */
+  return special_page.IsMapMain() &&
+    special_page.bottom == PageLayout::Bottom::CUSTOM;
 }

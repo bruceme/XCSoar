@@ -16,6 +16,9 @@ HOST_IS_X86_64 := $(call bool_or,$(call string_contains,$(UNAME_M),x86_64),$(cal
 HOST_IS_ARM := $(call string_contains,$(UNAME_M),armv)
 HOST_IS_ARMV6 := $(call string_equals,$(UNAME_M),armv6l)
 HOST_IS_ARMV7 := $(call string_equals,$(UNAME_M),armv7l)
+HOST_IS_AARCH64 := $(call string_contains,$(UNAME_M),aarch64)
+
+HOST_IS_ARM_OR_AARCH64 = $(call bool_or,$(HOST_IS_ARM),$(HOST_IS_AARCH64))
 
 ifeq ($(HOST_IS_ARMV7),y)
 HOST_HAS_NEON := $(call string_contains,$(shell grep -E ^Features /proc/cpuinfo),neon)
@@ -23,15 +26,14 @@ else
 HOST_HAS_NEON := n
 endif
 
-ifeq ($(HOST_IS_LINUX)$(HOST_IS_ARM),yy)
-# Check for VideoCore headers present on a Raspberry Pi
-HOST_IS_PI := $(call string_equals,$(shell test -f /opt/vc/include/interface/vmcs_host/vc_dispmanx.h && echo y),y)
+ifeq ($(HOST_IS_LINUX)$(HOST_IS_ARM_OR_AARCH64),yy)
+HOST_IS_PI := $(call string_contains,$(shell cat /sys/firmware/devicetree/base/model 2>/dev/null),Raspberry)
 else
 HOST_IS_PI := n
 endif
 
 ifeq ($(HOST_IS_LINUX)$(HOST_IS_ARMV7),yy)
-HOST_HAS_MALI := $(call string_equals,$(shell test -c /dev/mali && echo y),y)
+HOST_IS_CUBIE := $(call string_contains,$(shell cat /sys/firmware/devicetree/base/model 2>/dev/null),Cubietech)
 else
-HOST_HAS_MALI := n
+HOST_IS_CUBIE := n
 endif

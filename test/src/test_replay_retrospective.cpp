@@ -3,9 +3,9 @@
 #include "Replay/IgcReplay.hpp"
 #include "Engine/Navigation/Aircraft.hpp"
 #include "NMEA/FlyingState.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "OS/FileUtil.hpp"
-#include "IO/FileLineReader.hpp"
+#include "system/ConvertPathName.hpp"
+#include "system/FileUtil.hpp"
+#include "io/FileLineReader.hpp"
 #include "NMEA/Info.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
 #include "Engine/Contest/Solvers/Retrospective.hpp"
@@ -18,7 +18,7 @@
 static bool
 test_replay_retrospective()
 {
-  Directory::Create(_T("output/results"));
+  Directory::Create("output/results");
   std::ofstream f("output/results/res-sample.txt");
 
   Waypoints waypoints;

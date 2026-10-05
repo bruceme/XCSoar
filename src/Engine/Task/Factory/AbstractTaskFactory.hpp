@@ -1,37 +1,16 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef ABSTRACT_TASK_FACTORY_HPP
-#define ABSTRACT_TASK_FACTORY_HPP
-
-#include "Util/NonCopyable.hpp"
-#include "Compiler.h"
+#include "util/NonCopyable.hpp"
 #include "TaskPointFactoryType.hpp"
 #include "ValidationError.hpp"
 #include "LegalPointSet.hpp"
 #include "Engine/Waypoint/Ptr.hpp"
 
-#include <stdint.h>
+#include <cstdint>
+#include <memory>
 
 struct TaskFactoryConstraints;
 class AATPoint;
@@ -84,9 +63,6 @@ protected:
   /** list of valid finish types, for specialisation */
   const LegalPointSet finish_types;
 
-  /** list of errors returned by task validation */
-  TaskValidationErrorSet validation_errors;
-
 protected:
   /**
    * Constructor
@@ -94,11 +70,11 @@ protected:
    * @param task Ordered task to be managed by this factory
    * @param behaviour Behaviour (options)
    */
-  AbstractTaskFactory(const TaskFactoryConstraints &_constraints,
-                      OrderedTask &_task, const TaskBehaviour &_behaviour,
-                      const LegalPointSet &_start_types,
-                      const LegalPointSet &_intermediate_types,
-                      const LegalPointSet &_finish_types)
+  constexpr AbstractTaskFactory(const TaskFactoryConstraints &_constraints,
+                                OrderedTask &_task, const TaskBehaviour &_behaviour,
+                                const LegalPointSet &_start_types,
+                                const LegalPointSet &_intermediate_types,
+                                const LegalPointSet &_finish_types) noexcept
     :constraints(_constraints),
      task(_task), behaviour(_behaviour),
      start_types(_start_types),
@@ -106,27 +82,27 @@ protected:
      finish_types(_finish_types) {}
 
 public:
-  virtual ~AbstractTaskFactory() {}
+  virtual ~AbstractTaskFactory() noexcept = default;
 
-  const TaskFactoryConstraints &GetConstraints() const {
+  constexpr const TaskFactoryConstraints &GetConstraints() const noexcept {
     return constraints;
   }
 
   /**
    * Wrapper for OrderedTask::UpdateStatsGeometry().
    */
-  void UpdateStatsGeometry();
+  void UpdateStatsGeometry() noexcept;
 
   /**
    * Wrapper for OrderedTask::UpdateGeometry().
    */
-  void UpdateGeometry();
+  void UpdateGeometry() noexcept;
 
   /**
    * Updates the #OrderedTaskSettings with values required by
    * the factory type of the task.
    */
-  virtual void UpdateOrderedTaskSettings(OrderedTaskSettings &to);
+  virtual void UpdateOrderedTaskSettings(OrderedTaskSettings &to) noexcept;
 
   /**
    * Replace taskpoint in ordered task.
@@ -141,7 +117,7 @@ public:
    * @return True on success
    */
   bool Replace(const OrderedTaskPoint &tp, const unsigned position,
-               const bool auto_mutate = true);
+               bool auto_mutate = true) noexcept;
 
   /**
    * Add taskpoint to ordered task.  It is the
@@ -153,7 +129,8 @@ public:
    *
    * @return True if operation successful
    */
-  bool Append(const OrderedTaskPoint &new_tp, const bool auto_mutate = true);
+  bool Append(const OrderedTaskPoint &new_tp,
+              bool auto_mutate = true) noexcept;
 
   /**
    * Add optional start point to ordered task.
@@ -164,7 +141,7 @@ public:
    *
    * @return True if operation successful
    */
-  bool AppendOptionalStart(WaypointPtr wp);
+  bool AppendOptionalStart(WaypointPtr wp) noexcept;
 
   /**
    * Add optional start point to ordered task.  It is the
@@ -176,7 +153,7 @@ public:
    * @return True if operation successful
    */
   bool AppendOptionalStart(const OrderedTaskPoint &new_tp,
-                           const bool auto_mutate = true);
+                           bool auto_mutate = true) noexcept;
 
   /**
    * Insert taskpoint to ordered task.  It is the
@@ -189,8 +166,8 @@ public:
    *
    * @return True if operation successful
    */
-  bool Insert(const OrderedTaskPoint &new_tp, const unsigned position,
-              const bool auto_mutate = true);
+  bool Insert(const OrderedTaskPoint &new_tp, unsigned position,
+              bool auto_mutate = true) noexcept;
 
   /**
    * Remove taskpoint from ordered task.  It is the
@@ -202,7 +179,7 @@ public:
    *
    * @return True if operation successful
    */
-  bool Remove(const unsigned position, const bool auto_mutate = true);
+  bool Remove(unsigned position, bool auto_mutate = true) noexcept;
 
   /**
    * Swap taskpoint and its successor in ordered task.
@@ -215,7 +192,7 @@ public:
    *
    * @return True on success
    */
-  bool Swap(const unsigned position, const bool auto_mutate = true);
+  bool Swap(unsigned position, bool auto_mutate = true) noexcept;
 
   /**
    * Relocate a task point to a new location
@@ -225,15 +202,15 @@ public:
    *
    * @return New taskpoint (or old one if failed)
    */
-  const OrderedTaskPoint &Relocate(const unsigned position,
-                                   WaypointPtr &&waypoint);
+  const OrderedTaskPoint &Relocate(unsigned position,
+                                   WaypointPtr &&waypoint) noexcept;
 
   /**
    * Provide list of start types valid for later passing to createStart()
    *
    * @return list of valid start types
    */
-  const LegalPointSet &GetStartTypes() const {
+  constexpr const LegalPointSet &GetStartTypes() const noexcept {
     return start_types;
   }
 
@@ -242,7 +219,7 @@ public:
    *
    * @return list of valid intermediate types
    */
-  const LegalPointSet &GetIntermediateTypes() const {
+  constexpr const LegalPointSet &GetIntermediateTypes() const noexcept {
     return intermediate_types;
   }
 
@@ -251,7 +228,7 @@ public:
    *
    * @return list of valid finish types
    */
-  const LegalPointSet &GetFinishTypes() const {
+  constexpr const LegalPointSet &GetFinishTypes() const noexcept {
     return finish_types;
   }
 
@@ -264,7 +241,7 @@ public:
    */
   virtual void
   GetPointDefaultSizes(const TaskPointFactoryType type, double &start_radius,
-                       double &turnpoint_radius, double &finish_radius) const;
+                       double &turnpoint_radius, double &finish_radius) const noexcept;
 
   /** 
    * Create a point of supplied type using default sector sizes
@@ -274,9 +251,8 @@ public:
    * 
    * @return Initialised object.  Transfers ownership to client.
    */
-  gcc_malloc
-  OrderedTaskPoint* CreatePoint(const TaskPointFactoryType type,
-                                WaypointPtr wp) const;
+  std::unique_ptr<OrderedTaskPoint> CreatePoint(TaskPointFactoryType type,
+                                                WaypointPtr wp) const noexcept;
 
   /**
    * Create a point of supplied type
@@ -289,12 +265,11 @@ public:
    * @param finish_radius.  if < 0 then use default, else use for new point
    * @return Initialised object.  Transfers ownership to client.
    */
-  gcc_malloc
-  OrderedTaskPoint* CreatePoint(const TaskPointFactoryType type,
-                                WaypointPtr wp,
-                                double start_radius,
-                                double turnpoint_radius,
-                                double finish_radius) const;
+  std::unique_ptr<OrderedTaskPoint> CreatePoint(TaskPointFactoryType type,
+                                                WaypointPtr wp,
+                                                double start_radius,
+                                                double turnpoint_radius,
+                                                double finish_radius) const noexcept;
 
   /**
    * Create start point of specified type
@@ -304,9 +279,8 @@ public:
    *
    * @return Initialised StartPoint if valid, otherwise NULL
    */
-  gcc_malloc
-  StartPoint *CreateStart(const TaskPointFactoryType type,
-                          WaypointPtr wp) const;
+  std::unique_ptr<StartPoint> CreateStart(TaskPointFactoryType type,
+                                          WaypointPtr wp) const noexcept;
 
   /**
    * Create intermediate point of specified type
@@ -316,9 +290,8 @@ public:
    *
    * @return Initialised IntermediateTaskPoint if valid, otherwise NULL
    */
-  gcc_malloc
-  IntermediateTaskPoint* CreateIntermediate(const TaskPointFactoryType type,
-                                            WaypointPtr wp) const;
+  std::unique_ptr<IntermediateTaskPoint> CreateIntermediate(TaskPointFactoryType type,
+                                                            WaypointPtr wp) const noexcept;
 
   /**
    * Create finish point of specified type
@@ -328,9 +301,8 @@ public:
    *
    * @return Initialised FinishPoint if valid, otherwise NULL
    */
-  gcc_malloc
-  FinishPoint* CreateFinish(const TaskPointFactoryType type,
-                            WaypointPtr wp) const;
+  std::unique_ptr<FinishPoint> CreateFinish(const TaskPointFactoryType type,
+                                            WaypointPtr wp) const noexcept;
 
   /**
    * Create start point of default type
@@ -339,8 +311,7 @@ public:
    *
    * @return Initialised StartPoint if valid, otherwise NULL
    */
-  gcc_malloc
-  StartPoint *CreateStart(WaypointPtr wp) const;
+  std::unique_ptr<StartPoint> CreateStart(WaypointPtr wp) const noexcept;
 
   /**
    * Create intermediate point of default type
@@ -349,8 +320,7 @@ public:
    *
    * @return Initialised IntermediateTaskPoint if valid, otherwise NULL
    */
-  gcc_malloc
-  IntermediateTaskPoint *CreateIntermediate(WaypointPtr wp) const;
+  std::unique_ptr<IntermediateTaskPoint> CreateIntermediate(WaypointPtr wp) const noexcept;
 
   /**
    * Create finish point of default type
@@ -359,8 +329,7 @@ public:
    *
    * @return Initialised FinishPoint if valid, otherwise NULL
    */
-  gcc_malloc
-  FinishPoint *CreateFinish(WaypointPtr wp) const;
+  std::unique_ptr<FinishPoint> CreateFinish(WaypointPtr wp) const noexcept;
 
   /**
    * Create start point given an OZ
@@ -370,9 +339,8 @@ public:
    *
    * @return Initialised object.  Ownership is transferred to client.
    */
-  gcc_malloc
-  StartPoint *CreateStart(ObservationZonePoint *pt,
-                          WaypointPtr wp) const;
+  std::unique_ptr<StartPoint> CreateStart(std::unique_ptr<ObservationZonePoint> pt,
+                                          WaypointPtr wp) const noexcept;
 
   /**
    * Creates new OrderedTaskPoint of a different type with the
@@ -381,9 +349,8 @@ public:
    * @param tp
    * @return pointer to the point
    */
-  gcc_malloc
-  OrderedTaskPoint* CreateMutatedPoint(const OrderedTaskPoint &tp,
-                                       const TaskPointFactoryType newtype) const;
+  std::unique_ptr<OrderedTaskPoint> CreateMutatedPoint(const OrderedTaskPoint &tp,
+                                                       const TaskPointFactoryType newtype) const noexcept;
 
   /**
   * Returns "suggested/best" type for the current factory based on the type
@@ -397,9 +364,8 @@ public:
   * @param tp The tp that exists (from task built using different factory)
   * @return The suggested mutated type for the current factory
   */
-  virtual gcc_pure
-  TaskPointFactoryType GetMutatedPointType(const OrderedTaskPoint &tp) const;
-
+  [[gnu::pure]]
+  virtual TaskPointFactoryType GetMutatedPointType(const OrderedTaskPoint &tp) const noexcept;
 
   /**
    * Create an AST point given an OZ
@@ -409,8 +375,8 @@ public:
    *
    * @return Initialised object.  Ownership is transferred to client.
    */
-  gcc_malloc
-  ASTPoint *CreateASTPoint(ObservationZonePoint *pt, WaypointPtr wp) const;
+  std::unique_ptr<ASTPoint> CreateASTPoint(std::unique_ptr<ObservationZonePoint> pt,
+                                           WaypointPtr wp) const noexcept;
 
   /**
    * Create an AAT point given an OZ
@@ -420,8 +386,8 @@ public:
    *
    * @return Initialised object.  Ownership is transferred to client.
    */
-  gcc_malloc
-  AATPoint *CreateAATPoint(ObservationZonePoint* pt, WaypointPtr wp) const;
+  std::unique_ptr<AATPoint> CreateAATPoint(std::unique_ptr<ObservationZonePoint> pt,
+                                           WaypointPtr wp) const noexcept;
 
   /**
    * Create a finish point given an OZ
@@ -431,39 +397,35 @@ public:
    *
    * @return Initialised object.  Ownership is transferred to client.
    */
-  gcc_malloc
-  FinishPoint *CreateFinish(ObservationZonePoint* pt, WaypointPtr wp) const;
+  std::unique_ptr<FinishPoint> CreateFinish(std::unique_ptr<ObservationZonePoint> pt,
+                                            WaypointPtr wp) const noexcept;
 
   /**
-   * Check whether task is complete and valid according to factory rules
-   * Adds error types to validation_errors
-   *
-   * @return True if task is valid according to factory rules
+   * Check whether task is complete and valid according to factory
+   * rules and returns a set of errors.
    */
-  virtual bool Validate();
+  virtual TaskValidationErrorSet Validate() const noexcept;
 
   /**
    * Checks whether shapes of all OZs, start, finish are valid
    * for an FAI badge or record
-   * Appends warning message to validation_errors
    * This is used independently of check_task() validation
    *
    * @return True if all OZs are valid for a FAI badge or record
    */
-  bool ValidateFAIOZs();
+  TaskValidationErrorSet ValidateFAIOZs() const noexcept;
 
   /**
    * Checks whether shapes of all OZs, start, finish are valid
    * for an MAT task
-   * Appends warning message to validation_errors
    * This is used independently of check_task() validation
    *
    * @return True if all OZs are valid for a MAT
    */
-  bool ValidateMATOZs();
+  TaskValidationErrorSet ValidateMATOZs() const noexcept;
 
-  gcc_pure
-  const OrderedTaskSettings &GetOrderedTaskSettings() const;
+  [[gnu::pure]]
+  const OrderedTaskSettings &GetOrderedTaskSettings() const noexcept;
 
   /**
    * Check whether an abstract type is valid in a specified position
@@ -473,9 +435,9 @@ public:
    *
    * @return True if type is valid
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual bool ValidAbstractType(LegalAbstractPointType type,
-                                 const unsigned position) const;
+                                 const unsigned position) const noexcept;
 
   /**
    * List valid intermediate types for a given position
@@ -484,16 +446,15 @@ public:
    *
    * @return Vector of valid types in position
    */
-  gcc_pure
-  LegalPointSet GetValidIntermediateTypes(unsigned position) const;
+  [[gnu::pure]]
+  LegalPointSet GetValidIntermediateTypes(unsigned position) const noexcept;
 
   /**
    * List all valid start types for the task type
    *
    * @return Vector of valid types in position
    */
-  gcc_pure
-  const LegalPointSet &GetValidStartTypes() const {
+  constexpr const LegalPointSet &GetValidStartTypes() const noexcept {
     return start_types;
   }
 
@@ -504,14 +465,13 @@ public:
    * @return True if converted last point to a finish
    *         False if did not convert (or did not have 2+ pts)
    */
-  bool CheckAddFinish();
+  bool CheckAddFinish() noexcept;
 
   /** List all valid intermediate types for the task type
    *
    * @return Vector of valid types in position
    */
-  gcc_pure
-  const LegalPointSet &GetValidIntermediateTypes() const {
+  const LegalPointSet &GetValidIntermediateTypes() const noexcept {
     return intermediate_types;
   }
 
@@ -520,8 +480,7 @@ public:
    *
    * @return Vector of valid types in position
    */
-  gcc_pure
-  const LegalPointSet &GetValidFinishTypes() const {
+  constexpr const LegalPointSet &GetValidFinishTypes() const noexcept {
     return finish_types;
   }
 
@@ -532,8 +491,8 @@ public:
    *
    * @return Vector of valid types in position
    */
-  gcc_pure
-  LegalPointSet GetValidTypes(unsigned position) const;
+  [[gnu::pure]]
+  LegalPointSet GetValidTypes(unsigned position) const noexcept;
 
   /**
    * Inspect the type of a point
@@ -543,31 +502,31 @@ public:
    * @return Type of supplied point based on the observation zone shape and
    * TaskPoint type
    */
-  gcc_pure
-  TaskPointFactoryType GetType(const OrderedTaskPoint &point) const;
+  [[gnu::pure]]
+  TaskPointFactoryType GetType(const OrderedTaskPoint &point) const noexcept;
 
   /**
    * Determines whether task is closed (finish same as start)
    * @return true if task is closed
    */
-  gcc_pure
-  bool IsClosed() const;
+  [[gnu::pure]]
+  bool IsClosed() const noexcept;
 
   /**
    * Determines whether task is unique 
    * (other than start/finish, no points used more than once)
    * @return true if task is unique
    */
-  gcc_pure
-  bool IsUnique() const;
+  [[gnu::pure]]
+  bool IsUnique() const noexcept;
 
   /**
    * Determines whether a task's intermediate points are homogeneous
    *
    * @return true if points are homogeneous
   */
-  gcc_pure
-  bool IsHomogeneous() const;
+  [[gnu::pure]]
+  bool IsHomogeneous() const noexcept;
 
   /**
    * Determine if a type is valid for a FinishPoint
@@ -576,8 +535,7 @@ public:
    *
    * @return True if type is valid
    */
-  gcc_pure
-  bool IsValidFinishType(TaskPointFactoryType type) const {
+  constexpr bool IsValidFinishType(TaskPointFactoryType type) const noexcept {
     return finish_types.Contains(type);
   }
 
@@ -588,8 +546,7 @@ public:
    *
    * @return True if type is valid
    */
-  gcc_pure
-  bool IsValidStartType(TaskPointFactoryType type) const {
+  constexpr bool IsValidStartType(TaskPointFactoryType type) const noexcept {
     return start_types.Contains(type);
   }
 
@@ -600,8 +557,7 @@ public:
    *
    * @return True if type is valid
    */
-  gcc_pure
-  bool IsValidIntermediateType(TaskPointFactoryType type) const {
+  constexpr bool IsValidIntermediateType(TaskPointFactoryType type) const noexcept {
     return intermediate_types.Contains(type);
   }
 
@@ -611,7 +567,7 @@ public:
    *
    * @return True if task is changed
    */
-  bool RemoveExcessTPsPerTaskType();
+  bool RemoveExcessTPsPerTaskType() noexcept;
 
   /**
    * Sets / verifies all tps for the task type.
@@ -623,16 +579,7 @@ public:
    *
    * * @return True if task is changed
    */
-  bool MutateTPsToTaskType();
-
-  /**
-   * Call to validate() populates this vector
-   * @return returns vector of errors for current task
-   */
-  gcc_pure
-  const TaskValidationErrorSet &GetValidationErrors() const {
-    return validation_errors;
-  }
+  bool MutateTPsToTaskType() noexcept;
 
 protected:
   /**
@@ -644,9 +591,9 @@ protected:
    *
    * @return True if candidate is valid at the position
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual bool IsValidType(const OrderedTaskPoint &new_tp,
-                           unsigned position) const;
+                           unsigned position) const noexcept;
 
   /** 
    * Check whether the supplied position can be a StartPoint
@@ -655,7 +602,7 @@ protected:
    * 
    * @return True if possible
    */
-  bool IsPositionStart(const unsigned position) const {
+  constexpr bool IsPositionStart(unsigned position) const noexcept {
     return position == 0;
   }
 
@@ -666,8 +613,8 @@ protected:
    * 
    * @return True if possible
    */
-  gcc_pure
-  bool IsPositionIntermediate(const unsigned position) const;
+  [[gnu::pure]]
+  bool IsPositionIntermediate(const unsigned position) const noexcept;
 
   /** 
    * Check whether the supplied position can be a FinishPoint
@@ -676,27 +623,18 @@ protected:
    * 
    * @return True if possible
    */
-  gcc_pure
-  bool IsPositionFinish(const unsigned position) const;
-
-  /**
-   * Inserts the validation error type into the vector of validation errors
-   *
-   * @param e The validation error type to be added
-   */
-  void AddValidationError(TaskValidationErrorType e) {
-    validation_errors.Add(e);
-  }
+  [[gnu::pure]]
+  bool IsPositionFinish(const unsigned position) const noexcept;
 
 private:
-  gcc_pure
-  TaskPointFactoryType GetDefaultStartType() const;
+  [[gnu::pure]]
+  TaskPointFactoryType GetDefaultStartType() const noexcept;
 
-  gcc_pure
-  TaskPointFactoryType GetDefaultIntermediateType() const;
+  [[gnu::pure]]
+  TaskPointFactoryType GetDefaultIntermediateType() const noexcept;
 
-  gcc_pure
-  TaskPointFactoryType GetDefaultFinishType() const;
+  [[gnu::pure]]
+  TaskPointFactoryType GetDefaultFinishType() const noexcept;
 
   /**
    * Verifies and sets the finish waypoint per the is_closed
@@ -707,14 +645,5 @@ private:
    *
    * @return True if task is changed
    */
-  bool MutateClosedFinishPerTaskType();
-
-  /**
-   * Clears the vector of validation errors for the current task
-   */
-  void ClearValidationErrors() {
-    validation_errors = TaskValidationErrorSet();
-  }
+  bool MutateClosedFinishPerTaskType() noexcept;
 };
-
-#endif

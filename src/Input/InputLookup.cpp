@@ -1,34 +1,14 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InputLookup.hpp"
 #include "InputEvents.hpp"
 #include "InputQueue.hpp"
-#include "Util/StringAPI.hxx"
+#include "util/StringAPI.hxx"
 
 // Mapping text names of events to the real thing
 struct Text2EventSTRUCT {
-  const TCHAR *text;
+  const char *text;
   pt2Event event;
 };
 
@@ -38,29 +18,29 @@ static constexpr Text2EventSTRUCT Text2Event[] = {
 };
 
 // Mapping text names of events to the real thing
-static const TCHAR *const Text2GCE[] = {
+static const char *const Text2GCE[] = {
 #include "InputEvents_Text2GCE.cpp"
   nullptr
 };
 
 // Mapping text names of events to the real thing
-static const TCHAR *const Text2NE[] = {
+static const char *const Text2NE[] = {
 #include "InputEvents_Text2NE.cpp"
   nullptr
 };
 
 pt2Event
-InputEvents::findEvent(const TCHAR *data)
+InputEvents::findEvent(std::string_view name) noexcept
 {
   for (unsigned i = 0; Text2Event[i].text != nullptr; ++i)
-    if (StringIsEqual(data, Text2Event[i].text))
+    if (name == Text2Event[i].text)
       return Text2Event[i].event;
 
   return nullptr;
 }
 
 int
-InputEvents::findGCE(const TCHAR *data)
+InputEvents::findGCE(const char *data)
 {
   int i;
   for (i = 0; i < GCE_COUNT; i++) {
@@ -72,7 +52,7 @@ InputEvents::findGCE(const TCHAR *data)
 }
 
 int
-InputEvents::findNE(const TCHAR *data)
+InputEvents::findNE(const char *data)
 {
   int i;
   for (i = 0; i < NE_COUNT; i++) {

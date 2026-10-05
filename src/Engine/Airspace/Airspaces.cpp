@@ -1,39 +1,39 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Airspaces.hpp"
 #include "AbstractAirspace.hpp"
 #include "AirspaceIntersectionVisitor.hpp"
-#include "Predicate/AirspacePredicate.hpp"
 #include "Navigation/Aircraft.hpp"
 
-#include <boost/geometry/geometries/linestring.hpp>
+#include <boost/geometry/algorithms/distance.hpp>
 #include <boost/geometry/algorithms/intersection.hpp>
 #include <boost/geometry/strategies/strategies.hpp>
+#include <boost/geometry/geometries/segment.hpp>
+
+#include <utility>
 
 namespace bgi = boost::geometry::index;
 
+Airspaces::~Airspaces() noexcept = default;
+
+void
+Airspaces::Swap(Airspaces &other) noexcept
+{
+  using std::swap;
+
+  swap(qnh, other.qnh);
+  swap(activity_mask, other.activity_mask);
+  swap(airspace_tree, other.airspace_tree);
+  swap(task_projection, other.task_projection);
+  swap(tmp_as, other.tmp_as);
+
+  ++serial;
+  ++other.serial;
+}
+
 Airspaces::const_iterator_range
-Airspaces::QueryWithinRange(const GeoPoint &location, double range) const
+Airspaces::QueryWithinRange(const GeoPoint &location, double range) const noexcept
 {
   if (IsEmpty())
     // nothing to do
@@ -44,16 +44,16 @@ Airspaces::QueryWithinRange(const GeoPoint &location, double range) const
 }
 
 Airspaces::const_iterator_range
-Airspaces::QueryIntersecting(const GeoPoint &a, const GeoPoint &b) const
+Airspaces::QueryIntersecting(const GeoPoint &a, const GeoPoint &b) const noexcept
 {
   if (IsEmpty())
     // nothing to do
     return {airspace_tree.qend(), airspace_tree.qend()};
 
-  // TODO: use StaticArray instead of std::vector
-  boost::geometry::model::linestring<FlatGeoPoint> line;
-  line.push_back(task_projection.ProjectInteger(a));
-  line.push_back(task_projection.ProjectInteger(b));
+  const boost::geometry::model::segment line{
+    task_projection.ProjectInteger(a),
+    task_projection.ProjectInteger(b),
+  };
 
   return {airspace_tree.qbegin(bgi::intersects(line)), airspace_tree.qend()};
 }
@@ -61,11 +61,11 @@ Airspaces::QueryIntersecting(const GeoPoint &a, const GeoPoint &b) const
 void
 Airspaces::VisitIntersecting(const GeoPoint &loc, const GeoPoint &end,
                              bool include_inside,
-                             AirspaceIntersectionVisitor &visitor) const
+                             AirspaceIntersectionVisitor &visitor) const noexcept
 {
   for (const auto &i : QueryIntersecting(loc, end))
     if (visitor.SetIntersections(i.Intersects(loc, end, task_projection)))
-      visitor.Visit(i.GetAirspace());
+      visitor.Visit(i.GetAirspacePtr());
 
   if (include_inside) {
     for (const auto &i : QueryInside(loc)) {
@@ -77,33 +77,31 @@ Airspaces::VisitIntersecting(const GeoPoint &loc, const GeoPoint &end,
         v.reserve(1);
         v.emplace_back(loc, end);
         visitor.SetIntersections(std::move(v));
-        visitor.Visit(i.GetAirspace());
+        visitor.Visit(i.GetAirspacePtr());
       }
     }
   }
 }
 
 void
-Airspaces::Optimise()
+Airspaces::Optimise() noexcept
 {
   if (IsEmpty())
     /* avoid assertion failure in uninitialised task_projection */
     return;
 
-  if (!owns_children || task_projection.Update()) {
-    // dont update task_projection if not owner!
-
+  if (task_projection.Update()) {
     // task projection changed, so need to push items back onto stack
     // to re-build airspace envelopes
 
     for (const auto &i : QueryAll())
-      tmp_as.push_back(&i.GetAirspace());
+      tmp_as.push_back(i.GetAirspacePtr());
 
     airspace_tree.clear();
   }
 
-  for (AbstractAirspace *i : tmp_as) {
-    Airspace as(*i, task_projection);
+  for (auto &i : tmp_as) {
+    Airspace as(std::move(i), task_projection);
     airspace_tree.insert(as);
   }
 
@@ -113,7 +111,7 @@ Airspaces::Optimise()
 }
 
 void
-Airspaces::Add(AbstractAirspace *airspace)
+Airspaces::Add(AirspacePtr airspace) noexcept
 {
   if (!airspace)
     // nothing to add
@@ -127,54 +125,38 @@ Airspaces::Add(AbstractAirspace *airspace)
   // this allows for airspaces to be add at any time
   activity_mask.SetAll();
 
-  if (owns_children) {
-    if (IsEmpty())
-      task_projection.Reset(airspace->GetReferenceLocation());
+  if (IsEmpty())
+    task_projection.Reset(airspace->GetReferenceLocation());
 
-    task_projection.Scan(airspace->GetReferenceLocation());
-  }
+  task_projection.Scan(airspace->GetReferenceLocation());
 
-  tmp_as.push_back(airspace);
+  tmp_as.push_back(std::move(airspace));
 }
 
 void
-Airspaces::Clear()
+Airspaces::Clear() noexcept
 {
   // delete temporaries in case they were added without an optimise() call
-  while (!tmp_as.empty()) {
-    if (owns_children) {
-      AbstractAirspace *aa = tmp_as.front();
-      delete aa;
-    }
-    tmp_as.pop_front();
-  }
-
-  // delete items in the tree
-  if (owns_children) {
-    for (const auto &i : QueryAll()) {
-      Airspace a = i;
-      a.Destroy();
-    }
-  }
+  tmp_as.clear();
 
   // then delete the tree
   airspace_tree.clear();
 }
 
 unsigned
-Airspaces::GetSize() const
+Airspaces::GetSize() const noexcept
 {
   return airspace_tree.size();
 }
 
 bool
-Airspaces::IsEmpty() const
+Airspaces::IsEmpty() const noexcept
 {
   return airspace_tree.empty() && tmp_as.empty();
 }
 
 void
-Airspaces::SetFlightLevels(const AtmosphericPressure &press)
+Airspaces::SetFlightLevels(const AtmosphericPressure press) noexcept
 {
   if ((int)press.GetHectoPascal() != (int)qnh.GetHectoPascal()) {
     qnh = press;
@@ -185,7 +167,7 @@ Airspaces::SetFlightLevels(const AtmosphericPressure &press)
 }
 
 void
-Airspaces::SetActivity(const AirspaceActivity mask)
+Airspaces::SetActivity(const AirspaceActivity mask) noexcept
 {
   if (!mask.equals(activity_mask)) {
     activity_mask = mask;
@@ -196,30 +178,30 @@ Airspaces::SetActivity(const AirspaceActivity mask)
 }
 
 void
-Airspaces::ClearClearances()
+Airspaces::ClearClearances() noexcept
 {
   for (auto &v : QueryAll())
     v.ClearClearance();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-AirspacePointersEquals(const Airspace &a, const Airspace &b)
+AirspacePointersEquals(const Airspace &a, const Airspace &b) noexcept
 {
   return &a.GetAirspace() == &b.GetAirspace();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
 CompareAirspaceVectors(const AirspacesInterface::AirspaceVector &a,
-                       const AirspacesInterface::AirspaceVector &b)
+                       const AirspacesInterface::AirspaceVector &b) noexcept
 {
   return a.size() == b.size() &&
     std::is_permutation(a.begin(), a.end(), b.begin(), AirspacePointersEquals);
 }
 
 inline AirspacesInterface::AirspaceVector
-Airspaces::AsVector() const
+Airspaces::AsVector() const noexcept
 {
   AirspaceVector v;
   v.reserve(airspace_tree.size());
@@ -234,7 +216,7 @@ bool
 Airspaces::SynchroniseInRange(const Airspaces &master,
                               const GeoPoint &location,
                               const double range,
-                              const AirspacePredicate &condition)
+                              AirspacePredicate condition) noexcept
 {
   qnh = master.qnh;
   activity_mask = master.activity_mask;
@@ -261,7 +243,7 @@ Airspaces::SynchroniseInRange(const Airspaces &master,
 }
 
 Airspaces::const_iterator_range
-Airspaces::QueryInside(const GeoPoint &loc) const
+Airspaces::QueryInside(const GeoPoint &loc) const noexcept
 {
   if (IsEmpty())
     // nothing to do
@@ -280,7 +262,7 @@ Airspaces::QueryInside(const GeoPoint &loc) const
 }
 
 Airspaces::const_iterator_range
-Airspaces::QueryInside(const AircraftState &aircraft) const
+Airspaces::QueryInside(const AircraftState &aircraft) const noexcept
 {
   if (IsEmpty())
     // nothing to do

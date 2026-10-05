@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AltitudeInfo.hpp"
 #include "Interface.hpp"
@@ -32,20 +12,23 @@ Copyright_License {
 
 class AltitudeInfoPanel : public TwoWidgets, NullBlackboardListener {
 public:
-  AltitudeInfoPanel():TwoWidgets(false) {}
+  explicit AltitudeInfoPanel(const DialogLook &look) noexcept
+    :TwoWidgets(std::make_unique<RowFormWidget>(look),
+                std::make_unique<RowFormWidget>(look),
+                false) {}
 
-  void Refresh();
+  void Refresh() noexcept;
 
-  virtual void Initialise(ContainerWindow &parent,
-                          const PixelRect &rc) override;
-  virtual void Show(const PixelRect &rc) override;
-  virtual void Hide() override;
+  void Initialise(ContainerWindow &parent,
+                  const PixelRect &rc) noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
+  void Hide() noexcept override;
 
-  virtual void OnGPSUpdate(const MoreData &basic) override;
+  void OnGPSUpdate(const MoreData &basic) override;
 };
 
 void
-AltitudeInfoPanel::Refresh()
+AltitudeInfoPanel::Refresh() noexcept
 {
   const DerivedInfo &calculated = CommonInterface::Calculated();
   const NMEAInfo &basic = CommonInterface::Basic();
@@ -71,23 +54,22 @@ AltitudeInfoPanel::Refresh()
 }
 
 void
-AltitudeInfoPanel::Initialise(ContainerWindow &parent, const PixelRect &rc)
+AltitudeInfoPanel::Initialise(ContainerWindow &parent,
+                              const PixelRect &rc) noexcept
 {
-  const DialogLook &look = UIGlobals::GetDialogLook();
-
-  RowFormWidget *first = new RowFormWidget(look);
-  RowFormWidget *second = new RowFormWidget(look);
-  TwoWidgets::Set(first, second);
   TwoWidgets::Initialise(parent, rc);
 
-  first->AddReadOnly(_("Alt GPS"));
-  first->AddReadOnly(_("Alt Baro"));
-  second->AddReadOnly(_("H AGL"));
-  second->AddReadOnly(_("Terrain"));
+  RowFormWidget &first = (RowFormWidget &)GetFirst();
+  first.AddReadOnly(_("Alt GPS"));
+  first.AddReadOnly(_("Alt Baro"));
+
+  RowFormWidget &second = (RowFormWidget &)GetSecond();
+  second.AddReadOnly(_("H AGL"));
+  second.AddReadOnly(_("Terrain"));
 }
 
 void
-AltitudeInfoPanel::Show(const PixelRect &rc)
+AltitudeInfoPanel::Show(const PixelRect &rc) noexcept
 {
   Refresh();
   TwoWidgets::Show(rc);
@@ -96,7 +78,7 @@ AltitudeInfoPanel::Show(const PixelRect &rc)
 }
 
 void
-AltitudeInfoPanel::Hide()
+AltitudeInfoPanel::Hide() noexcept
 {
   CommonInterface::GetLiveBlackboard().RemoveListener(*this);
 
@@ -104,13 +86,13 @@ AltitudeInfoPanel::Hide()
 }
 
 void
-AltitudeInfoPanel::OnGPSUpdate(const MoreData &basic)
+AltitudeInfoPanel::OnGPSUpdate([[maybe_unused]] const MoreData &basic)
 {
   Refresh();
 }
 
-Widget *
-LoadAltitudeInfoPanel(unsigned id)
+std::unique_ptr<Widget>
+LoadAltitudeInfoPanel([[maybe_unused]] unsigned id)
 {
-  return new AltitudeInfoPanel();
+  return std::make_unique<AltitudeInfoPanel>(UIGlobals::GetDialogLook());
 }

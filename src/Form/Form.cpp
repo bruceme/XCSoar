@@ -1,66 +1,39 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Form/Form.hpp"
-#include "Time/PeriodClock.hpp"
+#include "time/PeriodClock.hpp"
 #include "Asset.hpp"
-#include "Screen/Canvas.hpp"
-#include "Screen/SingleWindow.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/window/SingleWindow.hpp"
 #include "Screen/Layout.hpp"
-#include "Event/KeyCode.hpp"
-#include "Util/Macros.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "util/ScopeExit.hxx"
 #include "Look/DialogLook.hpp"
-#include "Event/Globals.hpp"
+#include "Renderer/BoxShadowRenderer.hpp"
+#include "ui/event/Globals.hpp"
 
-#ifndef USE_WINUSER
-#include "Screen/Custom/Reference.hpp"
-#endif
+#include <algorithm>
+#include <utility>
+
+#include "ui/window/custom/Reference.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scope.hpp"
-#include "Screen/OpenGL/VertexPointer.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
 #endif
 
 #ifdef ANDROID
-#include "Event/Shared/Event.hpp"
-#include "Event/Android/Loop.hpp"
+#include "ui/event/shared/Event.hpp"
+#include "ui/event/android/Loop.hpp"
 #elif defined(ENABLE_SDL)
-#include "Event/SDL/Event.hpp"
-#include "Event/SDL/Loop.hpp"
+#include "ui/event/sdl/Event.hpp"
+#include "ui/event/sdl/Loop.hpp"
 #elif defined(USE_POLL_EVENT)
-#include "Event/Shared/Event.hpp"
-#include "Event/Poll/Loop.hpp"
-#elif defined(WIN32)
-#include "Event/Windows/Event.hpp"
-#include "Event/Windows/Loop.hpp"
+#include "ui/event/shared/Event.hpp"
+#include "ui/event/poll/Loop.hpp"
 #endif
 
-static WindowStyle
-AddBorder(WindowStyle style)
-{
-  style.Border();
-  return style;
-}
+using namespace UI;
 
 WndForm::WndForm(const DialogLook &_look)
   :look(_look)
@@ -69,42 +42,41 @@ WndForm::WndForm(const DialogLook &_look)
 
 WndForm::WndForm(SingleWindow &main_window, const DialogLook &_look,
                  const PixelRect &rc,
-                 const TCHAR *Caption,
+                 const char *Caption,
                  const WindowStyle style)
   :look(_look)
 {
   Create(main_window, rc, Caption, style);
 }
 
+WndForm::WndForm(SingleWindow &main_window, const DialogLook &_look,
+                 const char *caption,
+                 const WindowStyle style) noexcept
+  :WndForm(main_window, _look, main_window.GetDialogRect(), caption, style)
+{
+}
+
 void
 WndForm::Create(SingleWindow &main_window, const PixelRect &rc,
-                const TCHAR *_caption, const WindowStyle style)
+                const char *_caption, const WindowStyle style)
 {
+  preferred_size = rc.GetSize();
+  full_screen = preferred_size == main_window.GetClientRect().GetSize() ||
+    preferred_size == main_window.GetDialogRect().GetSize();
+
   if (_caption != nullptr)
     caption = _caption;
   else
     caption.clear();
 
-  ContainerWindow::Create(main_window, rc, AddBorder(style));
-
-#if defined(USE_WINUSER) && !defined(NDEBUG)
-  ::SetWindowText(hWnd, caption.c_str());
-#endif
+  ContainerWindow::Create(main_window, rc, style);
 }
 
 void
 WndForm::Create(SingleWindow &main_window,
-                const TCHAR *_caption, const WindowStyle style)
+                const char *_caption, const WindowStyle style)
 {
-  Create(main_window, main_window.GetClientRect(), _caption, style);
-}
-
-WndForm::~WndForm()
-{
-  /* we must override the ~Window() reset call, because in ~Window(),
-     our own OnDestroy() method won't be called (during object
-     destruction, this object loses its identity) */
-  Destroy();
+  Create(main_window, main_window.GetDialogRect(), _caption, style);
 }
 
 SingleWindow &
@@ -113,17 +85,41 @@ WndForm::GetMainWindow()
   return *(SingleWindow *)GetRootOwner();
 }
 
+bool
+WndForm::IsMaximised() const noexcept
+{
+  if (!IsDefined())
+    return false;
+
+  const PixelSize available = GetMainWindow().GetDialogRect().GetSize();
+  const PixelSize size = GetSize();
+
+  return size.width >= available.width && size.height >= available.height;
+}
+
 void
 WndForm::UpdateLayout()
 {
   PixelRect rc = GetClientRect();
 
   title_rect = rc;
+
+  if (!IsMaximised()) {
+    ++title_rect.left;
+    ++title_rect.top;
+    --title_rect.right;
+  }
+
   title_rect.bottom = rc.top +
     (caption.empty() ? 0 : look.caption.font->GetHeight());
 
-  client_rect = rc;
-  client_rect.top = title_rect.bottom;
+  client_rect = rc.RemainingBelowSafe(title_rect);
+
+  if (!IsMaximised()) {
+    ++client_rect.left;
+    --client_rect.right;
+    --client_rect.bottom;
+  }
 }
 
 void
@@ -136,18 +132,32 @@ WndForm::OnCreate()
   WindowStyle client_style;
   client_style.ControlParent();
   client_area.Create(*this, client_rect, look.background_color, client_style);
+  client_area.SetGradientTopColor(look.background_gradient_top_color);
 }
 
 void
-WndForm::OnResize(PixelSize new_size)
+WndForm::OnResize(PixelSize new_size) noexcept
 {
+  if (!reinitialising_layout) {
+    /* Dialogs may replace their construction size after measuring content,
+       or when switching tabs.  Retain that size for overlay restoration.
+       On Win32, new_size is the client size, while Move() sizes the window. */
+    preferred_size = GetPosition().GetSize();
+    auto &main_window = GetMainWindow();
+    full_screen = preferred_size == main_window.GetClientRect().GetSize() ||
+      preferred_size == main_window.GetDialogRect().GetSize();
+  }
+
   ContainerWindow::OnResize(new_size);
   UpdateLayout();
   client_area.Move(client_rect);
+
+  if (client_layout_function)
+    client_layout_function();
 }
 
 void
-WndForm::OnDestroy()
+WndForm::OnDestroy() noexcept
 {
   if (modal_result == 0)
     modal_result = mrCancel;
@@ -156,7 +166,7 @@ WndForm::OnDestroy()
 }
 
 bool
-WndForm::OnMouseMove(PixelPoint p, unsigned keys)
+WndForm::OnMouseMove(PixelPoint p, unsigned keys) noexcept
 {
   if (ContainerWindow::OnMouseMove(p, keys))
     return true;
@@ -168,35 +178,14 @@ WndForm::OnMouseMove(PixelPoint p, unsigned keys)
     last_drag.x = position.left + p.x;
     last_drag.y = position.top + p.y;
 
-    PixelRect parent = GetParentClientRect();
-    parent.Grow(-client_rect.top);
-
-    PixelRect new_position = position;
-    new_position.Offset(dx, dy);
-
-    if (new_position.right < parent.left)
-      new_position.Offset(parent.left - new_position.right, 0);
-
-    if (new_position.left > parent.right)
-      new_position.Offset(parent.right - new_position.left, 0);
-
-    if (new_position.top > parent.bottom)
-      new_position.Offset(0, parent.bottom - new_position.top);
-
-    if (new_position.top < 0)
-      new_position.Offset(0, -new_position.top);
-
-#ifdef USE_MEMORY_CANVAS
-    /* the RasterCanvas class doesn't clip negative window positions
-       properly, therefore we avoid this problem at this stage */
-    if (new_position.left < 0)
-      new_position.left = 0;
-
-    if (new_position.top < 0)
-      new_position.top = 0;
-#endif
-
-    Move(new_position.left, new_position.top);
+    const PixelRect parent = GetMainWindow().GetDialogRect();
+    const PixelPoint origin{
+      std::clamp(position.left + dx, parent.left,
+                 std::max(parent.left, parent.right - int(GetSize().width))),
+      std::clamp(position.top + dy, parent.top,
+                 std::max(parent.top, parent.bottom - int(GetSize().height))),
+    };
+    Move(origin);
 
     return true;
   }
@@ -205,12 +194,12 @@ WndForm::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 bool
-WndForm::OnMouseDown(PixelPoint p)
+WndForm::OnMouseDown(PixelPoint p) noexcept
 {
   if (ContainerWindow::OnMouseDown(p))
     return true;
 
-  if (!dragging && !IsMaximised()) {
+  if (!IsIOS() && !dragging && !IsMaximised()) {
     dragging = true;
     Invalidate();
 
@@ -225,7 +214,7 @@ WndForm::OnMouseDown(PixelPoint p)
 }
 
 bool
-WndForm::OnMouseUp(PixelPoint p)
+WndForm::OnMouseUp(PixelPoint p) noexcept
 {
   if (ContainerWindow::OnMouseUp(p))
     return true;
@@ -241,7 +230,7 @@ WndForm::OnMouseUp(PixelPoint p)
 }
 
 void
-WndForm::OnCancelMode()
+WndForm::OnCancelMode() noexcept
 {
   ContainerWindow::OnCancelMode();
 
@@ -252,58 +241,29 @@ WndForm::OnCancelMode()
   }
 }
 
-#ifdef WIN32
-
-bool
-WndForm::OnCommand(unsigned id, unsigned code)
-{
-  switch (id) {
-  case IDCANCEL:
-    /* sent by the WIN32 dialog manager when the user presses
-       Escape */
-    SetModalResult(mrCancel);
-    return true;
-  }
-
-  return ContainerWindow::OnCommand(id, code);
-}
-
-#endif
-
 /**
  * Is this key handled by the focused control? (bypassing the dialog
  * manager)
  */
-gcc_pure
+[[gnu::pure]]
 static bool
 CheckKey(ContainerWindow *container, const Event &event)
 {
-#ifdef USE_WINUSER
-  const MSG &msg = event.msg;
-  LRESULT r = ::SendMessage(msg.hwnd, WM_GETDLGCODE, msg.wParam,
-                            (LPARAM)&msg);
-  return (r & DLGC_WANTMESSAGE) != 0;
-#else
   Window *focused = container->GetFocusedWindow();
   if (focused == nullptr)
     return false;
 
   return focused->OnKeyCheck(event.GetKeyCode());
-#endif
 }
 
 int
 WndForm::ShowModal()
 {
-#ifndef USE_WINUSER
   ContainerWindow *root = GetRootOwner();
   WindowReference old_focus_reference = root->GetFocusedWindowReference();
-#else
-  HWND oldFocusHwnd;
-#endif /* USE_WINUSER */
 
   PeriodClock enter_clock;
-  if (IsEmbedded())
+  if (HasTouchScreen())
     enter_clock.Update();
 
   ShowOnTop();
@@ -313,28 +273,24 @@ WndForm::ShowModal()
   SingleWindow &main_window = GetMainWindow();
   main_window.CancelMode();
 
-#ifdef USE_WINUSER
-  oldFocusHwnd = ::GetFocus();
-#endif /* USE_WINUSER */
   SetDefaultFocus();
 
   bool hastimed = false;
 
   main_window.AddDialog(this);
 
-#ifndef USE_GDI
   main_window.Refresh();
-#endif
 
-#if defined(ANDROID) || defined(USE_POLL_EVENT) || defined(ENABLE_SDL)
   EventLoop loop(*event_queue, main_window);
-#else
-  DialogEventLoop loop(*event_queue, *this);
-#endif
   Event event;
 
   while ((modal_result == 0 || force) && loop.Get(event)) {
-    if (!main_window.FilterEvent(event, this)) {
+    const bool dialog_event = main_window.FilterEvent(event, this);
+    Window *overlay = main_window.GetDialogOverlay();
+    const bool overlay_event =
+      !dialog_event && overlay != nullptr && event.IsMouse() &&
+      main_window.FilterEvent(event, overlay);
+    if (!dialog_event && !overlay_event) {
       if (modeless && event.IsMouseDown())
         break;
       else
@@ -342,13 +298,40 @@ WndForm::ShowModal()
     }
 
     // hack to stop exiting immediately
-    if (IsEmbedded() && !hastimed &&
+    if (HasTouchScreen() && !hastimed &&
         event.IsUserInput()) {
-      if (!enter_clock.Check(200))
+      if (!enter_clock.Check(std::chrono::milliseconds(200)))
         /* ignore user input in the first 200ms */
         continue;
       else
         hastimed = true;
+    }
+
+    if (overlay_event) {
+      /* Allow only the registered warning strip outside the modal dialog.
+         Keep keyboard focus on the menu after tapping a warning button. */
+#ifdef USE_WINUSER
+      const HWND dialog_focus = ::GetFocus();
+#else
+      const auto dialog_focus = GetFocusedWindowReference();
+#endif
+      /* Bypass Win32's dialog keyboard manager for this sibling window. */
+      loop.EventLoop::Dispatch(event);
+#ifdef USE_WINUSER
+      if (::IsWindow(dialog_focus))
+        ::SetFocus(dialog_focus);
+      else
+        SetDefaultFocus();
+#else
+      Window *focus = dialog_focus.Defined()
+        ? dialog_focus.Get(*this)
+        : nullptr;
+      if (focus != nullptr)
+        focus->SetFocus();
+      else
+        SetDefaultFocus();
+#endif
+      continue;
     }
 
     if (event.IsKeyDown()) {
@@ -356,8 +339,9 @@ WndForm::ShowModal()
         continue;
 
 #ifdef ENABLE_SDL
-      if (event.GetKeyCode() == SDLK_TAB) {
-        /* the Tab key moves the keyboard focus */
+      if (event.GetKeyCode() == SDLK_TAB && !CheckKey(this, event)) {
+        /* the Tab key moves the keyboard focus, unless the focused
+           control handles it itself */
         const Uint8 *keystate = ::SDL_GetKeyboardState(nullptr);
         event.event.key.keysym.sym =
             keystate[SDL_SCANCODE_LSHIFT] || keystate[SDL_SCANCODE_RSHIFT]
@@ -365,11 +349,7 @@ WndForm::ShowModal()
       }
 #endif
 
-      if (
-#ifdef USE_WINUSER
-          IdentifyDescendant(event.msg.hwnd) &&
-#endif
-          (event.GetKeyCode() == KEY_UP || event.GetKeyCode() == KEY_DOWN)) {
+      if (event.GetKeyCode() == KEY_UP || event.GetKeyCode() == KEY_DOWN) {
         /* KEY_UP and KEY_DOWN move the focus only within the current
            control group - but we want it to behave like Shift-Tab and
            Tab */
@@ -384,12 +364,10 @@ WndForm::ShowModal()
         }
       }
 
-#ifndef USE_WINUSER
       if (event.GetKeyCode() == KEY_ESCAPE) {
         modal_result = mrCancel;
         continue;
       }
-#endif
 
 #ifdef KOBO
       if (event.GetKeyCode() == KEY_POWER) {
@@ -413,71 +391,25 @@ WndForm::ShowModal()
 
   main_window.RemoveDialog(this);
 
-#ifdef USE_WINUSER
-  ::SetFocus(oldFocusHwnd);
-#else
   if (old_focus_reference.Defined()) {
     Window *old_focus = old_focus_reference.Get(*root);
     if (old_focus != nullptr)
       old_focus->SetFocus();
   }
-#endif /* !USE_WINUSER */
 
   return modal_result;
 }
 
 void
-WndForm::OnPaint(Canvas &canvas)
+WndForm::OnPaint(Canvas &canvas) noexcept
 {
   const SingleWindow &main_window = GetMainWindow();
-  gcc_unused const bool is_active = main_window.IsTopDialog(*this);
+  [[maybe_unused]] const bool is_active = main_window.IsTopDialog(*this);
 
 #ifdef ENABLE_OPENGL
-  if (!IsDithered() && !IsMaximised() && is_active) {
-    /* draw a shade around the current dialog to emphasise it */
-    const ScopeAlphaBlend alpha_blend;
-
-    const PixelRect rc = GetClientRect();
-    const int size = Layout::VptScale(4);
-
-    const BulkPixelPoint vertices[8] = {
-      { rc.left, rc.top },
-      { rc.right, rc.top },
-      { rc.right, rc.bottom },
-      { rc.left, rc.bottom },
-      { rc.left - size, rc.top - size },
-      { rc.right + size, rc.top - size },
-      { rc.right + size, rc.bottom + size },
-      { rc.left - size, rc.bottom + size },
-    };
-
-    const ScopeVertexPointer vp(vertices);
-
-    static constexpr Color inner_color = COLOR_BLACK.WithAlpha(192);
-    static constexpr Color outer_color = COLOR_BLACK.WithAlpha(16);
-    static constexpr Color colors[8] = {
-      inner_color,
-      inner_color,
-      inner_color,
-      inner_color,
-      outer_color,
-      outer_color,
-      outer_color,
-      outer_color,
-    };
-
-    const ScopeColorPointer cp(colors);
-
-    static constexpr GLubyte indices[] = {
-      0, 4, 1, 4, 5, 1,
-      1, 5, 2, 5, 6, 2,
-      2, 6, 3, 6, 7, 3,
-      3, 7, 0, 7, 4, 0,
-    };
-
-    glDrawElements(GL_TRIANGLES, ARRAY_SIZE(indices),
-                   GL_UNSIGNED_BYTE, indices);
-  }
+  if (!IsDithered() && !IsMaximised() && is_active)
+    /* draw a soft shadow around the current dialog to emphasise it */
+    DrawBoxShadow(GetClientRect(), BoxShadowStyle::DIALOG);
 #endif
 
   ContainerWindow::OnPaint(canvas);
@@ -487,13 +419,9 @@ WndForm::OnPaint(Canvas &canvas)
 
   // Draw the borders
   if (!IsMaximised()) {
-#ifndef USE_GDI
     if (IsDithered())
-      canvas.DrawOutlineRectangle(rcClient.left, rcClient.top,
-                                  rcClient.right - 1, rcClient.bottom - 1,
-                                  COLOR_BLACK);
+      canvas.DrawOutlineRectangle(rcClient, COLOR_BLACK);
     else
-#endif
       canvas.DrawRaisedEdge(rcClient);
   }
 
@@ -509,21 +437,19 @@ WndForm::OnPaint(Canvas &canvas)
 #ifdef EYE_CANDY
     if (!IsDithered() && is_active) {
       canvas.SetBackgroundTransparent();
-      canvas.Stretch(title_rect.left, title_rect.top,
-                     title_rect.GetWidth(),
-                     title_rect.GetHeight(),
+      canvas.Stretch(title_rect.GetTopLeft(), title_rect.GetSize(),
                      look.caption.background_bitmap);
 
       // Draw titlebar text
-      canvas.DrawText(title_rect.left + Layout::GetTextPadding(),
-                      title_rect.top, caption.c_str());
+      canvas.DrawText(title_rect.GetTopLeft().At(Layout::GetTextPadding(), 0),
+                      caption.c_str());
     } else {
 #endif
       canvas.SetBackgroundColor(is_active
                                 ? look.caption.background_color
                                 : look.caption.inactive_background_color);
-      canvas.DrawOpaqueText(title_rect.left + Layout::GetTextPadding(),
-                            title_rect.top, title_rect, caption.c_str());
+      canvas.DrawOpaqueText(title_rect.GetTopLeft().At(Layout::GetTextPadding(), 0),
+                            title_rect, caption.c_str());
 #ifdef EYE_CANDY
     }
 #endif
@@ -532,10 +458,7 @@ WndForm::OnPaint(Canvas &canvas)
   if (dragging) {
 #ifdef ENABLE_OPENGL
     const ScopeAlphaBlend alpha_blend;
-    canvas.DrawFilledRectangle(0, 0, canvas.GetWidth(), canvas.GetHeight(),
-                               COLOR_YELLOW.WithAlpha(80));
-#elif defined(USE_GDI)
-    canvas.InvertRectangle(title_rect);
+    canvas.Clear(COLOR_YELLOW.WithAlpha(80));
 #else
     canvas.InvertRectangle(GetClientRect());
 #endif
@@ -543,12 +466,12 @@ WndForm::OnPaint(Canvas &canvas)
 }
 
 void
-WndForm::SetCaption(const TCHAR *_caption)
+WndForm::SetCaption(const char *_caption)
 {
   if (_caption == nullptr)
-    _caption = _T("");
+    _caption = "";
 
-  if (!caption.equals(_caption)) {
+  if (caption != _caption) {
     caption = _caption;
     UpdateLayout();
     client_area.Move(client_rect);
@@ -557,43 +480,46 @@ WndForm::SetCaption(const TCHAR *_caption)
 }
 
 void
-WndForm::ReinitialiseLayout(const PixelRect &parent_rc)
+WndForm::ReinitialiseLayout(const PixelRect &rc) noexcept
 {
-  const unsigned parent_width = parent_rc.GetWidth();
-  const unsigned parent_height = parent_rc.GetHeight();
+  /* edge-to-edge dialogs (Fly/Simulator) paint into the unsafe area
+     and are not shortened for a warning banner */
+  if (FillsClient())
+    return;
 
-  if (parent_width < GetWidth() || parent_height < GetHeight()) {
-  } else {
-    // reposition dialog to fit into TopWindow
-    PixelRect rc = GetPosition();
+  const bool was_reinitialising = std::exchange(reinitialising_layout, true);
+  AtScopeExit(this, was_reinitialising) {
+    reinitialising_layout = was_reinitialising;
+  };
 
-    if (rc.right > (int)parent_width)
-      rc.left = parent_width - rc.GetWidth();
-    if (rc.bottom > (int)parent_height)
-      rc.top = parent_height - rc.GetHeight();
-
-#ifdef USE_MEMORY_CANVAS
-    /* the RasterCanvas class doesn't clip negative window positions
-       properly, therefore we avoid this problem at this stage */
-    if (rc.left < 0)
-      rc.left = 0;
-    if (rc.top < 0)
-      rc.top = 0;
-#endif
-
-    Move(rc.left, rc.top);
+  if (full_screen) {
+    Move(rc);
+    return;
   }
+
+  const PixelSize size{
+    std::min(preferred_size.width, rc.GetWidth()),
+    std::min(preferred_size.height, rc.GetHeight()),
+  };
+  const auto position = GetPosition();
+  const int max_left = rc.right - int(size.width);
+  const int max_top = rc.bottom - int(size.height);
+  const PixelPoint origin{
+    std::clamp(position.left, rc.left, std::max(rc.left, max_left)),
+    std::clamp(position.top, rc.top, std::max(rc.top, max_top)),
+  };
+  Move(origin, size);
 }
 
 void
-WndForm::SetDefaultFocus()
+WndForm::SetDefaultFocus() noexcept
 {
   SetFocus();
   client_area.FocusFirstControl();
 }
 
 bool
-WndForm::OnAnyKeyDown(unsigned key_code)
+WndForm::OnAnyKeyDown(unsigned key_code) noexcept
 {
   return key_down_function && key_down_function(key_code);
 }

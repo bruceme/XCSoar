@@ -1,46 +1,30 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Form/ButtonPanel.hpp"
 #include "Renderer/TextButtonRenderer.hpp"
 #include "Renderer/SymbolButtonRenderer.hpp"
-#include "Screen/ContainerWindow.hpp"
+#include "ui/window/ContainerWindow.hpp"
 #include "Screen/Layout.hpp"
-#include "Event/KeyCode.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "Asset.hpp"
 
-ButtonPanel::ButtonPanel(ContainerWindow &_parent, const ButtonLook &_look)
+#include <algorithm>
+
+ButtonPanel::ButtonPanel(ContainerWindow &_parent,
+                         const ButtonLook &_look) noexcept
   :parent(_parent), look(_look), selected_index(-1) {
   style.TabStop();
 }
 
-ButtonPanel::~ButtonPanel()
+ButtonPanel::~ButtonPanel() noexcept
 {
   for (const auto i : buttons)
     delete i;
 }
 
 PixelRect
-ButtonPanel::UpdateLayout(const PixelRect rc)
+ButtonPanel::UpdateLayout(const PixelRect rc) noexcept
 {
   if (buttons.empty())
     return rc;
@@ -52,7 +36,7 @@ ButtonPanel::UpdateLayout(const PixelRect rc)
 }
 
 PixelRect
-ButtonPanel::UpdateLayout()
+ButtonPanel::UpdateLayout() noexcept
 {
   return UpdateLayout(parent.GetClientRect());
 }
@@ -60,11 +44,12 @@ ButtonPanel::UpdateLayout()
 static constexpr PixelRect dummy_rc = { 0, 0, 100, 40 };
 
 Button *
-ButtonPanel::Add(ButtonRenderer *renderer,
-                 ActionListener &listener, int id)
+ButtonPanel::Add(std::unique_ptr<ButtonRenderer> &&renderer,
+                 Button::Callback callback) noexcept
 {
   auto *button = new Button(parent, dummy_rc, style,
-                            renderer, listener, id);
+                            std::move(renderer), std::move(callback));
+  button->SetCursorKeyGroup(this);
   keys[buttons.size()] = 0;
   buttons.append(button);
 
@@ -72,20 +57,22 @@ ButtonPanel::Add(ButtonRenderer *renderer,
 }
 
 Button *
-ButtonPanel::Add(const TCHAR *caption, ActionListener &listener, int id)
+ButtonPanel::Add(const char *caption, Button::Callback callback) noexcept
 {
-  return Add(new TextButtonRenderer(look, caption), listener, id);
+  return Add(std::make_unique<TextButtonRenderer>(look, caption),
+             std::move(callback));
 }
 
 Button *
-ButtonPanel::AddSymbol(const TCHAR *caption,
-                       ActionListener &listener, int id)
+ButtonPanel::AddSymbol(const char *caption,
+                       Button::Callback callback) noexcept
 {
-  return Add(new SymbolButtonRenderer(look, caption), listener, id);
+  return Add(std::make_unique<SymbolButtonRenderer>(look, caption),
+             std::move(callback));
 }
 
 void
-ButtonPanel::AddKey(unsigned key_code)
+ButtonPanel::AddKey(unsigned key_code) noexcept
 {
   assert(!buttons.empty());
   assert(keys[buttons.size() - 1] == 0);
@@ -94,14 +81,14 @@ ButtonPanel::AddKey(unsigned key_code)
 }
 
 inline unsigned
-ButtonPanel::Width(unsigned i) const
+ButtonPanel::Width(unsigned i) const noexcept
 {
   return std::max(buttons[i]->GetMinimumWidth(),
                   Layout::GetMinimumControlHeight());
 }
 
 unsigned
-ButtonPanel::RangeMaxWidth(unsigned start, unsigned end) const
+ButtonPanel::RangeMaxWidth(unsigned start, unsigned end) const noexcept
 {
   unsigned max_width = Layout::Scale(50);
   for (unsigned i = start; i < end; ++i) {
@@ -114,7 +101,7 @@ ButtonPanel::RangeMaxWidth(unsigned start, unsigned end) const
 }
 
 PixelRect
-ButtonPanel::VerticalRange(PixelRect rc, unsigned start, unsigned end)
+ButtonPanel::VerticalRange(PixelRect rc, unsigned start, unsigned end) noexcept
 {
   const unsigned n = end - start;
   assert(n > 0);
@@ -122,23 +109,31 @@ ButtonPanel::VerticalRange(PixelRect rc, unsigned start, unsigned end)
   const unsigned width = RangeMaxWidth(start, end);
   const unsigned total_height = rc.GetHeight();
   const unsigned max_height = n * Layout::GetMaximumControlHeight();
-  const unsigned row_height = std::min(total_height, max_height) / n;
+  /* Cap the stack so landscape left bars stay control-sized; only the
+     few leftover pixels from used_height / n go to the last button. */
+  const unsigned used_height = std::min(total_height, max_height);
 
-  PixelRect button_rc(rc.left, rc.top, rc.left + width, rc.top + row_height);
-  rc.left += width;
+  auto column_rc = rc.CutLeftSafe(width);
 
+  /* Proportional tops/bottoms keep every rect non-inverted even when
+     used_height < n (integer division would otherwise overrun). */
   for (unsigned i = start; i < end; ++i) {
-    buttons[i]->Move(button_rc);
+    const unsigned idx = i - start;
+    PixelRect button_rc = column_rc;
+    button_rc.top = column_rc.top + (int)(used_height * idx / n);
+    button_rc.bottom = column_rc.top + (int)(used_height * (idx + 1) / n);
+    if (button_rc.bottom <= button_rc.top)
+      button_rc.bottom = button_rc.top + 1;
 
-    button_rc.top = button_rc.bottom;
-    button_rc.bottom += row_height;
+    buttons[i]->Move(button_rc);
   }
 
   return rc;
 }
 
 PixelRect
-ButtonPanel::HorizontalRange(PixelRect rc, unsigned start, unsigned end)
+ButtonPanel::HorizontalRange(PixelRect rc,
+                             unsigned start, unsigned end) noexcept
 {
   const unsigned n = end - start;
   assert(n > 0);
@@ -146,43 +141,46 @@ ButtonPanel::HorizontalRange(PixelRect rc, unsigned start, unsigned end)
   const unsigned total_width = rc.GetWidth();
   const unsigned total_height = rc.GetHeight();
   const unsigned max_row_height = Layout::GetMaximumControlHeight();
-  const unsigned row_height = max_row_height < total_height / 2
-    ? max_row_height
-    : std::max(Layout::GetMinimumControlHeight(),
-               total_height / 2);
-  const unsigned width = total_width / n;
-  assert(width > 0);
+  const unsigned row_height = std::max(1u,
+    max_row_height < total_height / 2
+      ? max_row_height
+      : std::max(Layout::GetMinimumControlHeight(),
+                 total_height / 2));
+  auto row_rc = rc.CutBottomSafe(row_height);
 
-  PixelRect button_rc(rc.left, rc.bottom - row_height,
-                      rc.left + width, rc.bottom);
-  rc.bottom -= row_height;
-
+  /* Proportional left/right absorbs the total_width % n remainder into
+     later buttons (no empty strip) and avoids inverted rects. */
   for (unsigned i = start; i < end; ++i) {
-    buttons[i]->Move(button_rc);
+    const unsigned idx = i - start;
+    PixelRect button_rc = row_rc;
+    button_rc.left = row_rc.left + (int)(total_width * idx / n);
+    button_rc.right = row_rc.left + (int)(total_width * (idx + 1) / n);
+    if (button_rc.right <= button_rc.left)
+      button_rc.right = button_rc.left + 1;
 
-    button_rc.left = button_rc.right;
-    button_rc.right += width;
+    buttons[i]->Move(button_rc);
   }
 
   return rc;
 }
 
 PixelRect
-ButtonPanel::LeftLayout(PixelRect rc)
+ButtonPanel::LeftLayout(PixelRect rc) noexcept
 {
-  assert(!buttons.empty());
+  if (buttons.empty())
+    return rc;
 
   return VerticalRange(rc, 0, buttons.size());
 }
 
 PixelRect
-ButtonPanel::LeftLayout()
+ButtonPanel::LeftLayout() noexcept
 {
   return LeftLayout(parent.GetClientRect());
 }
 
 inline unsigned
-ButtonPanel::FitButtonRow(unsigned start, unsigned total_width) const
+ButtonPanel::FitButtonRow(unsigned start, unsigned total_width) const noexcept
 {
   const unsigned n_buttons = buttons.size();
   unsigned max_width = Width(start);
@@ -203,9 +201,10 @@ ButtonPanel::FitButtonRow(unsigned start, unsigned total_width) const
 }
 
 PixelRect
-ButtonPanel::BottomLayout(PixelRect rc)
+ButtonPanel::BottomLayout(PixelRect rc) noexcept
 {
-  assert(!buttons.empty());
+  if (buttons.empty())
+    return rc;
 
   const unsigned n_buttons = buttons.size();
   const unsigned total_width = rc.GetWidth();
@@ -222,7 +221,7 @@ ButtonPanel::BottomLayout(PixelRect rc)
     }
   };
 
-  StaticArray<Row, 8u> rows;
+  StaticArray<Row, ButtonPanel::MAX_BUTTONS> rows;
 
   for (unsigned i = 0; i < n_buttons;) {
     unsigned end = FitButtonRow(i, total_width);
@@ -273,27 +272,92 @@ ButtonPanel::BottomLayout(PixelRect rc)
 }
 
 PixelRect
-ButtonPanel::BottomLayout()
+ButtonPanel::BottomLayout() noexcept
 {
   return BottomLayout(parent.GetClientRect());
 }
 
 void
-ButtonPanel::ShowAll()
+ButtonPanel::ReselectToFirstEnabled() noexcept
+{
+  if (selected_index < 0)
+    return;
+
+  const auto is_usable = [this](unsigned i) {
+    return buttons[i]->IsVisible() && buttons[i]->IsEnabled();
+  };
+
+  if (selected_index < (int)buttons.size() &&
+      is_usable((unsigned)selected_index)) {
+    /* Keep or restore the highlight if it was cleared while this
+       action was briefly disabled. */
+    buttons[selected_index]->SetSelected(true);
+    return;
+  }
+
+  for (unsigned i = 0; i < buttons.size(); ++i) {
+    if (is_usable(i)) {
+      if (selected_index < (int)buttons.size() && selected_index >= 0)
+        buttons[selected_index]->SetSelected(false);
+      selected_index = (int)i;
+      buttons[selected_index]->SetSelected(true);
+      return;
+    }
+  }
+}
+
+void
+ButtonPanel::OnButtonGainedFocus(Button &b) noexcept
+{
+  if (selected_index < 0)
+    return;
+
+  unsigned i;
+  for (i = 0; i < buttons.size(); ++i) {
+    if (buttons[i] == &b)
+      break;
+  }
+  if (i >= buttons.size() || (int)i == selected_index)
+    return;
+
+  if (selected_index >= 0 && (unsigned)selected_index < buttons.size())
+    buttons[selected_index]->SetSelected(false);
+
+  selected_index = (int)i;
+  b.SetSelected(true);
+}
+
+void
+ButtonPanel::ShowAll() noexcept
 {
   for (auto i : buttons)
     i->Show();
 }
 
 void
-ButtonPanel::HideAll()
+ButtonPanel::HideAll() noexcept
 {
   for (auto i : buttons)
     i->Hide();
 }
 
 void
-ButtonPanel::SetSelectedIndex(unsigned _index)
+ButtonPanel::Raise() noexcept
+{
+  for (auto i : buttons)
+    i->BringToTop();
+}
+
+bool
+ButtonPanel::HasFocus() const noexcept
+{
+  return std::any_of(buttons.begin(), buttons.end(), [](const Button *b){
+    return b->HasFocus();
+  });
+}
+
+void
+ButtonPanel::SetSelectedIndex(unsigned _index) noexcept
 {
   assert(selected_index >= 0);
   assert(_index < buttons.size());
@@ -307,7 +371,7 @@ ButtonPanel::SetSelectedIndex(unsigned _index)
 }
 
 bool
-ButtonPanel::SelectPrevious()
+ButtonPanel::SelectPrevious() noexcept
 {
   for (int i = selected_index - 1; i >= 0; --i) {
     const auto &button = *buttons[i];
@@ -321,7 +385,7 @@ ButtonPanel::SelectPrevious()
 }
 
 bool
-ButtonPanel::SelectNext()
+ButtonPanel::SelectNext() noexcept
 {
   for (unsigned i = selected_index + 1, n = buttons.size();
        i < n; ++i) {
@@ -336,7 +400,7 @@ ButtonPanel::SelectNext()
 }
 
 bool
-ButtonPanel::KeyPress(unsigned key_code)
+ButtonPanel::KeyPress(unsigned key_code) noexcept
 {
   assert(key_code != 0);
 
@@ -348,7 +412,7 @@ ButtonPanel::KeyPress(unsigned key_code)
     }
   }
 
-  if (selected_index >= 0 && !HasPointer()) {
+  if (selected_index >= 0) {
     if (key_code == KEY_LEFT) {
       SelectPrevious();
       return true;
@@ -357,8 +421,10 @@ ButtonPanel::KeyPress(unsigned key_code)
       return true;
     } else if (key_code == KEY_RETURN) {
       auto &button = *buttons[selected_index];
-      if (button.IsVisible() && button.IsEnabled())
+      if (button.IsVisible() && button.IsEnabled()) {
         button.Click();
+        return true;
+      }
     }
   }
 

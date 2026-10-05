@@ -11,8 +11,7 @@
  * you need to add an include path to the dir containing (!!) the ./zzip/ dir
  */
 
-#ifndef _ZZIP_ZZIP_H /* zziplib.h */
-#define _ZZIP_ZZIP_H
+#pragma once
 
 #include <zzip/types.h>
 
@@ -163,7 +162,7 @@ _zzip_export
 void	 	zzip_seekdir(ZZIP_DIR * dir, zzip_off_t offset);
 
 /*
- * 'opening', 'closing' and reading invidual files in zip archive.
+ * 'opening', 'closing' and reading individual files in zip archive.
  * zzip/file.c
  */
 _zzip_export
@@ -180,6 +179,10 @@ int	 	zzip_close(ZZIP_FILE * fp);
 _zzip_export
 zzip_ssize_t	zzip_read(ZZIP_FILE * fp, void * buf, zzip_size_t len);
 
+/*
+ * Read data from the specified offset.  Depending on the
+ * implementation, this may or may not move the file pointer.
+ */
 _zzip_export
 zzip_size_t
 zzip_pread(ZZIP_FILE *file, void *ptr, zzip_size_t size, zzip_off_t offset);
@@ -257,8 +260,6 @@ ZZIP_DIR *  zzip_dir_open_ext_io(zzip_char_t* filename,
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* _ZZIPLIB_H */
 
 /* 
  * Local variables:

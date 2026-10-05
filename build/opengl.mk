@@ -1,7 +1,6 @@
 ifeq ($(TARGET),ANDROID)
 # Android uses OpenGL/ES 2.0
 OPENGL = y
-GLES2 = y
 
 # the Kobo doesn't have OpenGL support
 else ifeq ($(TARGET_IS_KOBO),y)
@@ -10,44 +9,54 @@ OPENGL = n
 # the Raspberry Pi uses EGL + GL/ES
 else ifeq ($(TARGET_IS_PI),y)
 OPENGL ?= y
-GLES2 ?= y
 
 # iOS uses GL/ES 2.0
 else ifeq ($(TARGET_IS_IOS),y)
 OPENGL ?= y
-GLES2 ?= y
+
+# macOS uses ANGLE (OpenGL ES via Metal backend)
+else ifeq ($(TARGET_IS_DARWIN),y)
+OPENGL ?= y
 
 # the Cubieboard uses EGL + GL/ES
-else ifeq ($(TARGET_HAS_MALI),y)
+else ifeq ($(TARGET_IS_CUBIE),y)
 OPENGL ?= y
-GLES2 ?= y
-# UNIX/Linux defaults to OpenGL
+
+# UNIX/Linux defaults to OpenGL ES
 else ifeq ($(TARGET),UNIX)
 OPENGL ?= y
 
 else
-# Windows defaults to GDI (no OpenGL)
+# OpenGL Windows flavors set OPENGL=y in targets.mk first.
+# Bare TARGET=PC leaves OpenGL off and is rejected later.
 OPENGL ?= n
 endif
 
-GLES2 ?= n
-
 ifeq ($(OPENGL),y)
+# OpenGL is always OpenGL ES 2.0 (Mesa, ANGLE, or native ES).
 OPENGL_CPPFLAGS = -DENABLE_OPENGL
 
-ifeq ($(GLES2),y)
-OPENGL_CPPFLAGS += -DHAVE_GLES -DHAVE_GLES2
+ifeq ($(TARGET_IS_DARWIN),y)
+# Use ANGLE on macOS (not iOS)
 ifeq ($(TARGET_IS_IOS),y)
 OPENGL_LDLIBS = -framework OpenGLES
-else ifeq ($(TARGET_IS_PI),y)
-OPENGL_LDLIBS = -lbrcmGLESv2 -ldl
+else
+# Include ANGLE configuration
+include $(topdir)/build/angle.mk
+OPENGL_CPPFLAGS += $(ANGLE_CPPFLAGS)
+OPENGL_LDLIBS = $(ANGLE_LDLIBS)
+endif
+else ifeq ($(HAVE_WIN32),y)
+ifeq ($(USE_ANGLE),y)
+# Include ANGLE configuration
+include $(topdir)/build/angle.mk
+OPENGL_CPPFLAGS += $(ANGLE_CPPFLAGS)
+OPENGL_LDLIBS = $(ANGLE_LDLIBS)
+else
+OPENGL_LDLIBS = -lGLESv2
+endif
 else
 OPENGL_LDLIBS = -lGLESv2 -ldl
-endif
-else ifeq ($(TARGET_IS_DARWIN),y)
-OPENGL_LDLIBS = -framework OpenGL
-else
-OPENGL_LDLIBS = -lGL
 endif
 
 OPENGL_CPPFLAGS += $(GLM_CPPFLAGS)

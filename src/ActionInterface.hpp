@@ -1,134 +1,238 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ACTION_INTERFACE_HPP
-#define XCSOAR_ACTION_INTERFACE_HPP
+#pragma once
 
 #include "Interface.hpp"
+#include "Atmosphere/Pressure.hpp"
 
 /** 
  * Class to hold data/methods accessible by interface subsystems
  * that can perform actions
  */
 namespace ActionInterface {
-  using namespace CommonInterface;
 
-  /**
-   * Configure a new Ballast setting in #ComputerSettings, and
-   * forward it to all XCSoar modules that want it.
-   *
-   * @param to_devices send the new settings to all devices?
-   */
-  void SetBallast(double ballast, bool to_devices=true);
+using namespace CommonInterface;
 
-  /**
-   * Configure a new Bugs setting in #ComputerSettings, and
-   * forward it to all XCSoar modules that want it.
-   *
-   * @param to_devices send the new settings to all devices?
-   */
-  void SetBugs(double mc, bool to_devices=true);
+/**
+ * Configure a new Ballast setting in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param ballast_litres the new ballast value [litres]
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetBallastLitres(double ballast_litres, bool to_devices=true) noexcept;
 
-  /**
-   * Configure a new MacCready setting in #ComputerSettings, and
-   * forward it to all XCSoar modules that want it.
-   *
-   * @param to_devices send the new settings to all devices?
-   */
-  void SetMacCready(double mc, bool to_devices=true);
+/**
+ * Configure a new Ballast setting as a fraction in #ComputerSettings,
+ * and forward it to all XCSoar modules that want it.
+ *
+ * @param fraction the new ballast fraction [0..1]
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetBallastFraction(double fraction, bool to_devices=true) noexcept;
 
-  /**
-   * Configure a new MacCready setting in #ComputerSettings, and
-   * forward it to all XCSoar modules that want it. Also switch
-   * to manual MC mode.
-   *
-   * @param to_devices send the new settings to all devices?
-   */
-  void SetManualMacCready(double mc, bool to_devices=true);
+/**
+ * Configure a new Bugs setting in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetBugs(double mc, bool to_devices=true) noexcept;
 
-  /**
-   * Same as SetManualMacCready(), but adds the given value to the
-   * current MacCready setting.  It performs bounds checking.
-   */
-  void OffsetManualMacCready(double offset, bool to_devices=true);
+/**
+ * Configure a new MacCready setting in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetMacCready(double mc, bool to_devices=true) noexcept;
 
-  /**
-   * Call this after MapSettings has been modified with
-   * SetMapSettings().  It sends the new values to all sub systems,
-   * and optionally forces a redraw.
-   *
-   * @param trigger_draw triggers a map redraw immediately if true,
-   * rather than waiting for eventual redraw
-   */
-  void SendMapSettings(const bool trigger_draw = false);
+/**
+ * Configure a new Crew Mass setting in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param crew_mass the new crew mass value [kg]
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetCrewMass(double crew_mass, bool to_devices=true) noexcept;
 
-  /**
-   * Call this after #UIState has been modified with SetUIState().  It
-   * sends the new values to all sub systems, and optionally forces a
-   * redraw.
-   *
-   * @param trigger_draw triggers a map redraw immediately if true,
-   * rather than waiting for eventual redraw
-   */
-  void SendUIState(const bool trigger_draw);
+/**
+ * Set the empty mass (empty weight) of the glider.
+ *
+ * @param empty_mass the new empty mass value [kg]
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetEmptyMass(double empty_mass, bool to_devices=true) noexcept;
 
-  /**
-   * Update UIState::display_mode and other attributes related to it.
-   * You may have to call SendUIState() after this.
-   */
-  void UpdateDisplayMode();
+/**
+ * Configure a new MacCready setting in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it. Also switch
+ * to manual MC mode.
+ *
+ * @param to_devices send the new settings to all devices?
+ */
+void
+SetManualMacCready(double mc, bool to_devices=true) noexcept;
 
-  /**
-   * Call this after UIState has been modified (via SetUIState() or
-   * UpdateDisplayMode()).  It sends the new values to all subsystems,
-   * and redraws relevant parts of the screen.
-   */
-  void SendUIState();
-};
+/**
+ * Same as SetManualMacCready(), but adds the given value to the
+ * current MacCready setting.  It performs bounds checking.
+ */
+void
+OffsetManualMacCready(double offset, bool to_devices=true) noexcept;
 
-/** 
+/**
+ * Call this after MapSettings has been modified with
+ * SetMapSettings().  It sends the new values to all sub systems,
+ * and optionally forces a redraw.
+ *
+ * @param trigger_draw triggers a map redraw immediately if true,
+ * rather than waiting for eventual redraw
+ */
+void
+SendMapSettings(const bool trigger_draw = false) noexcept;
+
+/**
+ * Call this after #UIState has been modified with SetUIState().  It
+ * sends the new values to all sub systems, and optionally forces a
+ * redraw.
+ *
+ * @param trigger_draw triggers a map redraw immediately if true,
+ * rather than waiting for eventual redraw
+ */
+void
+SendUIState(const bool trigger_draw) noexcept;
+
+/**
+ * Update UIState::display_mode and other attributes related to it.
+ * You may have to call SendUIState() after this.
+ */
+void
+UpdateDisplayMode() noexcept;
+
+/**
+ * Call this after UIState has been modified (via SetUIState() or
+ * UpdateDisplayMode()).  It sends the new values to all subsystems,
+ * and redraws relevant parts of the screen.
+ */
+void
+SendUIState() noexcept;
+
+/**
+ * Like SendUIState(), but runs on the next event-loop iteration.
+ */
+void
+ScheduleSendUIState() noexcept;
+
+/**
+ * Update the Active Radio Frequency in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param to_devices send the new setting to all devices?
+ */
+void
+SetActiveFrequency(RadioFrequency freq, const char *freq_name,
+                   bool to_devices=true) noexcept;
+
+/**
+ * Update the Standby Radio Frequency in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param to_devices send the new setting to all devices?
+ */
+void
+SetStandbyFrequency(RadioFrequency freq, const char *freq_name,
+                    bool to_devices=true) noexcept;
+
+/**
+ * Offset the Active Radio Frequency in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ */
+void
+OffsetActiveFrequency(double offset_khz, bool to_devices=true) noexcept;
+
+/**
+ * Offset the Active Radio Frequency in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ */
+void
+OffsetStandbyFrequency(double offset_khz, bool to_devices=true) noexcept;
+
+/**
+ * Exchange the Active and Standby Radio Frequencies in #ComputerSettings, and
+ * forward them to all XCSoar modules that want it.
+ */
+void
+ExchangeRadioFrequencies(bool to_devices=true) noexcept;
+
+/**
+ * Update the Transponder Code in #ComputerSettings, and
+ * forward it to all XCSoar modules that want it.
+ *
+ * @param to_devices send the new setting to all devices?
+ */
+void
+SetTransponderCode(TransponderCode code,
+                   bool to_devices=true) noexcept;
+
+/**
+ * Update the Transponder Mode in #ComputerSettings.
+ */
+void
+SetTransponderMode(TransponderMode mode) noexcept;
+
+/**
+ * Configure a new QNH (atmospheric pressure) setting in #ComputerSettings,
+ * and forward it to all XCSoar modules that want it.
+ *
+ * @param qnh the atmospheric pressure (QNH)
+ * @param to_devices send the new setting to all devices?
+ */
+void
+SetQNH(AtmosphericPressure qnh, bool to_devices=true) noexcept;
+
+/**
+ * Place the aircraft at home (or the terrain center) when GPS is not
+ * yet available.  No-op while flying.
+ */
+void
+SetStartupLocation() noexcept;
+
+} // namespace ActionInterface
+
+/**
  * Class to hold data/methods accessible by interface subsystems
  * of main program
  */
 namespace XCSoarInterface {
-  using namespace ActionInterface;
+using namespace ActionInterface;
 
-  /**
-   * Receive GPS data (#MoreData) from the DeviceBlackboard.
-   */
-  void ReceiveGPS();
+/**
+ * Receive GPS data (#MoreData) from the DeviceBlackboard.
+ */
+void
+ReceiveGPS() noexcept;
 
-  /**
-   * Receive calculated data (#DerivedInfo) from the DeviceBlackboard.
-   */
-  void ReceiveCalculated();
+/**
+ * Receive calculated data (#DerivedInfo) from the DeviceBlackboard.
+ */
+void
+ReceiveCalculated() noexcept;
 
-  void ExchangeBlackboard();
+void
+ExchangeBlackboard() noexcept;
 
-  /**
-   * Copy data from and to the DeviceBlackboard.
-   */
-  void ExchangeDeviceBlackboard();
-};
+/**
+ * Copy data from and to the DeviceBlackboard.
+ */
+void
+ExchangeDeviceBlackboard() noexcept;
 
-#endif
+} // namespace XCSoarInterface

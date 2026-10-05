@@ -1,166 +1,147 @@
-Index: boost_1_64_0/boost/math/policies/error_handling.hpp
+Index: boost_1_92_0/boost/math/policies/error_handling.hpp
 ===================================================================
---- boost_1_64_0.orig/boost/math/policies/error_handling.hpp
-+++ boost_1_64_0/boost/math/policies/error_handling.hpp
-@@ -9,7 +9,7 @@
- #define BOOST_MATH_POLICY_ERROR_HANDLING_HPP
- 
- #include <stdexcept>
--#include <iomanip>
-+//#include <iomanip>
- #include <string>
+--- boost_1_92_0.orig/boost/math/policies/error_handling.hpp
++++ boost_1_92_0/boost/math/policies/error_handling.hpp
+@@ -27,8 +27,8 @@
+ #include <cstdint>
  #include <cstring>
- #include <typeinfo>
-@@ -32,7 +32,7 @@
- // Note that this only occurs when the compiler can deduce code is unreachable,
- // for example when policy macros are used to ignore errors rather than throw.
- #endif
+ #ifndef BOOST_MATH_NO_EXCEPTIONS
+-#include <iomanip>
 -#include <sstream>
++//#include <iomanip>
 +//#include <sstream>
+ #include <stdexcept>
+ #endif
+ #include <string>
+@@ -97,6 +97,7 @@ namespace detail
  
- namespace boost{ namespace math{
- 
-@@ -73,6 +73,7 @@ T user_indeterminate_result_error(const
- namespace detail
- {
- 
+ #ifndef BOOST_MATH_NO_EXCEPTIONS
+ // Only used to build exception messages; relies on <sstream>
 +#if 0
  template <class T>
- std::string prec_format(const T& val)
+ inline std::string prec_format(const T& val)
  {
-@@ -86,6 +87,7 @@ std::string prec_format(const T& val)
-    ss << val;
-    return ss.str();
+@@ -115,6 +116,7 @@ inline std::string prec_format(const T&
+ 
+    return strm.str();
  }
 +#endif
  
- inline void replace_all_in_string(std::string& result, const char* what, const char* with)
- {
-@@ -120,6 +122,7 @@ inline const char* name_of<BOOST_MATH_FL
+ #ifdef BOOST_MATH_USE_CHARCONV_FOR_CONVERSION
+ 
+@@ -190,6 +192,7 @@ void raise_error(const char* pfunction,
+   BOOST_MATH_THROW_EXCEPTION(E(msg))
  }
- #endif
  
 +#if 0
  template <class E, class T>
- void raise_error(const char* pfunction, const char* message)
+ void raise_error(const char* pfunction, const char* pmessage, const T& val)
  {
-@@ -181,6 +184,7 @@ inline T raise_domain_error(
-    // we never get here:
-    return std::numeric_limits<T>::quiet_NaN();
+@@ -236,6 +239,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_do
+    return boost::math::numeric_limits<T>::quiet_NaN();
+ #endif
  }
 +#endif
  
  template <class T>
- inline BOOST_MATH_CONSTEXPR T raise_domain_error(
-@@ -217,6 +221,7 @@ inline T raise_domain_error(
-    return user_domain_error(function, message, val);
+ BOOST_MATH_GPU_ENABLED constexpr T raise_domain_error(
+@@ -249,6 +253,7 @@ BOOST_MATH_GPU_ENABLED constexpr T raise
+    return boost::math::numeric_limits<T>::quiet_NaN();
  }
  
 +#if 0
  template <class T>
- inline T raise_pole_error(
-            const char* function,
-@@ -226,6 +231,7 @@ inline T raise_pole_error(
- {
+ BOOST_MATH_GPU_ENABLED inline T raise_domain_error(
+            const char* ,
+@@ -285,6 +290,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_po
     return boost::math::policies::detail::raise_domain_error(function, message, val,  ::boost::math::policies::domain_error< ::boost::math::policies::throw_on_error>());
+ #endif
  }
 +#endif
  
  template <class T>
- inline BOOST_MATH_CONSTEXPR T raise_pole_error(
-@@ -258,6 +264,7 @@ inline T raise_pole_error(
+ BOOST_MATH_GPU_ENABLED constexpr T raise_pole_error(
+@@ -316,6 +322,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_po
+    return user_pole_error(function, message, val);
  }
- 
  
 +#if 0
  template <class T>
- inline T raise_overflow_error(
+ BOOST_MATH_GPU_ENABLED inline T raise_overflow_error(
             const char* function,
-@@ -280,6 +287,7 @@ inline T raise_overflow_error(
-    // We should never get here:
-    return std::numeric_limits<T>::has_infinity ? std::numeric_limits<T>::infinity() : boost::math::tools::max_value<T>();
+@@ -330,7 +337,9 @@ BOOST_MATH_GPU_ENABLED inline T raise_ov
+    return boost::math::numeric_limits<T>::has_infinity ? boost::math::numeric_limits<T>::infinity() : boost::math::tools::max_value<T>();
+ #endif
  }
 +#endif
  
- template <class T>
- inline BOOST_MATH_CONSTEXPR T raise_overflow_error(
-@@ -352,6 +360,7 @@ inline T raise_overflow_error(
-    return user_overflow_error(function, m.c_str(), std::numeric_limits<T>::infinity());
- }
- 
 +#if 0
  template <class T>
- inline T raise_underflow_error(
+ BOOST_MATH_GPU_ENABLED inline T raise_overflow_error(
             const char* function,
-@@ -362,6 +371,7 @@ inline T raise_underflow_error(
-    // We should never get here:
-    return 0;
+@@ -346,7 +355,9 @@ BOOST_MATH_GPU_ENABLED inline T raise_ov
+    return boost::math::numeric_limits<T>::has_infinity ? boost::math::numeric_limits<T>::infinity() : boost::math::tools::max_value<T>();
+ #endif
  }
 +#endif
  
- template <class T>
- inline BOOST_MATH_CONSTEXPR T raise_underflow_error(
-@@ -395,6 +405,7 @@ inline T raise_underflow_error(
-    return user_underflow_error(function, message, T(0));
- }
- 
 +#if 0
  template <class T>
- inline T raise_denorm_error(
-            const char* function,
-@@ -406,6 +417,7 @@ inline T raise_denorm_error(
-    // we never get here:
+ BOOST_MATH_GPU_ENABLED constexpr T raise_overflow_error(
+            const char* ,
+@@ -443,6 +454,7 @@ BOOST_MATH_GPU_ENABLED constexpr T raise
+    // to be ignored so here we go anyway:
     return T(0);
  }
 +#endif
  
  template <class T>
- inline BOOST_MATH_CONSTEXPR T raise_denorm_error(
-@@ -442,6 +454,7 @@ inline T raise_denorm_error(
+ BOOST_MATH_GPU_ENABLED inline T raise_underflow_error(
+@@ -516,6 +528,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_de
     return user_denorm_error(function, message, val);
  }
  
 +#if 0
  template <class T>
- inline T raise_evaluation_error(
+ BOOST_MATH_GPU_ENABLED inline T raise_evaluation_error(
             const char* function,
-@@ -453,6 +466,7 @@ inline T raise_evaluation_error(
-    // we never get here:
+@@ -531,6 +544,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_ev
     return T(0);
+ #endif
  }
 +#endif
  
  template <class T>
- inline BOOST_MATH_CONSTEXPR T raise_evaluation_error(
-@@ -489,6 +503,7 @@ inline T raise_evaluation_error(
+ BOOST_MATH_GPU_ENABLED constexpr T raise_evaluation_error(
+@@ -567,6 +581,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_ev
     return user_evaluation_error(function, message, val);
  }
  
 +#if 0
  template <class T, class TargetType>
- inline TargetType raise_rounding_error(
+ BOOST_MATH_GPU_ENABLED inline TargetType raise_rounding_error(
             const char* function,
-@@ -501,6 +516,7 @@ inline TargetType raise_rounding_error(
-    // we never get here:
+@@ -583,6 +598,7 @@ BOOST_MATH_GPU_ENABLED inline TargetType
     return TargetType(0);
+ #endif
  }
 +#endif
  
  template <class T, class TargetType>
- inline BOOST_MATH_CONSTEXPR TargetType raise_rounding_error(
-@@ -556,6 +572,7 @@ inline TargetType raise_rounding_error(
+ BOOST_MATH_GPU_ENABLED constexpr TargetType raise_rounding_error(
+@@ -623,6 +639,7 @@ BOOST_MATH_GPU_ENABLED inline TargetType
     return user_rounding_error(function, message, val, t);
  }
  
 +#if 0
  template <class T, class R>
- inline T raise_indeterminate_result_error(
+ BOOST_MATH_GPU_ENABLED inline T raise_indeterminate_result_error(
             const char* function,
-@@ -568,6 +585,7 @@ inline T raise_indeterminate_result_erro
-    // we never get here:
-    return std::numeric_limits<T>::quiet_NaN();
+@@ -639,6 +656,7 @@ BOOST_MATH_GPU_ENABLED inline T raise_in
+    return boost::math::numeric_limits<T>::quiet_NaN();
+ #endif
  }
 +#endif
  
  template <class T, class R>
- inline BOOST_MATH_CONSTEXPR T raise_indeterminate_result_error(
+ BOOST_MATH_GPU_ENABLED inline constexpr T raise_indeterminate_result_error(

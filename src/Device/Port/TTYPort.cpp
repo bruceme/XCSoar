@@ -1,65 +1,296 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+#ifdef __linux__
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#endif
 
 #include "TTYPort.hpp"
+#include "Device/Error.hpp"
 #include "Asset.hpp"
-#include "OS/FileDescriptor.hxx"
-#include "OS/Error.hxx"
-#include "IO/Async/AsioUtil.hpp"
-#include "Util/StringFormat.hpp"
+#include "lib/fmt/SystemError.hxx"
+#include "io/UniqueFileDescriptor.hxx"
+#include "system/Error.hxx"
+#include "system/TTYDescriptor.hxx"
+#include "system/FileUtil.hpp"
+#include "event/Call.hxx"
+#include "util/StringFormat.hpp"
 
 #include <system_error>
 #include <boost/system/system_error.hpp>
 
 #include <sys/stat.h>
 #include <termios.h>
+#if defined(__linux__) && !defined(ANDROID)
+#include <sys/ioctl.h>
+/* For TIOCSSERIAL method (works on USB-to-serial drivers like FTDI).
+   Android uses USB-serial via its Java USB API, not TIOCSSERIAL. */
+#ifndef TIOCGSERIAL
+#define TIOCGSERIAL 0x541E
+#endif
+#ifndef TIOCSSERIAL
+#define TIOCSSERIAL 0x541F
+#endif
+#ifndef ASYNC_SPD_CUST
+#define ASYNC_SPD_CUST 0x0030
+#endif
+#ifndef ASYNC_SPD_MASK
+#define ASYNC_SPD_MASK 0x1030
+#endif
+#ifndef __LINUX_SERIAL_H
+struct serial_struct {
+  int type;
+  int line;
+  unsigned int port;
+  int irq;
+  int flags;
+  int xmit_fifo_size;
+  int custom_divisor;
+  int baud_base;
+  unsigned short close_delay;
+  char io_type;
+  char reserved_char[1];
+  int hub6;
+  unsigned short closing_wait;
+  unsigned short closing_wait2;
+  unsigned char *iomem_base;
+  unsigned short iomem_reg_shift;
+  unsigned int port_high;
+  unsigned long iomap_base;
+};
+#endif
+#endif
 
-#include <assert.h>
-#include <tchar.h>
+#include <cassert>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <windef.h> // for MAX_PATH
 
-TTYPort::TTYPort(boost::asio::io_service &io_service,
+static constexpr unsigned
+speed_t_to_baud_rate(speed_t speed) noexcept
+{
+  switch (speed) {
+  case B1200:
+    return 1200;
+
+  case B2400:
+    return 2400;
+
+  case B4800:
+    return 4800;
+
+  case B9600:
+    return 9600;
+
+  case B19200:
+    return 19200;
+
+  case B38400:
+    return 38400;
+
+  case B57600:
+    return 57600;
+
+  case B115200:
+    return 115200;
+
+  case B230400:
+    return 230400;
+
+#ifdef B460800
+  case B460800:
+    return 460800;
+#endif
+
+#ifdef B500000
+  case B500000:
+    return 500000;
+#endif
+
+#ifdef B576000
+  case B576000:
+    return 576000;
+#endif
+
+#ifdef B921600
+  case B921600:
+    return 921600;
+#endif
+
+#ifdef B1000000
+  case B1000000:
+    return 1000000;
+#endif
+
+  default:
+    return 0;
+  }
+}
+
+/**
+ * Convert a numeric baud rate to a termios.h constant (B*).  Returns
+ * B0 on error.
+ */
+static constexpr speed_t
+baud_rate_to_speed_t(unsigned baud_rate) noexcept
+{
+  switch (baud_rate) {
+  case 1200:
+    return B1200;
+
+  case 2400:
+    return B2400;
+
+  case 4800:
+    return B4800;
+
+  case 9600:
+    return B9600;
+
+  case 19200:
+    return B19200;
+
+  case 38400:
+    return B38400;
+
+  case 57600:
+    return B57600;
+
+  case 115200:
+    return B115200;
+
+  case 230400:
+    return B230400;
+
+#ifdef B460800
+  case 460800:
+    return B460800;
+#endif
+
+#ifdef B500000
+  case 500000:
+    return B500000;
+#endif
+
+#ifdef B576000
+  case 576000:
+    return B576000;
+#endif
+
+#ifdef B921600
+  case 921600:
+    return B921600;
+#endif
+
+#ifdef B1000000
+  case 1000000:
+    return B1000000;
+#endif
+
+  default:
+    return B0;
+  }
+}
+
+static void
+SetTermiosRaw(TTYDescriptor tty, speed_t speed)
+{
+  struct termios attr;
+  if (!tty.GetAttr(attr))
+    throw MakeErrno("tcgetattr() failed");
+
+  attr.c_iflag &= ~(BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+  attr.c_iflag |= (IGNPAR | IGNBRK);
+  attr.c_oflag &= ~OPOST;
+  attr.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+  attr.c_cflag &= ~(CSIZE | PARENB | CRTSCTS);
+  attr.c_cflag |= (CS8 | CLOCAL);
+  attr.c_cc[VMIN] = 0;
+  attr.c_cc[VTIME] = 1;
+  cfsetospeed(&attr, speed);
+  cfsetispeed(&attr, speed);
+  if (!tty.SetAttr(TCSANOW, attr))
+    throw MakeErrno("tcsetattr() failed");
+}
+
+static void
+SetBaudrate(TTYDescriptor tty, unsigned baud_rate)
+{
+  assert(tty.IsDefined());
+
+  speed_t speed = baud_rate_to_speed_t(baud_rate);
+
+  if (speed == B0 && baud_rate > 230400) {
+#if defined(__linux__) && !defined(ANDROID)
+    struct serial_struct serinfo;
+    if (ioctl(tty.Get(), TIOCGSERIAL, &serinfo) < 0)
+      throw MakeErrno("TIOCGSERIAL failed");
+
+    SetTermiosRaw(tty, B38400);
+
+    if (serinfo.baud_base <= 0)
+      throw std::runtime_error("Serial port does not report baud_base");
+
+    serinfo.flags = (serinfo.flags & ~ASYNC_SPD_MASK) | ASYNC_SPD_CUST;
+    serinfo.custom_divisor = (serinfo.baud_base + (baud_rate / 2)) / baud_rate;
+    if (serinfo.custom_divisor < 1)
+      serinfo.custom_divisor = 1;
+    if (ioctl(tty.Get(), TIOCSSERIAL, &serinfo) < 0)
+      throw MakeErrno("TIOCSSERIAL failed");
+    return;
+#else
+    throw std::runtime_error("Custom baud rates above 230400 not supported on this platform");
+#endif
+  }
+
+  if (speed == B0)
+    throw std::runtime_error("Unsupported baud rate");
+
+#if defined(__linux__) && !defined(ANDROID)
+  /* Clear ASYNC_SPD_CUST flag when switching to a standard baud rate,
+     so GetBaudrate() won't return stale custom values */
+  struct serial_struct serinfo;
+  if (ioctl(tty.Get(), TIOCGSERIAL, &serinfo) == 0 &&
+      (serinfo.flags & ASYNC_SPD_MASK) == ASYNC_SPD_CUST) {
+    serinfo.flags &= ~ASYNC_SPD_MASK;
+    ioctl(tty.Get(), TIOCSSERIAL, &serinfo);
+  }
+#endif
+
+  SetTermiosRaw(tty, speed);
+}
+
+static UniqueFileDescriptor
+OpenTTY(const char *path, unsigned baud_rate)
+{
+  UniqueFileDescriptor fd;
+  if (!fd.OpenNonBlocking(path))
+    throw FmtErrno("Failed to open {}", path);
+
+  const TTYDescriptor tty(fd);
+  SetBaudrate(tty, baud_rate);
+  return fd;
+}
+
+TTYPort::TTYPort(EventLoop &event_loop,
                  PortListener *_listener, DataHandler &_handler)
   :BufferedPort(_listener, _handler),
-   serial_port(io_service)
+   socket(event_loop, BIND_THIS_METHOD(OnSocketReady))
 {
 }
 
-TTYPort::~TTYPort()
+TTYPort::~TTYPort() noexcept
 {
-  BufferedPort::BeginClose();
-
-  if (serial_port.is_open())
-    CancelWait(serial_port);
-
-  BufferedPort::EndClose();
+  BlockingCall(GetEventLoop(), [this](){
+    socket.Close();
+  });
 }
 
 PortState
-TTYPort::GetState() const
+TTYPort::GetState() const noexcept
 {
   return valid.load(std::memory_order_relaxed)
     ? PortState::READY
@@ -69,97 +300,24 @@ TTYPort::GetState() const
 bool
 TTYPort::Drain()
 {
-  return tcdrain(serial_port.native_handle()) == 0;
+  const TTYDescriptor tty(socket.GetFileDescriptor());
+  return tty.Drain();
 }
 
-#ifndef __APPLE__
-gcc_pure
-static bool
-IsCharDev(const char *path)
+void
+TTYPort::Open(const char *path, unsigned baud_rate)
 {
-  struct stat st;
-  return stat(path, &st) == 0 && S_ISCHR(st.st_mode);
-}
-#endif
+  auto fd = OpenTTY(path, baud_rate);
 
-bool
-TTYPort::Open(const TCHAR *path, unsigned baud_rate)
-{
-#ifndef __APPLE__
-  if (IsAndroid() && IsCharDev(path)) {
-    /* attempt to give the XCSoar process permissions to access the
-       USB serial adapter; this is mostly relevant to the Nook */
-    TCHAR command[MAX_PATH];
-    StringFormat(command, MAX_PATH, "su -c 'chmod 666 %s'", path);
-    system(command);
-  }
-#endif
+  socket.Open(fd.Release());
 
-  boost::system::error_code ec;
-  serial_port.open(path, ec);
-  if (ec) {
-    char error_msg[MAX_PATH + 16];
-    StringFormat(error_msg, sizeof(error_msg), "Failed to open %s", path);
-    throw boost::system::system_error(ec);
-  }
-
-  if (!SetBaudrate(baud_rate))
-    return false;
-
-  serial_port.set_option(boost::asio::serial_port_base::parity(
-                             boost::asio::serial_port_base::parity::none),
-                         ec);
-  if (ec)
-    return false;
-
-  serial_port.set_option(boost::asio::serial_port_base::character_size(
-                             boost::asio::serial_port_base::character_size(8)),
-                         ec);
-  if (ec)
-    return false;
-
-  serial_port.set_option(boost::asio::serial_port_base::stop_bits(
-                             boost::asio::serial_port_base::stop_bits::one),
-                         ec);
-  if (ec)
-    return false;
-
-  serial_port.set_option(boost::asio::serial_port_base::flow_control(
-                             boost::asio::serial_port_base::flow_control::none),
-                         ec);
-  if (ec)
-    return false;
-
-  class
-  {
-  public:
-    boost::system::error_code store(
-        termios& attr, boost::system::error_code& ec) const {
-      /* The IGNBRK flag is explicitly cleared by boost::asio::serial_port, and
-         it offers no built-in option to change this.
-         This flag is needed for some setups, to avoid receiving unwanted '\0'
-         charachters, which cannot be detected by weak checksum algorithms. */
-      attr.c_iflag |= IGNBRK;
-
-      /* boost::asio::serial_port leaves the VMIN and VTIME parameters
-         unintialised, which can lead to undesired behaviour. */
-      attr.c_cc[VMIN] = 1;
-      attr.c_cc[VTIME] = 0;
-
-      ec = boost::system::error_code();
-      return ec;
-    }
-  } custom_options;
-  serial_port.set_option(custom_options, ec);
-  if (ec)
-    return false;
+  BlockingCall(GetEventLoop(), [this](){
+    socket.ScheduleRead();
+  });
 
   valid.store(true, std::memory_order_relaxed);
 
-  AsyncRead();
-
   StateChanged();
-  return true;
 }
 
 const char *
@@ -167,125 +325,142 @@ TTYPort::OpenPseudo()
 {
   const char *path = "/dev/ptmx";
 
-  FileDescriptor fd;
+  UniqueFileDescriptor fd;
   if (!fd.OpenNonBlocking(path))
-    throw FormatErrno("Failed to open %s", path);
+    throw FmtErrno("Failed to open {}", path);
 
-  serial_port.assign(fd.Get());
+  const TTYDescriptor tty(fd);
+  if (!tty.Unlock())
+    throw FmtErrno("unlockpt('{}') failed", path);
 
-  if (unlockpt(serial_port.native_handle()) < 0)
-    throw FormatErrno("unlockpt('%s') failed", path);
+  socket.Open(fd.Release());
 
   valid.store(true, std::memory_order_relaxed);
 
-  AsyncRead();
+  BlockingCall(GetEventLoop(), [this](){
+    socket.ScheduleRead();
+  });
 
   StateChanged();
-  return ptsname(serial_port.native_handle());
+  return tty.GetSlaveName();
 }
 
 void
 TTYPort::Flush()
 {
+  assert(socket.IsDefined());
+
   if (!valid.load(std::memory_order_relaxed))
     return;
 
-  tcflush(serial_port.native_handle(), TCIFLUSH);
+  const TTYDescriptor tty(socket.GetFileDescriptor());
+  tty.FlushInput();
   BufferedPort::Flush();
 }
 
-Port::WaitResult
+inline void
 TTYPort::WaitWrite(unsigned timeout_ms)
 {
-  assert(serial_port.is_open());
+  assert(socket.IsDefined());
 
   if (!valid.load(std::memory_order_relaxed))
-    return WaitResult::FAILED;
+    throw std::runtime_error("Port is closed");
 
-  const FileDescriptor fd(serial_port.native_handle());
+  const TTYDescriptor fd(socket.GetFileDescriptor());
   int ret = fd.WaitWritable(timeout_ms);
   if (ret > 0)
-    return WaitResult::READY;
+    return;
   else if (ret == 0)
-    return WaitResult::TIMEOUT;
+      throw DeviceTimeout{"Port write timeout"};
   else
-    return WaitResult::FAILED;
+      throw MakeErrno("Port write failed");
 }
 
-size_t
-TTYPort::Write(const void *data, size_t length)
+std::size_t
+TTYPort::Write(std::span<const std::byte> src)
 {
-  assert(serial_port.is_open());
+  assert(socket.IsDefined());
 
   if (!valid.load(std::memory_order_relaxed))
-    return 0;
+    throw std::runtime_error("Port is closed");
 
-  boost::system::error_code ec;
-  auto nbytes = serial_port.write_some(boost::asio::buffer(data, length), ec);
-  if (ec == boost::asio::error::try_again) {
-    /* the output fifo is full; wait until we can write (or until the
-       timeout expires) */
-    if (WaitWrite(5000) != Port::WaitResult::READY)
-      return 0;
+  TTYDescriptor fd(socket.GetFileDescriptor());
+  auto nbytes = fd.Write(src.data(), src.size());
+  if (nbytes < 0) {
+    if (errno != EAGAIN)
+      /* the output fifo is full; wait until we can write (or until
+         the timeout expires) */
+      WaitWrite(5000);
 
-    nbytes = serial_port.write_some(boost::asio::buffer(data, length), ec);
+    nbytes = fd.Write(src.data(), src.size());
+    if (nbytes < 0)
+      throw MakeErrno("Port write failed");
   }
 
   return nbytes;
 }
 
 unsigned
-TTYPort::GetBaudrate() const
+TTYPort::GetBaudrate() const noexcept
 {
-  assert(serial_port.is_open());
+  assert(socket.IsDefined());
 
-  boost::asio::serial_port_base::baud_rate baud_rate;
-  boost::system::error_code ec;
-  const_cast<boost::asio::serial_port &>(serial_port).get_option(baud_rate, ec);
-  return ec ? 0 : baud_rate.value();
-}
+  const TTYDescriptor tty(socket.GetFileDescriptor());
 
-bool
-TTYPort::SetBaudrate(unsigned baud_rate)
-{
-  assert(serial_port.is_open());
+  struct termios attr;
+  if (!tty.GetAttr(attr))
+    return 0;
 
-  boost::system::error_code ec;
-  serial_port.set_option(boost::asio::serial_port_base::baud_rate(baud_rate),
-                         ec);
-  return !ec;
+#if defined(__linux__) && !defined(ANDROID)
+  /* Only trust ASYNC_SPD_CUST when termios speed is B38400 (the
+     TIOCSSERIAL marker); otherwise the port has been switched back
+     to a standard baud rate and the custom divisor is stale */
+  if (cfgetispeed(&attr) == B38400) {
+    struct serial_struct serinfo;
+    if (ioctl(tty.Get(), TIOCGSERIAL, &serinfo) == 0 &&
+        (serinfo.flags & ASYNC_SPD_MASK) == ASYNC_SPD_CUST &&
+        serinfo.baud_base > 0 && serinfo.custom_divisor > 0) {
+      unsigned custom_baud = serinfo.baud_base / serinfo.custom_divisor;
+      if (custom_baud > 230400)
+        return custom_baud;
+    }
+  }
+#endif
+
+  return speed_t_to_baud_rate(cfgetispeed(&attr));
 }
 
 void
-TTYPort::OnReadReady(const boost::system::error_code &ec)
+TTYPort::SetBaudrate(unsigned baud_rate)
 {
-  if (ec == boost::asio::error::operation_aborted)
-    /* this object has already been deleted; bail out quickly without
-       touching anything */
-    return;
+  assert(socket.IsDefined());
 
-  if (ec) {
+  const TTYDescriptor tty(socket.GetFileDescriptor());
+  ::SetBaudrate(tty, baud_rate);
+}
+
+void
+TTYPort::OnSocketReady(unsigned) noexcept
+{
+  TTYDescriptor tty(socket.GetFileDescriptor());
+
+  std::byte input[4096];
+  ssize_t nbytes = tty.Read(input, sizeof(input));
+  if (nbytes < 0) {
+    int e = errno;
+    socket.Cancel();
     valid.store(false, std::memory_order_relaxed);
     StateChanged();
-    Error(ec.message().c_str());
+    Error(strerror(e));
     return;
   }
 
-  char buffer[1024];
-
-  boost::system::error_code ec2;
-  auto nbytes = serial_port.read_some(boost::asio::buffer(buffer,
-                                                          sizeof(buffer)),
-                                      ec2);
-  if (nbytes == 0 || (ec2 && ec2 != boost::asio::error::try_again &&
-                      ec2 != boost::asio::error::interrupted)) {
+  if (nbytes == 0) {
+    socket.Close();
     valid.store(false, std::memory_order_relaxed);
     StateChanged();
     return;
   }
 
-  if (nbytes > 0)
-    BufferedPort::DataReceived(buffer, nbytes);
-
-  AsyncRead();
+  DataReceived({input, std::size_t(nbytes)});
 }

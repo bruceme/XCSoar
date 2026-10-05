@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ContestManager.hpp"
 
@@ -26,41 +7,54 @@ ContestManager::ContestManager(const Contest _contest,
                                const Trace &trace_full,
                                const Trace &trace_triangle,
                                const Trace &trace_sprint,
-                               bool predict_triangle)
+                               bool predict_triangle) noexcept
   :contest(_contest),
    olc_sprint(trace_sprint),
    olc_fai(trace_triangle, predict_triangle),
    olc_classic(trace_full),
    olc_league(trace_sprint),
-   olc_plus(),
    dmst_quad(trace_full),
+   dmst_triangle(trace_triangle, predict_triangle),
+   dmst_or(trace_full),
    xcontest_free(trace_full, false),
    xcontest_triangle(trace_triangle, predict_triangle, false),
    dhv_xc_free(trace_full, true),
    dhv_xc_triangle(trace_triangle, predict_triangle, true),
    sis_at(trace_full),
-   net_coupe(trace_full)
+   net_coupe(trace_full),
+   weglide_distance(trace_full),
+   weglide_fai(trace_triangle, predict_triangle),
+   weglide_or(trace_full),
+   charron_small(trace_triangle, false),
+   charron_large(trace_triangle, true)
 {
   Reset();
 }
 
 void
-ContestManager::SetIncremental(bool incremental)
+ContestManager::SetIncremental(bool incremental) noexcept
 {
   olc_sprint.SetIncremental(incremental);
   olc_fai.SetIncremental(incremental);
   olc_classic.SetIncremental(incremental);
   dmst_quad.SetIncremental(incremental);
+  dmst_triangle.SetIncremental(incremental);
+  dmst_or.SetIncremental(incremental);
   xcontest_free.SetIncremental(incremental);
   xcontest_triangle.SetIncremental(incremental);
   dhv_xc_free.SetIncremental(incremental);
   dhv_xc_triangle.SetIncremental(incremental);
   sis_at.SetIncremental(incremental);
   net_coupe.SetIncremental(incremental);
+  weglide_distance.SetIncremental(incremental);
+  weglide_fai.SetIncremental(incremental);
+  weglide_or.SetIncremental(incremental);
+  charron_small.SetIncremental(incremental);
+  charron_large.SetIncremental(incremental);
 }
 
 void
-ContestManager::SetPredicted(const TracePoint &predicted)
+ContestManager::SetPredicted(const TracePoint &predicted) noexcept
 {
   if (olc_classic.SetPredicted(predicted)) {
     olc_league.Reset();
@@ -71,13 +65,52 @@ ContestManager::SetPredicted(const TracePoint &predicted)
       stats.Reset();
   }
 
-  if (dmst_quad.SetPredicted(predicted) &&
-      contest == Contest::DMST)
+  if (dmst_quad.SetPredicted(predicted)) {
+    dmst_triangle.Reset();
+    dmst_or.Reset();
+    dmst_free.Reset();
+
+    if (contest == Contest::DMST)
+      stats.Reset();
+  } else {
+    if (dmst_triangle.SetPredicted(predicted) &&
+        contest == Contest::DMST)
+      stats.Reset();
+    if (dmst_or.SetPredicted(predicted) &&
+        contest == Contest::DMST)
+      stats.Reset();
+  }
+
+  if (net_coupe.SetPredicted(predicted) && contest == Contest::NET_COUPE)
     stats.Reset();
+  if (weglide_distance.SetPredicted(predicted)) {
+    weglide_fai.Reset();
+    weglide_or.Reset();
+    weglide_free.Reset();
+
+    if (contest == Contest::WEGLIDE_DISTANCE ||
+        contest == Contest::WEGLIDE_FAI ||
+        contest == Contest::WEGLIDE_OR ||
+        contest == Contest::WEGLIDE_FREE)
+      stats.Reset();
+  } else {
+    if (weglide_fai.SetPredicted(predicted) && contest == Contest::WEGLIDE_FAI)
+      stats.Reset();
+    if (weglide_or.SetPredicted(predicted) && contest == Contest::WEGLIDE_OR)
+      stats.Reset();
+  }
+
+  const bool reset_charron_large = charron_large.SetPredicted(predicted);
+  const bool reset_charron_small = charron_small.SetPredicted(predicted);
+  if (reset_charron_large)
+    charron_small.Reset();
+
+  if ((reset_charron_large || reset_charron_small) && contest == Contest::CHARRON)
+      stats.Reset();
 }
 
 void
-ContestManager::SetHandicap(unsigned handicap)
+ContestManager::SetHandicap(unsigned handicap) noexcept
 {
   olc_sprint.SetHandicap(handicap);
   olc_fai.SetHandicap(handicap);
@@ -85,18 +118,27 @@ ContestManager::SetHandicap(unsigned handicap)
   olc_league.SetHandicap(handicap);
   olc_plus.SetHandicap(handicap);
   dmst_quad.SetHandicap(handicap);
+  dmst_triangle.SetHandicap(handicap);
+  dmst_or.SetHandicap(handicap);
+  dmst_free.SetHandicap(handicap);
   xcontest_free.SetHandicap(handicap);
   xcontest_triangle.SetHandicap(handicap);
   dhv_xc_free.SetHandicap(handicap);
   dhv_xc_triangle.SetHandicap(handicap);
   sis_at.SetHandicap(handicap);
   net_coupe.SetHandicap(handicap);
+  weglide_free.SetHandicap(handicap);
+  weglide_distance.SetHandicap(handicap);
+  weglide_fai.SetHandicap(handicap);
+  weglide_or.SetHandicap(handicap);
+  charron_small.SetHandicap(handicap);
+  charron_large.SetHandicap(handicap);
 }
 
 static bool
 RunContest(AbstractContest &_contest,
            ContestResult &result, ContestTraceVector &solution,
-           bool exhaustive)
+           bool exhaustive) noexcept
 {
   // run solver, return immediately if further processing is required
   // by subsequent calls
@@ -117,7 +159,7 @@ RunContest(AbstractContest &_contest,
 }
 
 bool
-ContestManager::UpdateIdle(bool exhaustive)
+ContestManager::UpdateIdle(bool exhaustive) noexcept
 {
   bool retval = false;
 
@@ -170,6 +212,21 @@ ContestManager::UpdateIdle(bool exhaustive)
   case Contest::DMST:
     retval = RunContest(dmst_quad, stats.result[0],
                         stats.solution[0], exhaustive);
+
+    retval |= RunContest(dmst_triangle, stats.result[1],
+                         stats.solution[1], exhaustive);
+
+    retval |= RunContest(dmst_or, stats.result[2],
+                         stats.solution[2], exhaustive);
+
+    if (retval) {
+      dmst_free.Feed(stats.result[0], stats.solution[0],
+                     stats.result[1], stats.solution[1],
+                     stats.result[2], stats.solution[2]);
+
+      RunContest(dmst_free, stats.result[3],
+                 stats.solution[3], exhaustive);
+    }
     break;
 
   case Contest::XCONTEST:
@@ -196,13 +253,58 @@ ContestManager::UpdateIdle(bool exhaustive)
                         stats.solution[0], exhaustive);
     break;
 
+  case Contest::WEGLIDE_FREE:
+    retval = RunContest(weglide_distance, stats.result[0],
+                        stats.solution[0], exhaustive);
+
+    retval |= RunContest(weglide_fai, stats.result[1],
+                         stats.solution[1], exhaustive);
+
+    retval |= RunContest(weglide_or, stats.result[2],
+                         stats.solution[2], exhaustive);
+
+    if (retval) {
+      weglide_free.Feed(stats.result[0], stats.solution[0],
+                        stats.result[1], stats.solution[1],
+                        stats.result[2], stats.solution[2]);
+
+      RunContest(weglide_free, stats.result[3],
+                 stats.solution[3], exhaustive);
+    }
+    break;
+
+  case Contest::WEGLIDE_DISTANCE:
+    retval = RunContest(weglide_distance, stats.result[0],
+                        stats.solution[0], exhaustive);
+    break;
+
+  case Contest::WEGLIDE_FAI:
+    retval = RunContest(weglide_fai, stats.result[0],
+                        stats.solution[0], exhaustive);
+    break;
+
+  case Contest::WEGLIDE_OR:
+    retval = RunContest(weglide_or, stats.result[0],
+                        stats.solution[0], exhaustive);
+    break;
+
+  case Contest::CHARRON:
+    retval = RunContest(charron_large, stats.result[0],
+                        stats.solution[0], exhaustive);
+
+    if (!retval) {
+      retval = RunContest(charron_small, stats.result[0],
+                          stats.solution[0], exhaustive);
+    }
+    break;
+
   };
 
   return retval;
 }
 
 void
-ContestManager::Reset()
+ContestManager::Reset() noexcept
 {
   stats.Reset();
   olc_sprint.Reset();
@@ -211,12 +313,21 @@ ContestManager::Reset()
   olc_league.Reset();
   olc_plus.Reset();
   dmst_quad.Reset();
+  dmst_triangle.Reset();
+  dmst_or.Reset();
+  dmst_free.Reset();
   xcontest_free.Reset();
   xcontest_triangle.Reset();
   dhv_xc_free.Reset();
   dhv_xc_triangle.Reset();
   sis_at.Reset();
   net_coupe.Reset();
+  weglide_free.Reset();
+  weglide_distance.Reset();
+  weglide_fai.Reset();
+  weglide_or.Reset();
+  charron_small.Reset();
+  charron_large.Reset();
 }
 
 /*

@@ -1,32 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ListWidget.hpp"
-#include "Screen/Window.hpp"
+#include "ui/window/Window.hpp"
+#include "ui/event/KeyCode.hpp"
 #include "Screen/Layout.hpp"
 
 PixelSize
-ListWidget::GetMinimumSize() const
+ListWidget::GetMinimumSize() const noexcept
 {
   return { unsigned(Layout::Scale(200u)),
       /* a list makes only sense when the user sees more than one row
@@ -35,24 +16,44 @@ ListWidget::GetMinimumSize() const
 }
 
 PixelSize
-ListWidget::GetMaximumSize() const
+ListWidget::GetMaximumSize() const noexcept
 {
   return PixelSize { 4096, 4096 };
 }
 
+bool
+ListWidget::KeyPress(unsigned key_code) noexcept
+{
+  if (key_code != KEY_UP && key_code != KEY_DOWN)
+    return false;
+
+  /* Only when the list has focus: same client area as filter rows, etc. in
+     e.g. `ShowWaypointListDialog` — if we always returned true, Up/Down
+     would never reach the filter (file/enum) or other focused controls. */
+  if (!IsDefined() || !GetList().HasFocus())
+    return false;
+
+  /* Route in #WidgetDialog::OnAnyKeyDown *before* #WndForm maps these
+     keys to tab/FocusNext, and before #ListControl::OnKeyCheck is used
+     to decide.  When #OnKeyDown is false (e.g. at list edge), return
+     false so focus can move to the next/previous control (e.g. action
+     bar or filter).  Left/right: #ButtonPanel::KeyPress. */
+  return GetList().OnKeyFromWidgetParent(key_code);
+}
+
 ListControl &
 ListWidget::CreateList(ContainerWindow &parent, const DialogLook &look,
-                       const PixelRect &rc, unsigned row_height)
+                      const PixelRect &rc, unsigned row_height) noexcept
 {
   WindowStyle list_style;
   list_style.Hide();
   list_style.TabStop();
   list_style.Border();
 
-  ListControl *list =
-    new ListControl(parent, look, rc, list_style, row_height);
+  auto list = std::make_unique<ListControl>(parent, look, rc,
+                                            list_style, row_height);
   list->SetItemRenderer(this);
   list->SetCursorHandler(this);
-  SetWindow(list);
-  return *list;
+  SetWindow(std::move(list));
+  return GetList();
 }

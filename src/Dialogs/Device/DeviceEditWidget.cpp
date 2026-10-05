@@ -1,388 +1,149 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DeviceEditWidget.hpp"
-#include "Dialogs/ComboPicker.hpp"
+#include "PortDataField.hpp"
+#include "PortPicker.hpp"
 #include "UIGlobals.hpp"
-#include "Compiler.h"
-#include "Util/Macros.hpp"
-#include "Util/NumberParser.hpp"
+#include "util/Compiler.h"
+#include "util/NumberParser.hpp"
 #include "Language/Language.hpp"
 #include "Form/DataField/Enum.hpp"
 #include "Form/DataField/Boolean.hpp"
 #include "Form/DataField/String.hpp"
-#include "Form/DataField/ComboList.hpp"
 #include "Device/Register.hpp"
 #include "Device/Driver.hpp"
-#include "Device/Features.hpp"
 #include "Interface.hpp"
 
-#ifdef HAVE_POSIX
-#include "Device/Port/TTYEnumerator.hpp"
-#endif
-
-#ifdef ANDROID
-#include "Java/Global.hxx"
-#include "Android/BluetoothHelper.hpp"
-#include "Device/Port/AndroidIOIOUartPort.hpp"
-#include "ScanBluetoothLeDialog.hpp"
-#endif
-
 enum ControlIndex {
-  Port, BaudRate, BulkBaudRate,
+  Port, EngineTypes, BaudRate, BulkBaudRate,
   IP_ADDRESS,
   TCPPort,
+  SpectatePath,
+  OwnCallsign,
   I2CBus, I2CAddr, PressureUsage, Driver, UseSecondDriver, SecondDriver,
-  SyncFromDevice, SyncToDevice,
+  SyncFromDevice, SyncToDevice, SendPosition, PolarSyncMode,
+  InstrumentAlignment,
   K6Bt,
 };
 
-static constexpr struct {
-  DeviceConfig::PortType type;
-  const TCHAR *label;
-} port_types[] = {
-  { DeviceConfig::PortType::DISABLED, N_("Disabled") },
-#ifdef HAVE_INTERNAL_GPS
-  { DeviceConfig::PortType::INTERNAL, N_("Built-in GPS & sensors") },
-#endif
-#ifdef ANDROID
-  { DeviceConfig::PortType::RFCOMM_SERVER, N_("Bluetooth server") },
-  { DeviceConfig::PortType::DROIDSOAR_V2, _T("DroidSoar V2") },
-#ifndef NDEBUG
-  { DeviceConfig::PortType::NUNCHUCK, N_("IOIO switches and Nunchuk") },
-#endif
-  { DeviceConfig::PortType::I2CPRESSURESENSOR, N_("IOIO i2c pressure sensor") },
-  { DeviceConfig::PortType::IOIOVOLTAGE, N_("IOIO voltage sensor") },
-#endif
-
-  { DeviceConfig::PortType::TCP_CLIENT, N_("TCP client") },
-
-  /* label not translated for now, until we have a TCP/UDP port
-     selection UI */
-  { DeviceConfig::PortType::TCP_LISTENER, N_("TCP Port") },
-  { DeviceConfig::PortType::UDP_LISTENER, N_("UDP Port") },
-
-  { DeviceConfig::PortType::SERIAL, NULL } /* sentinel */
-};
-
-/** the number of fixed port types (excludes Serial, Bluetooth and IOIOUart) */
-static constexpr unsigned num_port_types = ARRAY_SIZE(port_types) - 1;
-
-static unsigned
-AddPort(DataFieldEnum &df, DeviceConfig::PortType type,
-        const TCHAR *text, const TCHAR *display_string=NULL,
-        const TCHAR *help=NULL)
-{
-  /* the uppper 16 bit is the port type, and the lower 16 bit is a
-     serial number to make the enum id unique */
-
-  unsigned id = ((unsigned)type << 16) + df.Count();
-  df.AddChoice(id, text, display_string, help);
-  return id;
-}
-
-#if defined(HAVE_POSIX)
-
-static bool
-DetectSerialPorts(DataFieldEnum &df)
-{
-  TTYEnumerator enumerator;
-  if (enumerator.HasFailed())
-    return false;
-
-  unsigned sort_start = df.Count();
-
-  bool found = false;
-  const char *path;
-  while ((path = enumerator.Next()) != nullptr) {
-    const char *display_string = path;
-    if (memcmp(path, "/dev/", 5) == 0)
-      display_string = path + 5;
-
-    AddPort(df, DeviceConfig::PortType::SERIAL, path, display_string);
-    found = true;
-  }
-
-  if (found)
-    df.Sort(sort_start);
-
-  return found;
-}
-
-#endif
-
-#if defined(WIN32) && !defined(HAVE_POSIX)
-
 static void
-FillDefaultSerialPorts(DataFieldEnum &df)
+FillBaudRates(DataFieldEnum &dfe) noexcept
 {
-  for (unsigned i = 1; i <= 10; ++i) {
-    TCHAR buffer[64];
-    _stprintf(buffer, _T("COM%u:"), i);
-    AddPort(df, DeviceConfig::PortType::SERIAL, buffer);
-  }
-}
-
-#endif
-
-static void
-FillPortTypes(DataFieldEnum &df, const DeviceConfig &config)
-{
-  for (unsigned i = 0; port_types[i].label != NULL; i++) {
-    unsigned id = AddPort(df, port_types[i].type, port_types[i].label,
-                          gettext(port_types[i].label));
-
-    if (port_types[i].type == config.port_type)
-      df.Set(id);
-  }
+  dfe.addEnumText("1200", 1200);
+  dfe.addEnumText("2400", 2400);
+  dfe.addEnumText("4800", 4800);
+  dfe.addEnumText("9600", 9600);
+  dfe.addEnumText("19200", 19200);
+  dfe.addEnumText("38400", 38400);
+  dfe.addEnumText("57600", 57600);
+  dfe.addEnumText("115200", 115200);
+  dfe.addEnumText("230400", 230400);
+  dfe.addEnumText("256000", 256000);
+  dfe.addEnumText("460800", 460800);
+  dfe.addEnumText("500000", 500000);
+  dfe.addEnumText("921600", 921600);
+  dfe.addEnumText("1000000", 1000000);
 }
 
 static void
-SetPort(DataFieldEnum &df, DeviceConfig::PortType type, const TCHAR *value)
+FillTCPPorts(DataFieldEnum &dfe) noexcept
 {
-  assert(value != NULL);
-
-  if (!df.Set(value))
-    df.Set(AddPort(df, type, value));
+  dfe.addEnumText("55278 (Condor UDP)", 55278);
+  dfe.addEnumText("4353", 4353);
+  dfe.addEnumText("10110", 10110);
+  dfe.addEnumText("4352", 4352);
+  dfe.addEnumText("2000", 2000);
+  dfe.addEnumText("4000", 4000);
+  dfe.addEnumText("23", 23);
+  dfe.addEnumText("8880", 8880);
+  dfe.addEnumText("8881", 8881);
+  dfe.addEnumText("8882", 8882);
 }
 
 static void
-FillSerialPorts(DataFieldEnum &df, const DeviceConfig &config)
+FillI2CBus(DataFieldEnum &dfe) noexcept
 {
-#if defined(HAVE_POSIX)
-  DetectSerialPorts(df);
-#elif defined(WIN32)
-  FillDefaultSerialPorts(df);
-#endif
-
-  if (config.port_type == DeviceConfig::PortType::SERIAL)
-    SetPort(df, config.port_type, config.path);
-}
-
-static void
-FillAndroidBluetoothPorts(DataFieldEnum &df, const DeviceConfig &config)
-{
-#ifdef ANDROID
-  JNIEnv *env = Java::GetEnv();
-  jobjectArray bonded = BluetoothHelper::list(env);
-  if (bonded == NULL)
-    return;
-
-  jsize n = env->GetArrayLength(bonded) / 2;
-  for (jsize i = 0; i < n; ++i) {
-    jstring address = (jstring)env->GetObjectArrayElement(bonded, i * 2);
-    if (address == NULL)
-      continue;
-
-    const char *address2 = env->GetStringUTFChars(address, NULL);
-    if (address2 == NULL)
-      continue;
-
-    jstring name = (jstring)env->GetObjectArrayElement(bonded, i * 2 + 1);
-    const char *name2 = name != NULL
-      ? env->GetStringUTFChars(name, NULL)
-      : NULL;
-
-    AddPort(df, DeviceConfig::PortType::RFCOMM, address2, name2);
-
-    env->ReleaseStringUTFChars(address, address2);
-    if (name2 != NULL)
-      env->ReleaseStringUTFChars(name, name2);
-  }
-
-  env->DeleteLocalRef(bonded);
-
-  if (config.port_type == DeviceConfig::PortType::RFCOMM &&
-      !config.bluetooth_mac.empty())
-    SetPort(df, DeviceConfig::PortType::RFCOMM, config.bluetooth_mac);
-#endif
-}
-
-static void
-FillAndroidIOIOPorts(DataFieldEnum &df, const DeviceConfig &config)
-{
-#if defined(ANDROID)
-  df.EnableItemHelp(true);
-
-  TCHAR tempID[4];
-  TCHAR tempName[15];
-  for (unsigned i = 0; i < AndroidIOIOUartPort::getNumberUarts(); i++) {
-    StringFormatUnsafe(tempID, _T("%u"), i);
-    StringFormat(tempName, sizeof(tempName), _T("IOIO Uart %u"), i);
-    unsigned id = AddPort(df, DeviceConfig::PortType::IOIOUART,
-                          tempID, tempName,
-                          AndroidIOIOUartPort::getPortHelp(i));
-    if (config.port_type == DeviceConfig::PortType::IOIOUART &&
-        config.ioio_uart_id == i)
-      df.Set(id);
-  }
-#endif
-}
-
-static void
-FillPorts(DataFieldEnum &df, const DeviceConfig &config)
-{
-  FillPortTypes(df, config);
-  FillSerialPorts(df, config);
-  FillAndroidBluetoothPorts(df, config);
-  FillAndroidIOIOPorts(df, config);
-}
-
-static void
-FillBaudRates(DataFieldEnum &dfe)
-{
-  dfe.addEnumText(_T("1200"), 1200);
-  dfe.addEnumText(_T("2400"), 2400);
-  dfe.addEnumText(_T("4800"), 4800);
-  dfe.addEnumText(_T("9600"), 9600);
-  dfe.addEnumText(_T("19200"), 19200);
-  dfe.addEnumText(_T("38400"), 38400);
-  dfe.addEnumText(_T("57600"), 57600);
-  dfe.addEnumText(_T("115200"), 115200);
-}
-
-static void
-FillTCPPorts(DataFieldEnum &dfe)
-{
-  dfe.addEnumText(_T("4353"), 4353);
-  dfe.addEnumText(_T("10110"), 10110);
-  dfe.addEnumText(_T("4352"), 4352);
-  dfe.addEnumText(_T("2000"), 2000);
-  dfe.addEnumText(_T("23"), 23);
-}
-
-static void
-FillI2CBus(DataFieldEnum &dfe)
-{
-  dfe.addEnumText(_T("0"), 0u);
-  dfe.addEnumText(_T("1"), 1u);
-  dfe.addEnumText(_T("2"), 2u);
+  dfe.addEnumText("0", 0U);
+  dfe.addEnumText("1", 1U);
+  dfe.addEnumText("2", 2U);
 }
 
 /* Only lists possible addresses of supported devices */
 static void
-FillI2CAddr(DataFieldEnum &dfe)
+FillI2CAddr(DataFieldEnum &dfe) noexcept
 {
-  dfe.addEnumText(_T("0x76 (MS5611)"), 0x76);
-  dfe.addEnumText(_T("0x77 (BMP085 and MS5611)"), 0x77);
-//  dfe.addEnumText(_T("0x52 (Nunchuck)"), 0x52); Is implied by device, no choice
-//  dfe.addEnumText(_T("0x69 (MPU6050)"), 0x69); Is implied by device, no choice
-//  dfe.addEnumText(_T("0x1e (HMC5883)"), 0x1e); Is implied by device, no choice
+  dfe.addEnumText("0x76 (MS5611)", 0x76);
+  dfe.addEnumText("0x77 (BMP085 and MS5611)", 0x77);
+//  dfe.addEnumText("0x52 (Nunchuck)", 0x52); Is implied by device, no choice
+//  dfe.addEnumText("0x69 (MPU6050)", 0x69); Is implied by device, no choice
+//  dfe.addEnumText("0x1e (HMC5883)", 0x1e); Is implied by device, no choice
 }
 
 static void
-FillPress(DataFieldEnum &dfe)
+FillPress(DataFieldEnum &dfe) noexcept
 {
-  dfe.addEnumText(_T("Static & Vario"), (unsigned)DeviceConfig::PressureUse::STATIC_WITH_VARIO);
-  dfe.addEnumText(_T("Static"), (unsigned)DeviceConfig::PressureUse::STATIC_ONLY);
-  dfe.addEnumText(_T("TE probe (compensated vario)"), (unsigned)DeviceConfig::PressureUse::TEK_PRESSURE);
-  dfe.addEnumText(_T("Pitot (airspeed)"), (unsigned)DeviceConfig::PressureUse::PITOT);
-  dfe.addEnumText(_T("Pitot zero calibration"), (unsigned)DeviceConfig::PressureUse::PITOT_ZERO);
+  dfe.addEnumText("Static & Vario", (unsigned)DeviceConfig::PressureUse::STATIC_WITH_VARIO);
+  dfe.addEnumText("Static", (unsigned)DeviceConfig::PressureUse::STATIC_ONLY);
+  dfe.addEnumText("TE probe (compensated vario)", (unsigned)DeviceConfig::PressureUse::TEK_PRESSURE);
+  dfe.addEnumText("Pitot (airspeed)", (unsigned)DeviceConfig::PressureUse::PITOT);
+}
+
+/**
+ * The user can choose from the following engine types:
+ * None.
+ * 2S1I, 2-stroke one ignition per revolution.
+ * 2S2I, 2-stroke two ignitions per revolution.
+ * 4S1I, 4-stroke one ignition per revolution.
+*/
+static void
+FillEngineType(DataFieldEnum &dfe) noexcept
+{
+  dfe.addEnumText("None", static_cast<unsigned>(DeviceConfig::EngineType::NONE));
+  dfe.addEnumText("2S1I", static_cast<unsigned>(DeviceConfig::EngineType::TWO_STROKE_1_IGN));
+  dfe.addEnumText("2S2I", static_cast<unsigned>(DeviceConfig::EngineType::TWO_STROKE_2_IGN));
+  dfe.addEnumText("4S1I", static_cast<unsigned>(DeviceConfig::EngineType::FOUR_STROKE_1_IGN));
 }
 
 static void
-SetPort(DataFieldEnum &df, const DeviceConfig &config)
+FillPolarSync(DataFieldEnum &dfe,
+              bool can_receive, bool can_send) noexcept
 {
-  switch (config.port_type) {
-  case DeviceConfig::PortType::DISABLED:
-  case DeviceConfig::PortType::AUTO:
-  case DeviceConfig::PortType::INTERNAL:
-  case DeviceConfig::PortType::DROIDSOAR_V2:
-  case DeviceConfig::PortType::NUNCHUCK:
-  case DeviceConfig::PortType::I2CPRESSURESENSOR:
-  case DeviceConfig::PortType::IOIOVOLTAGE:
-  case DeviceConfig::PortType::TCP_CLIENT:
-  case DeviceConfig::PortType::TCP_LISTENER:
-  case DeviceConfig::PortType::UDP_LISTENER:
-  case DeviceConfig::PortType::PTY:
-  case DeviceConfig::PortType::RFCOMM_SERVER:
-    break;
+  dfe.ClearChoices();
+  dfe.addEnumText(_("Off"),
+                  static_cast<unsigned>(DeviceConfig::PolarSync::OFF));
+  if (can_receive)
+    dfe.addEnumText(_("Receive from device"),
+                    static_cast<unsigned>(DeviceConfig::PolarSync::RECEIVE));
+  if (can_send)
+    dfe.addEnumText(_("Send to device"),
+                    static_cast<unsigned>(DeviceConfig::PolarSync::SEND));
+}
 
-  case DeviceConfig::PortType::SERIAL:
-    SetPort(df, config.port_type, config.path);
-    return;
-
-  case DeviceConfig::PortType::RFCOMM:
-    SetPort(df, config.port_type, config.bluetooth_mac);
-    return;
-
-  case DeviceConfig::PortType::IOIOUART:
-    StaticString<16> buffer;
-    buffer.UnsafeFormat(_T("%d"), config.ioio_uart_id);
-    df.Set(buffer);
-    return;
-  }
-
-  for (unsigned i = 0; port_types[i].label != NULL; i++) {
-    if (port_types[i].type == config.port_type) {
-      df.Set(port_types[i].label);
-      break;
-    }
-  }
+static void
+FillInstrumentAlignment(DataFieldEnum &dfe) noexcept
+{
+  dfe.addEnumText(_("Don't use"),
+                  (unsigned)DeviceConfig::InstrumentAlignment::NONE);
+  dfe.addEnumText(_("Not aligned"),
+                  (unsigned)DeviceConfig::InstrumentAlignment::NOT_ALIGNED);
+  dfe.addEnumText(_("Fixed & aligned"),
+                  (unsigned)DeviceConfig::InstrumentAlignment::FIXED_AND_ALIGNED);
 }
 
 static bool
-EditPortCallback(const TCHAR *caption, DataField &_df,
-                 const TCHAR *help_text)
+EditPortCallback(const char *caption, DataField &df,
+                 [[maybe_unused]] const char *help_text) noexcept
 {
-  DataFieldEnum &df = (DataFieldEnum &)_df;
-
-  ComboList combo_list = df.CreateComboList(nullptr);
-
-#ifdef ANDROID
-  static constexpr int SCAN_BLUETOOTH_LE = -1;
-  if (BluetoothHelper::HasLe(Java::GetEnv()))
-    combo_list.Append(SCAN_BLUETOOTH_LE, _("Bluetooth LE"));
-#endif
-
-  int i = ComboPicker(caption, combo_list, help_text);
-  if (i < 0)
-    return false;
-
-  const ComboList::Item &item = combo_list[i];
-
-#ifdef ANDROID
-  if (item.int_value == SCAN_BLUETOOTH_LE) {
-    char address[32];
-    if (!ScanBluetoothLeDialog(address, sizeof(address)))
-        return false;
-
-    SetPort(df, DeviceConfig::PortType::RFCOMM, address);
-    return true;
-  }
-#endif
-
-  df.SetFromCombo(item.int_value, item.string_value.c_str());
-  return true;
+  return PortPicker((DataFieldEnum &)df, caption);
 }
 
-DeviceEditWidget::DeviceEditWidget(const DeviceConfig &_config)
+DeviceEditWidget::DeviceEditWidget(const DeviceConfig &_config) noexcept
   :RowFormWidget(UIGlobals::GetDialogLook()),
-   config(_config), listener(NULL) {}
-
+   config(_config) {}
 
 void
-DeviceEditWidget::SetConfig(const DeviceConfig &_config)
+DeviceEditWidget::SetConfig(const DeviceConfig &_config) noexcept
 {
   config = _config;
 
@@ -391,141 +152,100 @@ DeviceEditWidget::SetConfig(const DeviceConfig &_config)
        flag and re-enable the device */
     config.enabled = true;
 
+  if (config.port_type == DeviceConfig::PortType::SPECTATE_FILE)
+    config.ApplySpectateDefaults();
+
   WndProperty &port_control = GetControl(Port);
   DataFieldEnum &port_df = *(DataFieldEnum *)port_control.GetDataField();
   SetPort(port_df, config);
   port_control.RefreshDisplay();
 
-  WndProperty &baud_control = GetControl(BaudRate);
-  DataFieldEnum &baud_df = *(DataFieldEnum *)baud_control.GetDataField();
-  baud_df.Set(config.baud_rate);
-  baud_control.RefreshDisplay();
-
-  WndProperty &bulk_baud_control = GetControl(BulkBaudRate);
-  DataFieldEnum &bulk_baud_df = *(DataFieldEnum *)
-    bulk_baud_control.GetDataField();
-  bulk_baud_df.Set(config.bulk_baud_rate);
-  bulk_baud_control.RefreshDisplay();
-
-  WndProperty &ip_address_control = GetControl(IP_ADDRESS);
-  DataFieldEnum &ip_address_df = *(DataFieldEnum *)
-    ip_address_control.GetDataField();
-  ip_address_df.Set(config.ip_address);
-  ip_address_control.RefreshDisplay();
-
-  WndProperty &tcp_port_control = GetControl(TCPPort);
-  DataFieldEnum &tcp_port_df = *(DataFieldEnum *)
-    tcp_port_control.GetDataField();
-  tcp_port_df.Set(config.tcp_port);
-  tcp_port_control.RefreshDisplay();
-
-  WndProperty &i2c_bus_control = GetControl(I2CBus);
-  DataFieldEnum &i2c_bus_df = *(DataFieldEnum *)
-    i2c_bus_control.GetDataField();
-  i2c_bus_df.Set(config.i2c_bus);
-  i2c_bus_control.RefreshDisplay();
-
-  WndProperty &i2c_addr_control = GetControl(I2CAddr);
-  DataFieldEnum &i2c_addr_df = *(DataFieldEnum *)
-    i2c_addr_control.GetDataField();
-  i2c_addr_df.Set(config.i2c_addr);
-  i2c_addr_control.RefreshDisplay();
-
-  WndProperty &press_control = GetControl(PressureUsage);
-  DataFieldEnum &press_df = *(DataFieldEnum *)
-    press_control.GetDataField();
-  press_df.Set((unsigned)config.press_use);
-  press_control.RefreshDisplay();
-
-  WndProperty &driver_control = GetControl(Driver);
-  DataFieldEnum &driver_df = *(DataFieldEnum *)driver_control.GetDataField();
-  driver_df.Set(config.driver_name);
-  driver_control.RefreshDisplay();
-
-  WndProperty &sync_from_control = GetControl(SyncFromDevice);
-  DataFieldBoolean &sync_from_df =
-      *(DataFieldBoolean *)sync_from_control.GetDataField();
-  sync_from_df.Set(config.sync_from_device);
-  sync_from_control.RefreshDisplay();
-
-  WndProperty &sync_to_control = GetControl(SyncToDevice);
-  DataFieldBoolean &sync_to_df =
-      *(DataFieldBoolean *)sync_to_control.GetDataField();
-  sync_to_df.Set(config.sync_to_device);
-  sync_to_control.RefreshDisplay();
-
-  WndProperty &k6bt_control = GetControl(K6Bt);
-  DataFieldBoolean &k6bt_df =
-      *(DataFieldBoolean *)k6bt_control.GetDataField();
-  k6bt_df.Set(config.k6bt);
-  k6bt_control.RefreshDisplay();
+  LoadValueEnum(BaudRate, config.baud_rate);
+  LoadValueEnum(BulkBaudRate, config.bulk_baud_rate);
+  LoadValueEnum(IP_ADDRESS, config.ip_address);
+  LoadValueEnum(TCPPort, config.tcp_port);
+  LoadValue(SpectatePath, config.path);
+  LoadValue(OwnCallsign, config.port_name);
+  LoadValueEnum(I2CBus, config.i2c_bus);
+  LoadValueEnum(I2CAddr, config.i2c_addr);
+  LoadValueEnum(PressureUsage, config.press_use);
+  LoadValueEnum(Driver, config.driver_name);
+  LoadValue(SyncFromDevice, config.sync_from_device);
+  LoadValue(SyncToDevice, config.sync_to_device);
+  LoadValue(SendPosition, config.send_position);
+  LoadValueEnum(PolarSyncMode, config.polar_sync);
+  LoadValue(K6Bt, config.k6bt);
+  LoadValueEnum(EngineTypes, config.engine_type);
+  LoadValueEnum(InstrumentAlignment, config.instrument_alignment);
 
   UpdateVisibilities();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-SupportsBulkBaudRate(const DataField &df)
+SupportsBulkBaudRate(const DataField &df) noexcept
 {
-  const TCHAR *driver_name = df.GetAsString();
-  if (driver_name == NULL)
+  const char *driver_name = df.GetAsString();
+  if (driver_name == nullptr)
     return false;
 
   const struct DeviceRegister *driver = FindDriverByName(driver_name);
-  if (driver == NULL)
+  if (driver == nullptr)
     return false;
 
   return driver->SupportsBulkBaudRate();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-CanReceiveSettings(const DataField &df)
+CanReceiveSettings(const DataField &df) noexcept
 {
-  const TCHAR *driver_name = df.GetAsString();
-  if (driver_name == NULL)
+  const char *driver_name = df.GetAsString();
+  if (driver_name == nullptr)
     return false;
 
   const struct DeviceRegister *driver = FindDriverByName(driver_name);
-  if (driver == NULL)
+  if (driver == nullptr)
     return false;
 
   return driver->CanReceiveSettings();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-CanSendSettings(const DataField &df)
+CanSendSettings(const DataField &df) noexcept
 {
-  const TCHAR *driver_name = df.GetAsString();
-  if (driver_name == NULL)
+  const char *driver_name = df.GetAsString();
+  if (driver_name == nullptr)
     return false;
 
   const struct DeviceRegister *driver = FindDriverByName(driver_name);
-  if (driver == NULL)
+  if (driver == nullptr)
     return false;
 
   return driver->CanSendSettings();
 }
 
-gcc_pure
-static DeviceConfig::PortType
-GetPortType(const DataField &df)
+[[gnu::pure]]
+static bool
+CanSendPosition(const DataField &df) noexcept
 {
-  const DataFieldEnum &dfe = (const DataFieldEnum &)df;
-  const unsigned port = dfe.GetValue();
+  const char *driver_name = df.GetAsString();
+  if (driver_name == nullptr)
+    return false;
 
-  if (port < num_port_types)
-    return port_types[port].type;
+  const struct DeviceRegister *driver = FindDriverByName(driver_name);
+  if (driver == nullptr)
+    return false;
 
-  return (DeviceConfig::PortType)(port >> 16);
+  return driver->CanSendPosition();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-CanPassThrough(const DataField &df)
+CanPassThrough(const DataField &df) noexcept
 {
-  const TCHAR *driver_name = df.GetAsString();
+  const char *driver_name = df.GetAsString();
   if (driver_name == nullptr)
     return false;
 
@@ -536,15 +256,46 @@ CanPassThrough(const DataField &df)
   return driver->HasPassThrough();
 }
 
+[[gnu::pure]]
+static bool
+CanReceivePolar(const DataField &df) noexcept
+{
+  const char *driver_name = df.GetAsString();
+  if (driver_name == nullptr)
+    return false;
+
+  const struct DeviceRegister *driver = FindDriverByName(driver_name);
+  if (driver == nullptr)
+    return false;
+
+  return driver->CanReceivePolar();
+}
+
+[[gnu::pure]]
+static bool
+CanSendPolar(const DataField &df) noexcept
+{
+  const char *driver_name = df.GetAsString();
+  if (driver_name == nullptr)
+    return false;
+
+  const struct DeviceRegister *driver = FindDriverByName(driver_name);
+  if (driver == nullptr)
+    return false;
+
+  return driver->CanSendPolar();
+}
 
 void
-DeviceEditWidget::UpdateVisibilities()
+DeviceEditWidget::UpdateVisibilities() noexcept
 {
-  const DeviceConfig::PortType type = GetPortType(GetDataField(Port));
+  const auto &port_df = (const DataFieldEnum &)GetDataField(Port);
+  const DeviceConfig::PortType type = GetPortType(port_df);
   const bool maybe_bluetooth =
-    DeviceConfig::MaybeBluetooth(type, GetDataField(Port).GetAsString());
+    DeviceConfig::MaybeBluetooth(type, port_df.GetAsString());
   const bool k6bt = maybe_bluetooth && GetValueBoolean(K6Bt);
   const bool uses_speed = DeviceConfig::UsesSpeed(type) || k6bt;
+  const bool maybe_engine_sensor = type == DeviceConfig::PortType::BLE_SENSOR;
 
   SetRowAvailable(BaudRate, uses_speed);
   SetRowAvailable(BulkBaudRate, uses_speed &&
@@ -554,6 +305,8 @@ DeviceEditWidget::UpdateVisibilities()
                 SupportsBulkBaudRate(GetDataField(Driver)));
   SetRowAvailable(IP_ADDRESS, DeviceConfig::UsesIPAddress(type));
   SetRowAvailable(TCPPort, DeviceConfig::UsesTCPPort(type));
+  SetRowAvailable(SpectatePath, type == DeviceConfig::PortType::SPECTATE_FILE);
+  SetRowAvailable(OwnCallsign, type == DeviceConfig::PortType::SPECTATE_FILE);
   SetRowAvailable(I2CBus, DeviceConfig::UsesI2C(type));
   SetRowAvailable(I2CAddr, DeviceConfig::UsesI2C(type) &&
                 type != DeviceConfig::PortType::NUNCHUCK);
@@ -566,82 +319,124 @@ DeviceEditWidget::UpdateVisibilities()
                 && CanPassThrough(GetDataField(Driver))
                 && GetValueBoolean(UseSecondDriver));
 
+  const bool can_receive = CanReceiveSettings(GetDataField(Driver));
+  const bool can_send = CanSendSettings(GetDataField(Driver));
+  const bool can_send_position = CanSendPosition(GetDataField(Driver));
   SetRowVisible(SyncFromDevice, DeviceConfig::UsesDriver(type) &&
-                CanReceiveSettings(GetDataField(Driver)));
+                can_receive);
   SetRowVisible(SyncToDevice, DeviceConfig::UsesDriver(type) &&
-                CanSendSettings(GetDataField(Driver)));
+                can_send);
+  SetRowVisible(SendPosition, DeviceConfig::UsesDriver(type) &&
+                can_send_position);
+  const bool can_receive_polar = CanReceivePolar(GetDataField(Driver));
+  const bool can_send_polar = CanSendPolar(GetDataField(Driver));
+  const bool polar_row_applicable = DeviceConfig::UsesDriver(type) &&
+                                    (can_receive_polar || can_send_polar);
+  const bool is_internal = (type == DeviceConfig::PortType::INTERNAL);
+  SetRowAvailable(InstrumentAlignment, is_internal);
+  SetRowVisible(InstrumentAlignment, is_internal);
+  /* Hide when the driver does not register polar receive/send capability. */
+  SetRowAvailable(PolarSyncMode, polar_row_applicable);
+  SetRowVisible(PolarSyncMode, polar_row_applicable);
+  if (can_receive_polar || can_send_polar) {
+    auto &polar_df = (DataFieldEnum &)GetDataField(PolarSyncMode);
+    const auto prev = polar_df.GetValue();
+    FillPolarSync(polar_df, can_receive_polar, can_send_polar);
+    polar_df.SetValue(prev);
+  }
   SetRowAvailable(K6Bt, maybe_bluetooth);
+  SetRowAvailable(EngineTypes, maybe_engine_sensor);
 }
 
 void
-DeviceEditWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+DeviceEditWidget::Prepare(ContainerWindow &parent,
+                          const PixelRect &rc) noexcept
 {
   RowFormWidget::Prepare(parent, rc);
 
   DataFieldEnum *port_df = new DataFieldEnum(this);
   FillPorts(*port_df, config);
-  auto *port_control = Add(_("Port"), NULL, port_df);
+  auto *port_control = Add(_("Port"), nullptr, port_df);
   port_control->SetEditCallback(EditPortCallback);
+
+  DataFieldEnum *engine_type_df = new DataFieldEnum(this);
+  FillEngineType(*engine_type_df);
+  engine_type_df->SetValue(config.engine_type);
+  Add(_("Engine Type"), nullptr, engine_type_df);
 
   DataFieldEnum *baud_rate_df = new DataFieldEnum(this);
   FillBaudRates(*baud_rate_df);
-  baud_rate_df->Set(config.baud_rate);
-  Add(_("Baud rate"), NULL, baud_rate_df);
+  baud_rate_df->SetValue(config.baud_rate);
+  Add(_("Baud rate"), nullptr, baud_rate_df);
 
   DataFieldEnum *bulk_baud_rate_df = new DataFieldEnum(this);
-  bulk_baud_rate_df->addEnumText(_T("Default"), 0u);
+  bulk_baud_rate_df->addEnumText("Default", 0u);
   FillBaudRates(*bulk_baud_rate_df);
-  bulk_baud_rate_df->Set(config.bulk_baud_rate);
+  bulk_baud_rate_df->SetValue(config.bulk_baud_rate);
   Add(_("Bulk baud rate"),
       _("The baud rate used for bulk transfers, such as task declaration or flight download."),
       bulk_baud_rate_df);
 
-  DataFieldString *ip_address_df = new DataFieldString(_T(""), this);
-  ip_address_df->Set(config.ip_address);
-  Add(_("IP Address"), NULL, ip_address_df);
+  DataFieldString *ip_address_df = new DataFieldString("", this);
+  ip_address_df->SetValue(config.ip_address);
+  Add(_("IP address"), nullptr, ip_address_df);
 
   DataFieldEnum *tcp_port_df = new DataFieldEnum(this);
   FillTCPPorts(*tcp_port_df);
-  tcp_port_df->Set(config.tcp_port);
-  Add(_("TCP Port"), NULL, tcp_port_df);
+  tcp_port_df->SetValue(config.tcp_port);
+  Add(_("TCP port"), nullptr, tcp_port_df);
+
+  DataFieldString *spectate_path_df = new DataFieldString("", this);
+  spectate_path_df->SetValue(config.path);
+  Add(C_("Setting", "Spectate file"),
+      _("Full path to Condor 3 Spectate.json. "
+        "Default: c:\\condor3\\logs\\spectate.json"),
+      spectate_path_df);
+
+  DataFieldString *own_callsign_df = new DataFieldString("", this);
+  own_callsign_df->SetValue(config.port_name);
+  Add(C_("Setting", "Own callsign"),
+      _("Competition number of your glider in Spectate.json "
+        "(excluded from traffic, used as position reference)."),
+      own_callsign_df);
 
   DataFieldEnum *i2c_bus_df = new DataFieldEnum(this);
   FillI2CBus(*i2c_bus_df);
-  i2c_bus_df->Set(config.i2c_bus);
-  Add(_("I2C Bus"), _("Select the description or bus number that matches your configuration."),
+  i2c_bus_df->SetValue(config.i2c_bus);
+  Add(_("I²C bus"), _("Select the description or bus number that matches your configuration."),
                       i2c_bus_df);
 
   DataFieldEnum *i2c_addr_df = new DataFieldEnum(this);
   FillI2CAddr(*i2c_addr_df);
-  i2c_addr_df->Set(config.i2c_addr);
-  Add(_("I2C Addr"), _("The i2c address that matches your configuration."
-                        "This field is not used when your selection in the I2C Bus field is not an i2c bus number. "
-                        "In case you do not understand the previous sentence you may assume that this field is not used."),
+  i2c_addr_df->SetValue(config.i2c_addr);
+  Add(_("I²C addr"), _("The I²C address that matches your configuration. "
+                        "This field is not used when your selection in the \"I²C bus\" field is not an I²C bus number. "
+                        "Assume this field is not in use if that doesn\'t make sense to you."),
                         i2c_addr_df);
 
   DataFieldEnum *press_df = new DataFieldEnum(this);
   FillPress(*press_df);
-  press_df->Set((unsigned)config.press_use);
+  press_df->SetValue(config.press_use);
   Add(_("Pressure use"), _("Select the purpose of this pressure sensor. "
                            "This sensor measures some pressure. Here you tell the system "
-                           "what pressure this is and what its should be used for."),
+                           "what pressure this is and what it should be used for."),
                            press_df);
 
   DataFieldEnum *driver_df = new DataFieldEnum(this);
 
   const struct DeviceRegister *driver;
-  for (unsigned i = 0; (driver = GetDriverByIndex(i)) != NULL; i++)
+  for (unsigned i = 0; (driver = GetDriverByIndex(i)) != nullptr; i++)
     driver_df->addEnumText(driver->name, driver->display_name);
 
   driver_df->Sort(1);
-  driver_df->Set(config.driver_name);
+  driver_df->SetValue(config.driver_name);
 
-  Add(_("Driver"), NULL, driver_df);
+  Add(_("Driver"), nullptr, driver_df);
 
   // for a passthrough device, offer additional driver
   AddBoolean(_("Passthrough device"),
-             _("This option lets you configure if this device has a passed "
-               " through device connected."),
+             _("Whether the device has a passed-"
+               "through device connected."),
              config.use_second_device, this);
 
   DataFieldEnum *driver2_df = new DataFieldEnum(this);
@@ -649,24 +444,54 @@ DeviceEditWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
     driver2_df->addEnumText(driver->name, driver->display_name);
 
   driver2_df->Sort(1);
-  driver2_df->Set(config.driver2_name);
+  driver2_df->SetValue(config.driver2_name);
 
   Add(_("Second Driver"), nullptr, driver2_df);
 
   AddBoolean(_("Sync. from device"),
-             _("This option lets you configure if XCSoar should use settings "
+             _("Tells XCSoar to use settings "
                "like the MacCready value, bugs and ballast from the device."),
              config.sync_from_device, this);
   SetExpertRow(SyncFromDevice);
 
   AddBoolean(_("Sync. to device"),
-             _("This option lets you configure if XCSoar should send settings "
+             _("Tells XCSoar to send settings "
                "like the MacCready value, bugs and ballast to the device."),
              config.sync_to_device, this);
   SetExpertRow(SyncToDevice);
 
-  AddBoolean(_T("K6Bt"),
-             _("Enable this if you use a K6Bt to connect the device."),
+  AddBoolean(C_("Setting", "Emit GPGGA/GPRMC"),
+             _("Tells XCSoar to send its current GPS position to the "
+               "device as $GPGGA and $GPRMC sentences. Turn off when "
+               "another GPS source is already feeding the device on "
+               "the same line. Changes take effect after reconnecting "
+               "the device."),
+             config.send_position, this);
+  SetExpertRow(SendPosition);
+
+  DataFieldEnum *polar_sync_df = new DataFieldEnum(this);
+  FillPolarSync(*polar_sync_df,
+                CanReceivePolar(*driver_df),
+                CanSendPolar(*driver_df));
+  polar_sync_df->SetValue(config.polar_sync);
+  Add(_("Polar sync"),
+      _("Synchronize the glide polar between XCSoar and the device "
+        "(LXNAV varios). 'Receive' adopts the polar from the device "
+        "(e.g. for club gliders). 'Send' pushes XCSoar's polar to the "
+        "device."),
+      polar_sync_df);
+
+  DataFieldEnum *instrument_alignment_df = new DataFieldEnum(this);
+  FillInstrumentAlignment(*instrument_alignment_df);
+  instrument_alignment_df->SetValue((unsigned)config.instrument_alignment);
+  Add(_("Built-in IMU"),
+      _("Whether the instrument housing the IMU is permanently fixed and its axes "
+        "are aligned to the aircraft axes. Set to 'Fixed & aligned' only "
+        "when the device is rigidly mounted. If in doubt, use 'Not aligned'."),
+      instrument_alignment_df);
+
+  AddBoolean("K6Bt",
+             _("Whether you use a K6Bt to connect the device."),
              config.k6bt, this);
   SetExpertRow(K6Bt);
 
@@ -677,7 +502,7 @@ DeviceEditWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
  * @return true if the value has changed
  */
 static bool
-FinishPortField(DeviceConfig &config, const DataFieldEnum &df)
+FinishPortField(DeviceConfig &config, const DataFieldEnum &df) noexcept
 {
   unsigned value = df.GetValue();
 
@@ -688,7 +513,6 @@ FinishPortField(DeviceConfig &config, const DataFieldEnum &df)
     (DeviceConfig::PortType)(value >> 16);
   switch (new_type) {
   case DeviceConfig::PortType::DISABLED:
-  case DeviceConfig::PortType::AUTO:
   case DeviceConfig::PortType::INTERNAL:
   case DeviceConfig::PortType::DROIDSOAR_V2:
   case DeviceConfig::PortType::NUNCHUCK:
@@ -698,14 +522,24 @@ FinishPortField(DeviceConfig &config, const DataFieldEnum &df)
   case DeviceConfig::PortType::TCP_LISTENER:
   case DeviceConfig::PortType::UDP_LISTENER:
   case DeviceConfig::PortType::RFCOMM_SERVER:
+  case DeviceConfig::PortType::GLIDER_LINK:
+  case DeviceConfig::PortType::SPECTATE_FILE:
     if (new_type == config.port_type)
       return false;
 
+    /* Drop a stale serial path (e.g. COMx:) before applying Spectate
+       defaults; otherwise ApplySpectateDefaults leaves it unchanged. */
+    if (new_type == DeviceConfig::PortType::SPECTATE_FILE)
+      config.path.clear();
+
     config.port_type = new_type;
+    if (new_type == DeviceConfig::PortType::SPECTATE_FILE)
+      config.ApplySpectateDefaults();
     return true;
 
   case DeviceConfig::PortType::SERIAL:
   case DeviceConfig::PortType::PTY:
+  case DeviceConfig::PortType::ANDROID_USB_SERIAL:
     /* Serial Port */
     if (new_type == config.port_type &&
         StringIsEqual(config.path, df.GetAsString()))
@@ -716,6 +550,8 @@ FinishPortField(DeviceConfig &config, const DataFieldEnum &df)
     return true;
 
   case DeviceConfig::PortType::RFCOMM:
+  case DeviceConfig::PortType::BLE_SERIAL:
+  case DeviceConfig::PortType::BLE_SENSOR:
     /* Bluetooth */
     if (new_type == config.port_type &&
         StringIsEqual(config.bluetooth_mac, df.GetAsString()))
@@ -742,29 +578,38 @@ FinishPortField(DeviceConfig &config, const DataFieldEnum &df)
 }
 
 bool
-DeviceEditWidget::Save(bool &_changed)
+DeviceEditWidget::Save(bool &_changed) noexcept
 {
   bool changed = false;
 
   changed |= FinishPortField(config, (const DataFieldEnum &)GetDataField(Port));
 
+  const bool maybe_engine_sensor = config.port_type == DeviceConfig::PortType::BLE_SENSOR;
+  if (maybe_engine_sensor)
+    changed |= SaveValueEnum(EngineTypes, config.engine_type);
+
   if (config.MaybeBluetooth())
     changed |= SaveValue(K6Bt, config.k6bt);
 
   if (config.UsesSpeed()) {
-    changed |= SaveValue(BaudRate, config.baud_rate);
-    changed |= SaveValue(BulkBaudRate, config.bulk_baud_rate);
+    changed |= SaveValueEnum(BaudRate, config.baud_rate);
+    changed |= SaveValueEnum(BulkBaudRate, config.bulk_baud_rate);
   }
 
   if (config.UsesIPAddress())
     changed |= SaveValue(IP_ADDRESS, config.ip_address);
 
   if (config.UsesTCPPort())
-    changed |= SaveValue(TCPPort, config.tcp_port);
+    changed |= SaveValueEnum(TCPPort, config.tcp_port);
+
+  if (config.port_type == DeviceConfig::PortType::SPECTATE_FILE) {
+    changed |= SaveValue(SpectatePath, config.path);
+    changed |= SaveValue(OwnCallsign, config.port_name);
+  }
 
   if (config.UsesI2C()) {
-    changed |= SaveValue(I2CBus, config.i2c_bus);
-    changed |= SaveValue(I2CAddr, config.i2c_addr);
+    changed |= SaveValueEnum(I2CBus, config.i2c_bus);
+    changed |= SaveValueEnum(I2CAddr, config.i2c_addr);
     changed |= SaveValueEnum(PressureUsage, config.press_use);
   }
 
@@ -777,6 +622,13 @@ DeviceEditWidget::Save(bool &_changed)
     if (CanSendSettings(GetDataField(Driver)))
       changed |= SaveValue(SyncToDevice, config.sync_to_device);
 
+    if (CanSendPosition(GetDataField(Driver)))
+      changed |= SaveValue(SendPosition, config.send_position);
+
+    if (CanReceivePolar(GetDataField(Driver)) ||
+        CanSendPolar(GetDataField(Driver)))
+      changed |= SaveValueEnum(PolarSyncMode, config.polar_sync);
+
     if (CanPassThrough(GetDataField(Driver))) {
       changed |= SaveValue(UseSecondDriver, config.use_second_device);
       changed |= SaveValue(SecondDriver, config.driver2_name.buffer(),
@@ -784,20 +636,37 @@ DeviceEditWidget::Save(bool &_changed)
     }
   }
 
-  if (CommonInterface::Basic().sensor_calibration_available)
+  if (config.port_type == DeviceConfig::PortType::INTERNAL)
+    changed |= SaveValueEnum(InstrumentAlignment, config.instrument_alignment);
+
+  const auto &basic = CommonInterface::Basic();
+  if (basic.sensor_calibration_available) {
+    config.sensor_offset = basic.sensor_calibration_offset;
+    config.sensor_factor = basic.sensor_calibration_factor;
     changed = true;
+  }
 
   _changed |= changed;
   return true;
 }
 
 void
-DeviceEditWidget::OnModified(DataField &df)
+DeviceEditWidget::OnModified(DataField &df) noexcept
 {
+  if (IsDataField(Port, df)) {
+    const auto type = GetPortType((const DataFieldEnum &)df);
+    if (type == DeviceConfig::PortType::SPECTATE_FILE) {
+      if (config.port_type != DeviceConfig::PortType::SPECTATE_FILE)
+        config.path.clear();
+      config.ApplySpectateDefaults();
+      LoadValue(SpectatePath, config.path);
+    }
+  }
+
   if (IsDataField(Port, df) || IsDataField(Driver, df) ||
       IsDataField(UseSecondDriver, df) || IsDataField(K6Bt, df))
     UpdateVisibilities();
 
-  if (listener != NULL)
+  if (listener != nullptr)
     listener->OnModified(*this);
 }

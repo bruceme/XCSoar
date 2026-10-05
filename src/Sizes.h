@@ -1,7 +1,7 @@
-#ifndef XCSOAR_SIZES_H
-#define XCSOAR_SIZES_H
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
 
 // max length airspace and waypoint names
 #define NAME_SIZE 50
-
-#endif

@@ -1,28 +1,7 @@
-/*
- Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef XCSOAR_TRAFFIC_RENDERER_HPP
-#define XCSOAR_TRAFFIC_RENDERER_HPP
+#pragma once
 
 #include "FLARM/Color.hpp"
 
@@ -30,14 +9,49 @@ struct PixelPoint;
 class Canvas;
 struct TrafficLook;
 struct FlarmTraffic;
+struct GliderLinkTraffic;
 class Angle;
 
 namespace TrafficRenderer
 {
 void
 Draw(Canvas &canvas, const TrafficLook &traffic_look,
+     bool fading,
      const FlarmTraffic &traffic, Angle angle,
-     FlarmColor color, PixelPoint pt);
-}
+     FlarmColor color, PixelPoint pt) noexcept;
 
-#endif
+/**
+ * Draw a traffic symbol scaled to fit a list row icon slot.
+ */
+void
+DrawList(Canvas &canvas, const TrafficLook &traffic_look,
+         const FlarmTraffic &traffic, Angle angle,
+         FlarmColor color, PixelPoint pt,
+         unsigned icon_size) noexcept;
+
+void
+Draw(Canvas &canvas, const TrafficLook &traffic_look,
+     const GliderLinkTraffic &traffic, Angle angle, PixelPoint pt) noexcept;
+
+/**
+ * Pixel height of map traffic symbols (DPI-aware, not window size).
+ */
+[[gnu::const]]
+unsigned MapIconSize() noexcept;
+
+/**
+ * Label offsets for map traffic symbols, derived from #MapIconSize().
+ */
+struct MapTrafficLabelLayout {
+  unsigned icon_size;
+  /** Subtract from symbol centre Y for the callsign anchor. */
+  int name_offset_y;
+  /** Add to symbol centre Y for the climb-rate anchor. */
+  int climb_offset_y;
+  /** Minimum own-ship distance (px) before labels are drawn. */
+  int min_label_distance;
+};
+
+[[gnu::const]]
+MapTrafficLabelLayout MapLabelLayout() noexcept;
+}

@@ -164,7 +164,8 @@ Konvektionsvorhersagen verwendet. (siehe Abschnitt~\ref{sec:convection-forecast}
 Hieraus werden dann Höhe der Konvektionsschicht und Basis der Wolken ermittelt.
 
 
-Beim Systemstrat wird, nachdem ein GPS als solches erkannt ist und über einen Drucksensor verfügt,
+Beim Systemstrat wird, nachdem ein GPS als solches erkannt ist und über einen Drucksensor verfügt
+(extern oder intern auf Android und iOS),
 das QNH automatisch ermittelt.  Diese Korrektur setzt das QNH so, daß die Druckhöhe mit der
 Geländehöhe übereinstimmt.
 
@@ -239,7 +240,8 @@ Viele Piloten verringern den MC-Wert und somit die Sollfahrt wenn Sie während d
 Die Theorie hierfür ist grob geschrieben in einem Aufsatz von John
   Cochrane, ``MacCready Theory with Uncertain Lift and Limited
   Altitude'' {\em Technical Soaring} 23 (3) (July 1999) 88-96.
-  \url{http://faculty.chicagogsb.edu/john.cochrane/research/Papers/newmcred.pdf}
+  \url{https://www.johnhcochrane.com/s/newmcred.pdf}
+
 
 Ein konfigurierbarer Parameter, $\gamma$ (`der STF Risiko Faktor '\footnote{STF  = Speed To Fly $\Rightarrow$  Sollfahrt},
 in den Konfigurationseinstellungen auf der Seite "Endanflugrechner") erlaubt die Kontrolle, wie der Risiko-MC-Wert berechnet wird.
@@ -467,7 +469,7 @@ DG $\rightarrow$ Dumm Gelaufen \verb":-("
 \vspace{2em}
 \section{Ermittlung der Schnittgeschwindigkeiten}\label{sec:task-speed-estim}
 
-Viele von \textsf{XCSoar's} internen Algorythmen benutzen Annahmen bzw.\ Vorhersagen für die Zeit, um
+Viele von \textsf{XCSoar's} internen Algorithmen benutzen Annahmen bzw.\ Vorhersagen für die Zeit, um
 einen bestimmten Punkt zu erreichen. Dies sind Berechnungen ''in die Zukunft''  aus bisher 
 gesammelten Informationen.
 

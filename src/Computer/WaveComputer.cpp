@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WaveComputer.hpp"
 #include "WaveResult.hpp"
@@ -30,7 +10,7 @@ Copyright_License {
 #include "Geo/Flat/FlatLine.hpp"
 
 void
-WaveComputer::Initialise()
+WaveComputer::Initialise() noexcept
 {
   delta_time.Reset();
   ResetCurrent();
@@ -38,7 +18,7 @@ WaveComputer::Initialise()
 }
 
 void
-WaveComputer::ResetCurrent()
+WaveComputer::ResetCurrent() noexcept
 {
   last_location_available.Clear();
   last_netto_vario_available.Clear();
@@ -54,9 +34,9 @@ WaveComputer::ResetCurrent()
  * We should have new attributes in #NMEAInfo to get that piece of
  * information right away without this ugly code duplication.
  */
-gcc_pure
+[[gnu::pure]]
 static Validity
-GetNettoVarioAvailable(const NMEAInfo &basic)
+GetNettoVarioAvailable(const NMEAInfo &basic) noexcept
 {
   if (basic.netto_vario_available)
     return basic.netto_vario_available;
@@ -81,10 +61,10 @@ GetNettoVarioAvailable(const NMEAInfo &basic)
  * WaveInfo::Undefined() if there is no valid result in the
  * #LeastSquares instance.
  */
-gcc_pure
+[[gnu::pure]]
 static WaveInfo
 GetWaveInfo(const LeastSquares &ls, const FlatProjection &projection,
-            double time)
+            TimeStamp time) noexcept
 {
   if (!ls.HasResult())
     return WaveInfo::Undefined();
@@ -104,14 +84,9 @@ GetWaveInfo(const LeastSquares &ls, const FlatProjection &projection,
 }
 
 void
-WaveComputer::Decay(double min_time)
+WaveComputer::Decay(TimeStamp min_time) noexcept
 {
-  for (auto i = waves.begin(), end = waves.end(); i != end;) {
-    if (i->time < min_time)
-      i = waves.erase(i);
-    else
-      ++i;
-  }
+  waves.remove_if([min_time](const auto &i){ return i.time < min_time; });
 }
 
 /**
@@ -120,36 +95,22 @@ WaveComputer::Decay(double min_time)
  * length.
  */
 static constexpr bool
-IsRatioInRange(double ratio)
+IsRatioInRange(double ratio) noexcept
 {
   return ratio > -0.1 && ratio < 1.1;
-}
-
-/**
- * Wrapper for FlatLine::Interpolate() which will clip the ratio to
- * [0..1] so the result stays within the [a..b] bounds.
- */
-static constexpr FlatPoint
-InterpolateClip(const FlatLine line, double ratio)
-{
-  return ratio <= 0
-    ? line.a
-    : (ratio >= 1
-       ? line.b
-       : line.Interpolate(ratio));
 }
 
 struct RatioAndDistance {
   double ratio, squared_distance;
 };
 
-gcc_pure
+[[gnu::pure]]
 static RatioAndDistance
-CalcRatioAndDistance(const FlatLine line, const FlatPoint point)
+CalcRatioAndDistance(const FlatLine line, const FlatPoint point) noexcept
 {
   RatioAndDistance result;
   result.ratio = line.ProjectedRatio(point);
-  FlatPoint projected = InterpolateClip(line, result.ratio);
+  FlatPoint projected = line.InterpolateClip(result.ratio);
   result.squared_distance = (point - projected).MagnitudeSquared();
   return result;
 }
@@ -162,7 +123,7 @@ CalcRatioAndDistance(const FlatLine line, const FlatPoint point)
  * @return true if the lines have been merged into #a
  */
 static bool
-MergeLines(FlatLine &a, const FlatLine b)
+MergeLines(FlatLine &a, const FlatLine b) noexcept
 {
   const double a_sq = a.GetSquaredDistance();
   const double b_sq = b.GetSquaredDistance();
@@ -216,7 +177,7 @@ MergeLines(FlatLine &a, const FlatLine b)
  */
 static bool
 MergeLines(WaveInfo &i, const WaveInfo &new_wave, double new_length,
-           FlatLine new_line, const FlatProjection &projection)
+           FlatLine new_line, const FlatProjection &projection) noexcept
 {
   Angle delta_angle = (new_wave.normal - i.normal).AsDelta();
   if (delta_angle > Angle::QuarterCircle())
@@ -256,7 +217,7 @@ MergeLines(WaveInfo &i, const WaveInfo &new_wave, double new_length,
 }
 
 inline void
-WaveComputer::FoundWave(const WaveInfo &new_wave)
+WaveComputer::FoundWave(const WaveInfo &new_wave) noexcept
 {
   /* check if we can merge the new wave with an existing one to
      unclutter the screen */
@@ -281,7 +242,7 @@ void
 WaveComputer::Compute(const NMEAInfo &basic,
                       const FlyingState &flight,
                       WaveResult &result,
-                      const WaveSettings &settings)
+                      const WaveSettings &settings) noexcept
 {
   const bool new_enabled = settings.enabled;
   if (new_enabled != last_enabled) {
@@ -315,12 +276,13 @@ WaveComputer::Compute(const NMEAInfo &basic,
        and a vario value */
     return;
 
-  const auto dt = delta_time.Update(basic.time, 0.5, 20);
-  if (dt < 0)
+  const auto dt = delta_time.Update(basic.time, FloatDuration{0.5},
+                                    std::chrono::seconds{20});
+  if (dt.count() < 0)
     /* time warp */
     Reset();
 
-  if (dt <= 0)
+  if (dt.count() <= 0)
     /* throttle */
     return;
 
@@ -344,7 +306,7 @@ WaveComputer::Compute(const NMEAInfo &basic,
   else
     sinking_clock.Subtract(dt);
 
-  const bool sinking = sinking_clock >= dt + 1;
+  const bool sinking = sinking_clock >= dt + std::chrono::seconds{1};
   if (sinking) {
     /* we've been sinking; stop calculating the current wave; prepare
        to flush the #LeastSquares instance */
@@ -352,7 +314,8 @@ WaveComputer::Compute(const NMEAInfo &basic,
       /* we've been lifting in the wave for some time; see if we
          really spotted a wave */
       const WaveInfo wave = GetWaveInfo(ls, projection,
-                                        basic.time_available ? basic.time : 0);
+                                        basic.time_available
+                                        ? basic.time : TimeStamp::Undefined());
       if (wave.IsDefined())
         /* yes, spotted a wave: copy it from the #LeastSquares
            instance to the list of waves */
@@ -364,7 +327,7 @@ WaveComputer::Compute(const NMEAInfo &basic,
 
   if (basic.time_available)
     /* forget all waves which are older than 8 hours */
-    Decay(basic.time - 8 * 3600);
+    Decay(basic.time - std::chrono::hours{8});
 
   /* fill the #WaveResult */
 
@@ -373,14 +336,17 @@ WaveComputer::Compute(const NMEAInfo &basic,
   /* first copy the wave that is currently being calculated (partial
      data) */
   WaveInfo wave = GetWaveInfo(ls, projection,
-                              basic.time_available ? basic.time : 0);
+                              basic.time_available
+                              ? basic.time : TimeStamp::Undefined());
   if (wave.IsDefined())
     result.waves.push_back(wave);
 
   /* now copy the rest */
-  for (auto i = waves.begin(), end = waves.end();
-       i != end && !result.waves.full(); ++i)
-    result.waves.push_back(*i);
+  for (const auto &i : waves) {
+    if (result.waves.full())
+      break;
+    result.waves.push_back(i);
+  }
 
   /* remember some data for the next iteration */
   last_location_available = basic.location_available;

@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AirspaceCircle.hpp"
 #include "Geo/GeoVector.hpp"
@@ -27,7 +8,7 @@
 #include "AirspaceIntersectSort.hpp"
 #include "AirspaceIntersectionVector.hpp"
 
-AirspaceCircle::AirspaceCircle(const GeoPoint &loc, const double _radius)
+AirspaceCircle::AirspaceCircle(const GeoPoint &loc, const double _radius) noexcept
   :AbstractAirspace(Shape::CIRCLE), m_center(loc), m_radius(_radius)
 {
   is_convex = TriState::TRUE;
@@ -45,14 +26,14 @@ AirspaceCircle::AirspaceCircle(const GeoPoint &loc, const double _radius)
 }
 
 bool
-AirspaceCircle::Inside(const GeoPoint &loc) const
+AirspaceCircle::Inside(const GeoPoint &loc) const noexcept
 {
   return loc.DistanceS(m_center) <= m_radius;
 }
 
 AirspaceIntersectionVector
 AirspaceCircle::Intersects(const GeoPoint &start, const GeoPoint &end,
-                           const FlatProjection &projection) const
+                           const FlatProjection &projection) const noexcept
 {
   const auto f_radius = projection.ProjectRangeFloat(m_center, m_radius);
   const auto f_center = projection.ProjectFloat(m_center);
@@ -60,9 +41,12 @@ AirspaceCircle::Intersects(const GeoPoint &start, const GeoPoint &end,
   const auto f_end = projection.ProjectFloat(end);
   const FlatLine line(f_start, f_end);
 
-  FlatPoint f_p1, f_p2;
-  if (!line.IntersectCircle(f_radius, f_center, f_p1, f_p2))
+  const auto f_p = line.IntersectCircle(f_radius, f_center);
+  if (!f_p)
     return AirspaceIntersectionVector();
+
+  const auto &f_p1 = f_p->first;
+  const auto &f_p2 = f_p->second;
 
   const auto mag = line.GetSquaredDistance();
   if (mag <= 0)
@@ -89,7 +73,7 @@ AirspaceCircle::Intersects(const GeoPoint &start, const GeoPoint &end,
 
 GeoPoint
 AirspaceCircle::ClosestPoint(const GeoPoint &loc,
-                             gcc_unused const FlatProjection &projection) const
+                             const FlatProjection &) const noexcept
 {
   // Calculate distance from center point
   const auto d = loc.DistanceS(m_center);

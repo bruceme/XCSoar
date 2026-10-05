@@ -1,37 +1,16 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /**
  * Basic container class for storage of X-Y data pairs
  */
 
-#ifndef _XYDATASTORE_H
-#define _XYDATASTORE_H
+#pragma once
 
-#include "Util/TrivialArray.hxx"
+#include "Point2D.hpp"
+#include "util/TrivialArray.hxx"
 
 #include <type_traits>
-#define LEASTSQS_WEIGHT_STORE
 
 class XYDataStore
 {
@@ -39,6 +18,7 @@ protected:
   double sum_xw, sum_yw;
   double sum_weights;
 
+private:
   double y_max;
   double y_min;
   double x_min;
@@ -46,65 +26,68 @@ protected:
 
   unsigned sum_n;
 
-  struct Slot {
-    double x, y;
-
-#ifdef LEASTSQS_WEIGHT_STORE
+  struct Slot : DoublePoint2D {
     double weight;
-#endif
 
     Slot() = default;
 
-    constexpr
-    Slot(double _x, double _y, double _weight)
-      :x(_x), y(_y)
-#ifdef LEASTSQS_WEIGHT_STORE
-      , weight(_weight)
-#endif
-    {}
+    constexpr Slot(double _x, double _y, double _weight) noexcept
+      :DoublePoint2D(_x, _y), weight(_weight) {}
   };
 
   TrivialArray<Slot, 1000> slots;
 
 public:
-  bool IsEmpty() const {
+  constexpr bool IsEmpty() const noexcept {
     return sum_n == 0;
   }
 
-  bool HasResult() const {
+  constexpr bool HasResult() const noexcept {
     return sum_n >= 2;
   }
 
-  unsigned GetCount() const {
+  constexpr unsigned GetCount() const noexcept {
     return sum_n;
   }
 
   /**
    * Reset the store.
    */
-  void StoreReset();
+  void StoreReset() noexcept;
 
-  double GetMinX() const {
+  constexpr double GetMinX() const noexcept {
+    assert(!IsEmpty());
+
     return x_min;
   }
 
-  double GetMaxX() const {
+  constexpr double GetMaxX() const noexcept {
+    assert(!IsEmpty());
+
     return x_max;
   }
 
-  double GetMiddleX() const {
+  constexpr double GetMiddleX() const noexcept {
+    assert(!IsEmpty());
+
     return (x_min + x_max) / 2.;
   }
 
-  double GetMinY() const {
+  constexpr double GetMinY() const noexcept {
+    assert(!IsEmpty());
+
     return y_min;
   }
 
-  double GetMaxY() const {
+  constexpr double GetMaxY() const noexcept {
+    assert(!IsEmpty());
+
     return y_max;
   }
 
-  const TrivialArray<Slot, 1000> &GetSlots() const {
+  constexpr std::span<const Slot> GetSlots() const noexcept {
+    assert(!IsEmpty());
+
     return slots;
   }
 
@@ -117,16 +100,14 @@ protected:
    * @param y y-Value of the new data point
    * @param weight Weight of the new data point (optional)
    */
-  void StoreAdd(double x, double y, double weight=1);
+  void StoreAdd(double x, double y, double weight=1) noexcept;
 
   /**
    * Remove data point to the values.
    * If weights aren't stored, this assumes weight = 1
    */
-  void StoreRemove(const unsigned i);
+  void StoreRemove(const unsigned i) noexcept;
 
 };
 
 static_assert(std::is_trivial<XYDataStore>::value, "type is not trivial");
-
-#endif // _XYDATASTORE_H

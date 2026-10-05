@@ -1,37 +1,19 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TextProtocol.hpp"
 #include "Device.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/Util/NMEAWriter.hpp"
-#include "Time/TimeoutClock.hpp"
+#include "time/TimeoutClock.hpp"
 
-#include <assert.h>
+#include <cassert>
+#include <stdexcept>
+
 #include <string.h>
 
 static constexpr bool
-IsForbiddenFlarmChar(unsigned char ch)
+IsForbiddenFlarmChar(unsigned char ch) noexcept
 {
   return
     /* don't allow ASCII control characters */
@@ -41,15 +23,19 @@ IsForbiddenFlarmChar(unsigned char ch)
 }
 
 char *
-CopyCleanFlarmString(char *gcc_restrict dest, const char *gcc_restrict src)
+CopyCleanFlarmString(char *gcc_restrict dest, const char *gcc_restrict src,
+                     std::size_t maxBytes) noexcept
 {
-  while (true) {
+  std::size_t i=0;
+  while (i < maxBytes) {
     char ch = *src++;
     if (ch == 0)
       break;
 
-    if (!IsForbiddenFlarmChar(ch))
+    if (!IsForbiddenFlarmChar(ch)) {
       *dest++ = ch;
+      i++;
+    }
   }
 
   *dest = 0;
@@ -60,17 +46,43 @@ bool
 FlarmDevice::TextMode(OperationEnvironment &env)
 {
   /* the "text" mode is the same as NMEA mode, only the Port thread is
-     stopped */
-
-  if (!EnableNMEA(env))
-    return false;
+     stopped.  Stop the Rx thread FIRST, before sending any commands
+     to the FLARM, matching what BinaryMode() does.  This is critical
+     for passthrough scenarios (FLARM behind LXNAV vario) where the
+     Rx thread would consume FLARM responses. */
 
   port.StopRxThread();
+
+  switch (mode) {
+  case Mode::UNKNOWN:
+    /* LinkTimeout() sets mode to UNKNOWN between passthrough
+       sessions; preserve and use was_binary to decide whether we
+       need a binary EXIT before sending text commands. */
+    if (was_binary)
+      BinaryReset(env, std::chrono::milliseconds(500));
+    break;
+
+  case Mode::NMEA:
+  case Mode::TEXT:
+    /* Skip BinaryReset here: if we weren't in binary mode, sending the
+       raw EXIT frame bytes through passthrough can confuse the FLARM's
+       NMEA parser.  Also skip PFLAE,R / PFLAV,R since the Rx thread is
+       stopped and the responses would just be noise for ExpectString to
+       scan through. */
+    break;
+
+  case Mode::BINARY:
+    /* we were in binary mode; try to exit */
+    BinaryReset(env, std::chrono::milliseconds(500));
+    break;
+  }
+
+  was_binary = false;
   mode = Mode::TEXT;
   return true;
 }
 
-bool
+void
 FlarmDevice::Send(const char *sentence, OperationEnvironment &env)
 {
   assert(sentence != nullptr);
@@ -78,32 +90,30 @@ FlarmDevice::Send(const char *sentence, OperationEnvironment &env)
   /* workaround for a Garrecht TRX-1090 firmware bug: start with a new
      line, because the TRX-1090 expects the '$' to be the first
      character, or it won't forward the sentence to the FLARM  */
-  if (!port.Write('\n'))
-    return false;
+  port.Write('\n');
 
   /* From the FLARM data port specification: "All sentences must [...]
      end with [...] two checksum characters [...].  [...] these
      characters [...] must be provided in sentences to FLARM and are
      part of the answers given by FLARM." */
-  return PortWriteNMEA(port, sentence, env);
+  PortWriteNMEA(port, sentence, env);
 }
 
 bool
 FlarmDevice::Receive(const char *prefix, char *buffer, size_t length,
-                     OperationEnvironment &env, unsigned timeout_ms)
+                     OperationEnvironment &env,
+                     std::chrono::steady_clock::duration _timeout)
 {
   assert(prefix != nullptr);
 
-  TimeoutClock timeout(timeout_ms);
+  TimeoutClock timeout(_timeout);
 
-  if (!port.ExpectString(prefix, env, timeout_ms))
-    return false;
+  port.ExpectString(prefix, env, _timeout);
 
   char *p = (char *)buffer, *end = p + length;
   while (true) {
-    size_t nbytes = port.WaitAndRead(p, end - p, env, timeout);
-    if (nbytes == 0)
-      return false;
+    size_t nbytes = port.WaitAndRead(std::as_writable_bytes(std::span{p, std::size_t(end - p)}),
+                                     env, timeout);
 
     char *q = (char *)memchr(p, '*', nbytes);
     if (q != nullptr) {

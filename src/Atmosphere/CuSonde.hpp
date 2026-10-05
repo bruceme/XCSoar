@@ -1,30 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ATMOSPHERE_CUSONDE_HPP
-#define XCSOAR_ATMOSPHERE_CUSONDE_HPP
+#pragma once
 
 #include "Atmosphere/Temperature.hpp"
+
+#include <array>
 
 struct NMEAInfo;
 struct DerivedInfo;
@@ -37,8 +18,20 @@ class CuSonde {
 public:
   /** Meters between levels */
   static constexpr unsigned HEIGHT_STEP = 100;
-  /** Number of levels */
-  static constexpr unsigned NUM_LEVELS = 100;
+
+  /**
+   * Dry adiabatic lapse rate in K per metre, negative going up:
+   * g / c_p, see
+   * https://en.wikipedia.org/wiki/Lapse_rate#Dry_adiabatic_lapse_rate
+   */
+  static constexpr double DALR = -0.00974;
+
+  /**
+   * The thermal index (environment minus dry adiabat, K) below which
+   * the air is taken to be no longer usable for soaring; the convection
+   * ceiling is reported where the index crosses this value.
+   */
+  static constexpr double TITHRESHOLD = -1.6;
 
   struct Level {
     /** Environmental temperature in K */
@@ -50,8 +43,10 @@ public:
     /** ThermalIndex in K */
     Temperature thermal_index;
 
-    void UpdateTemps(bool humidity_valid, double humidity, Temperature temperature);
-    void UpdateThermalIndex(double h_agl, Temperature max_ground_temperature);
+    void UpdateTemps(bool humidity_valid, double humidity,
+                     Temperature temperature) noexcept;
+    void UpdateThermalIndex(double h_agl,
+                            Temperature max_ground_temperature) noexcept;
 
     /** Has any data */
     bool has_data;
@@ -63,15 +58,15 @@ public:
     /** Estimated CloudBase with data of this level */
     double cloud_base;
 
-    bool empty() const {
+    constexpr bool empty() const noexcept {
       return !has_data;
     }
 
-    bool dewpoint_empty() const {
+    constexpr bool dewpoint_empty() const noexcept {
       return !has_dewpoint;
     }
 
-    void Reset() {
+    constexpr void Reset() noexcept {
       has_data = false;
       has_dewpoint = false;
     }
@@ -79,22 +74,30 @@ public:
 
   /** Expected temperature maximum on the ground */
   Temperature max_ground_temperature;
-  /** Height of ground above MSL */
+  /**
+   * Elevation of the ground the sounding is anchored at, above MSL.
+   * The dry adiabat starts here.  Taken once, at the first measurement
+   * of a flight -- the terrain elevation there, which is the take-off
+   * site or near it, or the take-off altitude when there is no terrain
+   * file -- and kept for the whole sounding, so that every level's dry
+   * temperature belongs to the same adiabat.
+   */
   double ground_height;
+  /** Has #ground_height been taken for this sounding? */
+  bool has_ground_height;
   unsigned short last_level;
-  Level cslevels[NUM_LEVELS];
+  std::array<Level, 100> cslevels;
 
   /** Estimated ThermailHeight */
   double thermal_height;
   /** Estimated CloudBase */
   double cloud_base;
 
-  void Reset();
+  void Reset() noexcept;
 
-  void UpdateMeasurements(const NMEAInfo &basic, const DerivedInfo &calculated);
-  void FindCloudBase(unsigned short level);
-  void FindThermalHeight(unsigned short level);
-  void SetForecastTemperature(Temperature temperature);
+  void UpdateMeasurements(const NMEAInfo &basic,
+                          const DerivedInfo &calculated) noexcept;
+  void FindCloudBase(unsigned short level) noexcept;
+  void FindThermalHeight(unsigned short level) noexcept;
+  void SetForecastTemperature(Temperature temperature) noexcept;
 };
-
-#endif

@@ -1,62 +1,46 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Math/Screen.hpp"
 #include "Math/Angle.hpp"
-#include "Math/FastMath.hpp"
-#include "Screen/Layout.hpp"
-#include "Screen/Point.hpp"
-#include "Screen/BulkPoint.hpp"
-#include "Util/Clamp.hpp"
+#include "FastRotation.hpp"
+#include "ui/dim/Point.hpp"
+#include "ui/dim/BulkPoint.hpp"
 
 #include <algorithm>
 
+[[gnu::const]]
+static PixelPoint
+MultiplyRound(PixelPoint p, double f) noexcept
+{
+  return PixelPoint(lround(p.x * f), lround(p.y * f));
+}
+
 PixelPoint
 ScreenClosestPoint(const PixelPoint &p1, const PixelPoint &p2,
-                   const PixelPoint &p3, int offset)
+                   const PixelPoint &p3, int _offset) noexcept
 {
   const PixelPoint v12 = p2 - p1;
   const PixelPoint v13 = p3 - p1;
 
-  const int mag = v12.MagnitudeSquared();
-  if (mag > 1) {
-    const int mag12 = isqrt4(mag);
+  const double mag12 = DoublePoint2D{v12}.Magnitude();
+  if (mag12 > 1) {
     // projection of v13 along v12 = v12.v13/|v12|
-    int proj = DotProduct(v12, v13) / mag12;
+    double proj = DotProduct(v12, v13) / mag12;
     // fractional distance
-    if (offset > 0) {
+    if (_offset > 0) {
+      const double offset = _offset;
       if (offset * 2 < mag12) {
-        proj = std::max(0, std::min(proj, mag12));
+        proj = std::max(0., std::min(proj, mag12));
         proj = std::max(offset, std::min(mag12 - offset, proj + offset));
       } else {
         proj = mag12 / 2;
       }
     }
 
-    const auto f = Clamp(double(proj) / mag12, 0., 1.);
+    const auto f = std::clamp(proj / mag12, 0., 1.);
     // location of 'closest' point
-    return PixelPoint(lround(v12.x * f) + p1.x,
-                      lround(v12.y * f) + p1.y);
+    return p1 + MultiplyRound(v12, f);
   } else {
     return p1;
   }
@@ -65,28 +49,37 @@ ScreenClosestPoint(const PixelPoint &p1, const PixelPoint &p2,
 /*
  * Divide x by 2^12, rounded to nearest integer.
  */
-static int
-roundshift(int x)
+template<int SHIFT>
+static constexpr int
+roundshift(int x) noexcept
 {
+  constexpr int ONE = 1 << SHIFT;
+  constexpr int HALF = ONE / 2;
+
   if (x > 0) {
-    x += 2048;
+    x += HALF;
   } else if (x < 0) {
-    x -= 2048;
+    x -= HALF;
   }
-  return x >> 12;
+  return x >> SHIFT;
+}
+
+template<int SHIFT>
+static constexpr PixelPoint
+roundshift(PixelPoint p) noexcept
+{
+  return {roundshift<SHIFT>(p.x), roundshift<SHIFT>(p.y)};
 }
 
 void
-PolygonRotateShift(BulkPixelPoint *poly,
-                   const int n,
+PolygonRotateShift(std::span<BulkPixelPoint> poly,
                    const PixelPoint shift,
                    Angle angle,
-                   int scale,
-                   const bool use_fast_scale)
+                   int scale) noexcept
 {
-  const int xs = shift.x, ys = shift.y;
-  if (use_fast_scale)
-    scale = Layout::FastScale(scale);
+  constexpr int SCALE_SHIFT = 2;
+  constexpr int TOTAL_SHIFT = FastIntegerRotation::SHIFT + SCALE_SHIFT;
+
   /*
    * About the scaling...
    *  - We want to divide the raster points by 100 in order to scale the
@@ -99,17 +92,9 @@ PolygonRotateShift(BulkPixelPoint *poly,
    *    early but outside the loop, and divide by 2^12 late, inside the
    *    loop using roundshift.
    */
-  const int cost = angle.ifastcosine() * scale / 25;
-  const int sint = angle.ifastsine() * scale / 25;
+  FastIntegerRotation fr(angle);
+  fr.Scale(scale / (100 >> SCALE_SHIFT));
 
-  BulkPixelPoint *p = poly;
-  const BulkPixelPoint *pe = poly + n;
-
-  while (p < pe) {
-    int x = p->x;
-    int y = p->y;
-    p->x = roundshift(x * cost - y * sint) + xs;
-    p->y = roundshift(y * cost + x * sint) + ys;
-    p++;
-  }
+  for (auto &p : poly)
+    p = roundshift<TOTAL_SHIFT>(fr.RotateRaw(p)) + shift;
 }

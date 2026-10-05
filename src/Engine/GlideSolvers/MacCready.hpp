@@ -1,28 +1,9 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef MACCREADY_HPP
-#define MACCREADY_HPP
-
-#include "Compiler.h"
+#include "util/Compiler.h"
 
 struct GlideSettings;
 struct GlideState;
@@ -38,8 +19,8 @@ class GlidePolar;
  *  frequently, greater than one if the glider attains higher speeds due
  *  to dolphin/cloud street flying.
  *  
- *  Note that all speeds etc are assumed to be true; air density is NOT
- *  taken into account.
+ *  Note that all speeds are true airspeeds. Air density correction is
+ *  applied via GlidePolar::density_ratio, set from AirDensityRatio(altitude).
  */
 class MacCready 
 {
@@ -73,10 +54,10 @@ public:
    * @param sink_rate The sink rate
    * @return Returns the glide result containing data about the optimal solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult SolveSink(const GlideState &task, const double sink_rate) const;
 
-  gcc_pure
+  [[gnu::pure]]
   static GlideResult SolveSink(const GlideSettings &settings,
                                const GlidePolar &glide_polar,
                                const GlideState &task, const double sink_rate);
@@ -84,7 +65,7 @@ public:
   /**
    * Like Solve(), but always assume straight glide, no cruise.
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult SolveStraight(const GlideState &task) const;
 
   /** 
@@ -96,10 +77,10 @@ public:
    * @param task The task for which a solution is desired
    * @return Returns the glide result containing data about the optimal solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult Solve(const GlideState &task) const;
 
-  gcc_pure
+  [[gnu::pure]]
   static GlideResult Solve(const GlideSettings &settings,
                            const GlidePolar &glide_polar,
                            const GlideState &task);
@@ -121,7 +102,7 @@ public:
    * @param allow_partial Return after glide exhausted
    * @return Returns the glide result containing data about the optimal solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult SolveGlide(const GlideState &task, const double v_set,
                          const bool allow_partial = false) const;
 
@@ -137,7 +118,7 @@ private:
    * @param allow_partial Return after glide exhausted
    * @return Returns the glide result containing data about the optimal solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult
   SolveGlide(const GlideState &task, const double v_set,
              const double sink_rate,
@@ -152,7 +133,7 @@ private:
    *
    * @return Solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult OptimiseGlide(const GlideState &task,
                             const bool allow_partial = false) const;
 
@@ -167,7 +148,7 @@ private:
    *
    * @return Solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult SolveVertical(const GlideState &task) const;
 
   /**
@@ -178,8 +159,6 @@ private:
    *
    * @return Solution
    */
-  gcc_pure
+  [[gnu::pure]]
   GlideResult SolveCruise(const GlideState &task) const;
 };
-
-#endif

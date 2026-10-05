@@ -1,38 +1,16 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WaypointLabelList.hpp"
-#include "Util/StringUtil.hpp"
-#include "Util/Macros.hpp"
+#include "util/StringUtil.hpp"
+#include "util/Macros.hpp"
 
 #include <algorithm>
 
-static constexpr int WPCIRCLESIZE = 2;
-
-gcc_pure
+[[gnu::pure]]
 static bool
 MapWaypointLabelListCompare(const WaypointLabelList::Label &e1,
-                            const WaypointLabelList::Label &e2)
+                            const WaypointLabelList::Label &e2) noexcept
 {
   if (e1.inTask && !e2.inTask)
     return true;
@@ -68,13 +46,13 @@ MapWaypointLabelListCompare(const WaypointLabelList::Label &e1,
 }
 
 void
-WaypointLabelList::Add(const TCHAR *Name, int X, int Y,
+WaypointLabelList::Add(const char *Name, PixelPoint p,
                        TextInBoxMode Mode, bool bold,
                        int AltArivalAGL, bool inTask,
-                       bool isLandable, bool isAirport, bool isWatchedWaypoint)
+                       bool isLandable, bool isAirport,
+                       bool isWatchedWaypoint) noexcept
 {
-  if (X < - WPCIRCLESIZE || X > (int)width + WPCIRCLESIZE * 3 ||
-      Y < - WPCIRCLESIZE || Y > (int)height + WPCIRCLESIZE)
+  if (!clip_rect.Contains(p))
     return;
 
   if (labels.full())
@@ -82,9 +60,8 @@ WaypointLabelList::Add(const TCHAR *Name, int X, int Y,
 
   auto &l = labels.append();
 
-  CopyString(l.Name, Name, ARRAY_SIZE(l.Name));
-  l.Pos.x = X;
-  l.Pos.y = Y;
+  CopyString(l.Name, ARRAY_SIZE(l.Name), Name);
+  l.Pos = p;
   l.Mode = Mode;
   l.AltArivalAGL = AltArivalAGL;
   l.bold = bold;
@@ -95,7 +72,7 @@ WaypointLabelList::Add(const TCHAR *Name, int X, int Y,
 }
 
 void
-WaypointLabelList::Sort()
+WaypointLabelList::Sort() noexcept
 {
   std::sort(labels.begin(), labels.end(),
             MapWaypointLabelListCompare);

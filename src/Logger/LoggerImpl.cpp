@@ -1,41 +1,18 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Logger/LoggerImpl.hpp"
 #include "Logger/Settings.hpp"
 #include "LogFile.hpp"
 #include "LocalPath.hpp"
+#include "Repository/FileType.hpp"
 #include "Device/Declaration.hpp"
 #include "NMEA/Info.hpp"
-#include "Simulator.hpp"
-#include "OS/FileUtil.hpp"
+#include "system/FileUtil.hpp"
 #include "Formatter/IGCFilenameFormatter.hpp"
-#include "Interface.hpp"
-#include "IGCFileCleanup.hpp"
 #include "IGC/IGCWriter.hpp"
-#include "Util/CharUtil.hxx"
+#include "util/CharUtil.hxx"
 
-#include <tchar.h>
 #include <algorithm>
 
 const struct LoggerImpl::PreTakeoffBuffer &
@@ -57,6 +34,9 @@ LoggerImpl::PreTakeoffBuffer::operator=(const NMEAInfo &src)
   altitude_gps = src.gps_altitude;
   gps_altitude_available = src.gps_altitude_available;
 
+  altitude_ellipsoid = src.gps_ellipsoid_altitude;
+  gps_ellipsoid_altitude_available = src.gps_ellipsoid_altitude_available;
+
   date_time_utc = src.date_time_utc;
   time = src.time;
 
@@ -76,18 +56,11 @@ LoggerImpl::PreTakeoffBuffer::operator=(const NMEAInfo &src)
   return *this;
 }
 
-LoggerImpl::LoggerImpl()
-  :filename(nullptr), writer(nullptr)
-{
-}
-
-LoggerImpl::~LoggerImpl()
-{
-  delete writer;
-}
+LoggerImpl::LoggerImpl() = default;
+LoggerImpl::~LoggerImpl() noexcept = default;
 
 void
-LoggerImpl::StopLogger(const NMEAInfo &gps_info)
+LoggerImpl::StopLogger([[maybe_unused]] const NMEAInfo &gps_info)
 {
   // Logger can't be switched off if already off -> cancel
   if (writer == nullptr)
@@ -100,21 +73,16 @@ LoggerImpl::StopLogger(const NMEAInfo &gps_info)
 
   writer->Flush();
 
-  LogFormat(_T("Logger stopped: %s"), filename.c_str());
+  LogFormat("Stopped logger: %s", filename.c_str());
 
   // Logger off
-  delete writer;
-  writer = nullptr;
-
-  // Make space for logger file, if unsuccessful -> cancel
-  if (gps_info.gps.real && gps_info.date_time_utc.IsDatePlausible())
-    IGCFileCleanup(gps_info.date_time_utc.year);
+  writer.reset();
 
   pre_takeoff_buffer.clear();
 }
 
 void
-LoggerImpl::LogPointToBuffer(const NMEAInfo &gps_info)
+LoggerImpl::LogPointToBuffer(const NMEAInfo &gps_info) noexcept
 {
   assert(gps_info.alive);
   assert(gps_info.time_available);
@@ -157,7 +125,7 @@ LoggerImpl::LogPoint(const NMEAInfo &gps_info)
 
     // NOTE: clock is only used to set the validity of valid objects to true
     //       for which "1" is sufficient. This kludge needs to be rewritten.
-    tmp_info.clock = 1;
+    tmp_info.clock = TimeStamp{FloatDuration{1}};
 
     tmp_info.alive.Update(tmp_info.clock);
 
@@ -169,6 +137,11 @@ LoggerImpl::LogPoint(const NMEAInfo &gps_info)
     if (src.gps_altitude_available) {
       tmp_info.gps_altitude = src.altitude_gps;
       tmp_info.gps_altitude_available.Update(tmp_info.clock);
+    }
+
+    if (src.gps_ellipsoid_altitude_available) {
+      tmp_info.gps_ellipsoid_altitude = src.altitude_ellipsoid;
+      tmp_info.gps_ellipsoid_altitude_available.Update(tmp_info.clock);
     }
 
     if (src.pressure_altitude_available) {
@@ -187,7 +160,7 @@ LoggerImpl::LogPoint(const NMEAInfo &gps_info)
       tmp_info.gps.satellites_used = src.satellites_used;
     }
 
-    tmp_info.gps.hdop = src.hdop;
+    tmp_info.gps.hdop = src.location.IsValid() ? src.hdop : -1;
     tmp_info.gps.real = src.real;
 
     if (src.satellite_ids_available) {
@@ -224,7 +197,7 @@ LoggerImpl::WritePoint(const NMEAInfo &gps_info)
 
 bool
 LoggerImpl::StartLogger(const NMEAInfo &gps_info,
-                        const LoggerSettings &settings,
+                        [[maybe_unused]] const LoggerSettings &settings,
                         const char *logger_id)
 {
   assert(logger_id != nullptr);
@@ -235,10 +208,11 @@ LoggerImpl::StartLogger(const NMEAInfo &gps_info,
 
   assert(writer == nullptr);
 
-  const auto logs_path = MakeLocalPath(_T("logs"));
+  const auto logs_path = LocalPath(GetFileTypeDefaultDir(FileType::IGC));
+  Directory::CreateRecursive(logs_path);
 
   const BrokenDate today = gps_info.date_time_utc.IsDatePlausible()
-    ? (const BrokenDate &)gps_info.date_time_utc
+    ? gps_info.date_time_utc.GetDate()
     : BrokenDate::TodayUTC();
 
   StaticString<64> name;
@@ -253,64 +227,50 @@ LoggerImpl::StartLogger(const NMEAInfo &gps_info,
   frecord.Reset();
 
   try {
-    writer = new IGCWriter(filename);
-  } catch (const std::runtime_error &e) {
-    LogError(e);
+    writer = std::make_unique<IGCWriter>(filename);
+  } catch (...) {
+    LogError(std::current_exception());
     return false;
   }
 
-  LogFormat(_T("Logger Started: %s"), filename.c_str());
+  LogFormat("Started logger: %s", filename.c_str());
   return true;
 }
 
 void
-LoggerImpl::LoggerNote(const TCHAR *text)
+LoggerImpl::LoggerNote(const char *text)
 {
   if (writer != nullptr)
     writer->LoggerNote(text);
 }
 
-static const TCHAR *
-GetGPSDeviceName()
-{
-  if (is_simulator())
-    return _T("Simulator");
-
-  const DeviceConfig &device = CommonInterface::GetSystemSettings().devices[0];
-  if (device.UsesDriver())
-    return device.driver_name;
-
-  if (device.IsAndroidInternalGPS())
-    return _T("Internal GPS (Android)");
-
-  return _T("Unknown");
-}
-
-// TODO: fix scope so only gui things can start it
 void
 LoggerImpl::StartLogger(const NMEAInfo &gps_info,
                         const LoggerSettings &settings,
-                        const TCHAR *asset_number, const Declaration &decl)
+                        const char *asset_number, const Declaration &decl,
+                        const char *gps_device_name)
 {
+  assert(gps_device_name != nullptr);
+
   if (!settings.logger_id.empty())
     asset_number = settings.logger_id.c_str();
 
   // chars must be legal in file names
   char logger_id[4];
-  unsigned asset_length = _tcslen(asset_number);
+  unsigned asset_length = strlen(asset_number);
   for (unsigned i = 0; i < 3; i++)
     logger_id[i] = i < asset_length && IsAlphaNumericASCII(asset_number[i]) ?
-                   asset_number[i] : _T('A');
-  logger_id[3] = _T('\0');
+                   asset_number[i] : 'A';
+  logger_id[3] = '\0';
 
   if (!StartLogger(gps_info, settings, logger_id))
     return;
 
   simulator = gps_info.location_available && !gps_info.gps.real;
-  writer->WriteHeader(gps_info.date_time_utc, decl.pilot_name,
+  writer->WriteHeader(gps_info.date_time_utc, decl.pilot_name, decl.copilot_name,
                       decl.aircraft_type, decl.aircraft_registration,
                       decl.competition_id,
-                      logger_id, GetGPSDeviceName(), simulator);
+                      logger_id, gps_device_name, simulator);
 
   if (decl.Size()) {
     BrokenDateTime FirstDateTime = !pre_takeoff_buffer.empty()
@@ -326,7 +286,7 @@ LoggerImpl::StartLogger(const NMEAInfo &gps_info,
 }
 
 void
-LoggerImpl::ClearBuffer()
+LoggerImpl::ClearBuffer() noexcept
 {
   pre_takeoff_buffer.clear();
 }

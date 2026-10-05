@@ -1,29 +1,9 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-#ifndef ASSET_H
-#define ASSET_H
-
-#include "Compiler.h"
+#include "DisplayType.hpp"
 
 #ifdef ANDROID
 #include "Android/Product.hpp"
@@ -33,22 +13,16 @@ Copyright_License {
 #include <TargetConditionals.h>
 #endif
 
-#include <tchar.h>
-
-// asset/registration data
-extern TCHAR asset_number[];
-
-/**
- * Finds the unique ID of this PDA
- */
-void ReadAssetNumber();
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#include "Apple/KeyboardDetection.hpp"
+#endif
 
 /**
  * Returns whether this is a debug build.
  */
 constexpr
 static inline bool
-IsDebug()
+IsDebug() noexcept
 {
 #ifdef NDEBUG
   return false;
@@ -58,22 +32,11 @@ IsDebug()
 }
 
 /**
- * Is XCSoar running on ancient and slow hardware?  If yes, then some
- * expensive UI features are disabled.
- */
-constexpr
-static inline bool
-IsAncientHardware()
-{
-  return false;
-}
-
-/**
  * Returns whether the application is running on Android
  */
 constexpr
 static inline bool
-IsAndroid()
+IsAndroid() noexcept
 {
 #if defined(ANDROID)
   return true;
@@ -83,11 +46,11 @@ IsAndroid()
 }
 
 /**
- * Returns whether the application is running on an apple device
+ * Returns whether the application is running on an Apple device
  */
 constexpr
 static inline bool
-IsApple()
+IsApple() noexcept
 {
 #if defined(__APPLE__)
   return true;
@@ -97,11 +60,11 @@ IsApple()
 }
 
 /**
- * Returns whether the application is running on a Mac OS X device
+ * Returns whether the application is running on a macOS device
  */
 constexpr
 static inline bool
-IsMacOSX()
+IsMacOSX() noexcept
 {
 #if defined(__APPLE__) && TARGET_OS_MAC && !TARGET_OS_IPHONE
   return true;
@@ -115,7 +78,7 @@ IsMacOSX()
  */
 constexpr
 static inline bool
-IsIOS()
+IsIOS() noexcept
 {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
   return true;
@@ -129,7 +92,7 @@ IsIOS()
  */
 constexpr
 static inline bool
-IsKobo()
+IsKobo() noexcept
 {
 #ifdef KOBO
   return true;
@@ -144,20 +107,9 @@ IsKobo()
  */
 constexpr
 static inline bool
-IsEmbedded()
+IsEmbedded() noexcept
 {
   return IsAndroid() || IsKobo() || IsIOS();
-}
-
-/**
- * Does this device have little main memory?  On those, some expensive
- * features are disabled.
- */
-constexpr
-static inline bool
-HasLittleMemory()
-{
-  return IsAncientHardware();
 }
 
 /**
@@ -165,7 +117,7 @@ HasLittleMemory()
  */
 constexpr
 static inline bool
-HasIOIOLib()
+HasIOIOLib() noexcept
 {
 #ifdef ANDROID
   return true;
@@ -179,34 +131,40 @@ HasIOIOLib()
  * @return True if a touch screen or mouse is assumed for the hardware
  * that XCSoar is running on, False if the hardware has only buttons
  */
-#if defined(USE_CONSOLE) && !defined(KOBO)
-gcc_pure
+#if (defined(USE_CONSOLE) && !defined(KOBO)) || defined(USE_WAYLAND)
+[[gnu::pure]]
 bool
-HasPointer();
+HasPointer() noexcept;
 #else
 constexpr
 static inline bool
-HasPointer()
+HasPointer() noexcept
 {
   return true;
 }
 
 #endif
 
+#if !defined(USE_LIBINPUT) && !defined(USE_WAYLAND)
+#include "CommandLine.hpp"
+#endif
+
 /**
  * Does this device have a touch screen?  This is useful to know for
  * sizing controls, as a touch screen may require bigger areas.
+ * The @c -touchscreen and @c -notouchscreen switches (when the host
+ * supports the command line) can override autodetection.
  */
-#ifdef USE_LIBINPUT
-gcc_pure
+#if defined(USE_LIBINPUT) || defined(USE_WAYLAND)
+[[gnu::pure]]
 bool
-HasTouchScreen();
+HasTouchScreen() noexcept;
 #else
-constexpr
 static inline bool
-HasTouchScreen()
+HasTouchScreen() noexcept
 {
-  return IsAndroid() || IsKobo() || IsIOS();
+  return CommandLine::ApplyTouchInputOverride(
+    IsAndroid() || IsKobo() || IsIOS());
 }
 #endif
 
@@ -215,14 +173,20 @@ HasTouchScreen()
  * @return True if a keyboard is assumed for the hardware
  * that XCSoar is running on, False if the hardware has no keyboard
  */
-#ifdef USE_LIBINPUT
-gcc_pure
+#if defined(USE_LIBINPUT) || defined(USE_WAYLAND)
+[[gnu::pure]]
 bool
-HasKeyboard();
+HasKeyboard() noexcept;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+static inline bool
+HasKeyboard() noexcept
+{
+  return IsHardwareKeyboardConnected();
+}
 #else
 constexpr
 static inline bool
-HasKeyboard()
+HasKeyboard() noexcept
 {
   return !IsEmbedded();
 }
@@ -233,36 +197,31 @@ HasKeyboard()
  * in modal dialogs.  Without cursor keys, focused controls do not
  * need to be highlighted.
  */
-#ifndef ANDROID
+#if !defined(ANDROID) && !(defined(__APPLE__) && TARGET_OS_IPHONE)
 constexpr
 #endif
 static inline bool
-HasCursorKeys()
+HasCursorKeys() noexcept
 {
   /* we assume that all Windows (CE) devices have cursor keys; some do
      not, but that's hard to detect */
 
 #ifdef ANDROID
   return has_cursor_keys;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+  return HasKeyboard();
 #else
-  return !IsKobo() && !IsIOS();
+  return !IsKobo();
 #endif
 }
 
 /**
  * Does this device have a display with colors?
  */
-#ifdef ANDROID
-gcc_const
-#else
-constexpr
-#endif
-static inline bool
-HasColors()
+static constexpr bool
+HasColors() noexcept
 {
-#ifdef ANDROID
-  return !IsNookSimpleTouch();
-#elif defined(GREYSCALE)
+#if defined(GREYSCALE)
   return false;
 #else
   return !IsKobo();
@@ -272,18 +231,11 @@ HasColors()
 /**
  * Is dithering black&white used on the display?
  */
-#if defined(ANDROID) && defined(__arm__)
-gcc_const
-#else
-constexpr
-#endif
-static inline bool
-IsDithered()
+static constexpr bool
+IsDithered() noexcept
 {
 #ifdef DITHER
   return true;
-#elif defined(ANDROID) && defined(__arm__)
-  return is_dithered;
 #else
   return false;
 #endif
@@ -294,20 +246,13 @@ IsDithered()
  * Such screens need some special cases, because they are very slow
  * and show ghosting.  Animations shall be disabled when this function
  * returns true.
+ *
+ * Driven by #DisplaySettings::display_type via #SetDisplayType().
+ * Defaults to e-ink on Kobo and LCD elsewhere.
  */
-#if defined(ANDROID) && defined(__arm__)
-gcc_const
-#else
-constexpr
-#endif
-static inline bool
-HasEPaper()
-{
-#if defined(ANDROID) && defined(__arm__)
-  return IsNookSimpleTouch();
-#else
-  return IsKobo();
-#endif
-}
+void
+SetDisplayType(DisplayType type) noexcept;
 
-#endif
+[[gnu::pure]]
+bool
+HasEPaper() noexcept;

@@ -1,31 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_DRIVER_VOLKSLOGGER_PROTOCOL_HPP
-#define XCSOAR_DEVICE_DRIVER_VOLKSLOGGER_PROTOCOL_HPP
-
-#include <stdint.h>
-#include <stddef.h>
+#include <chrono>
+#include <cstdint>
+#include <cstddef>
 
 class Port;
 class OperationEnvironment;
@@ -100,14 +80,16 @@ namespace Volkslogger {
     cmd_RST = 0x0c,
   };
 
-  bool Reset(Port &port, OperationEnvironment &env, unsigned n);
+  void Reset(Port &port, OperationEnvironment &env, unsigned n);
 
-  bool Handshake(Port &port, OperationEnvironment &env, unsigned timeout_ms);
+  void Handshake(Port &port, OperationEnvironment &env,
+                 std::chrono::steady_clock::duration timeout);
 
-  bool Connect(Port &port, OperationEnvironment &env, unsigned timeout_ms);
+  void Connect(Port &port, OperationEnvironment &env,
+               std::chrono::steady_clock::duration timeout);
 
-  bool ConnectAndFlush(Port &port, OperationEnvironment &env,
-                       unsigned timeout_ms);
+  void ConnectAndFlush(Port &port, OperationEnvironment &env,
+                       std::chrono::steady_clock::duration timeout);
 
   bool SendCommand(Port &port, OperationEnvironment &env,
                    Command cmd, uint8_t param1=0, uint8_t param2=0);
@@ -127,22 +109,22 @@ namespace Volkslogger {
     return SendCommandSwitchBaudRate(port, env, cmd, 0, baud_rate);
   }
 
-  bool WaitForACK(Port &port, OperationEnvironment &env);
+  void WaitForACK(Port &port, OperationEnvironment &env);
 
   /**
    * Read data from the Logger
    * @param buffer Pointer to the buffer containing the reply received from the
    *        logger
    * @param max_length Maximum buffer size
-   * @param timeout_firstchar_ms Optional parameter. Prolonged timeout to wait
+   * @param timeout_firstchar Optional parameter. Prolonged timeout to wait
    *        for the first reply. If left out or set to 0(Zero) the standard
    *        timeout as for the other chars will be applied.
    */
   int ReadBulk(Port &port, OperationEnvironment &env,
                void *buffer, size_t max_length,
-               unsigned timeout_firstchar_ms=0);
+               std::chrono::steady_clock::duration timeout_firstchar={});
 
-  bool WriteBulk(Port &port, OperationEnvironment &env,
+  void WriteBulk(Port &port, OperationEnvironment &env,
                  const void *buffer, unsigned length);
 
   /**
@@ -153,13 +135,13 @@ namespace Volkslogger {
    * @param buffer Pointer to the buffer containing the reply received from the
    *        logger
    * @param max_length Maximum buffer size
-   * @param timeout_firstchar_ms Optional parameter. Prolonged timeout to wait
+   * @param timeout_firstchar Optional parameter. Prolonged timeout to wait
    *        for the first reply. If left out or set to 0(Zero) the standard
    *        timeout as for the other chars will be applied.
    */
   int SendCommandReadBulk(Port &port, OperationEnvironment &env,
                           Command cmd, void *buffer, size_t max_length,
-                          unsigned timeout_firstchar_ms=0);
+                          std::chrono::steady_clock::duration timeout_firstchar={});
 
   /**
     * Send command to Volkslogger and after that wait to read
@@ -171,7 +153,7 @@ namespace Volkslogger {
     * @param buffer Pointer to the buffer containing the reply received from the
     *        logger
     * @param max_length Maximum buffer size
-    * @param timeout_firstchar_ms Optional parameter. Prolonged timeout to wait
+    * @param timeout_firstchar Optional parameter. Prolonged timeout to wait
     *        for the first reply. If left out or set to 0(Zero) the standard
     *        timeout as for the other chars will be applied.
     */
@@ -180,7 +162,7 @@ namespace Volkslogger {
                           OperationEnvironment &env,
                           Command cmd, uint8_t param1,
                           void *buffer, size_t max_length,
-                          unsigned timeout_firstchar_ms=0);
+                          std::chrono::steady_clock::duration timeout_firstchar={});
 
   /**
    * Same Function as the one above. Only without param1.
@@ -189,10 +171,10 @@ namespace Volkslogger {
                                         OperationEnvironment &env,
                                         Command cmd,
                                         void *buffer, size_t max_length,
-                                        unsigned timeout_firstchar_ms=0)
+                                        std::chrono::steady_clock::duration timeout_firstchar={})
   {
     return SendCommandReadBulk(port, baud_rate, env, cmd, 0, buffer,
-                               max_length, timeout_firstchar_ms);
+                               max_length, timeout_firstchar);
   }
 
   bool SendCommandWriteBulk(Port &port, OperationEnvironment &env,
@@ -258,5 +240,3 @@ namespace Volkslogger {
                                buffer, max_length);
   }
 }
-
-#endif

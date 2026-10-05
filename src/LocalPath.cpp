@@ -1,58 +1,43 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "LocalPath.hpp"
-#include "OS/Path.hpp"
+#include "ProductName.hpp"
+#include "system/Path.hpp"
 #include "Compatibility/path.h"
-#include "Util/StringCompare.hxx"
-#include "Util/StringFormat.hpp"
-#include "Util/StringAPI.hxx"
-#include "Util/StringBuilder.hxx"
+#include "util/StringCompare.hxx"
+#include "util/StringFormat.hpp"
+#include "util/StringAPI.hxx"
 #include "Asset.hpp"
 
-#include "OS/FileUtil.hpp"
-
-#ifdef ANDROID
-#include "Android/Environment.hpp"
+#ifdef __APPLE__
+#include "Apple/PathProvider.hpp"
 #endif
 
-#ifdef WIN32
-#include "OS/PathName.hpp"
-#else
-#include "Util/tstring.hpp"
+#include "system/FileUtil.hpp"
+
+#ifdef ANDROID
+#include "Android/Context.hpp"
+#include "Android/Environment.hpp"
+#include "Android/Main.hpp"
+#endif
+
+#ifdef _WIN32
+#include "system/UTF8Win32.hpp"
 #endif
 
 #include <algorithm>
+#include <list>
+#include <string>
+#include <string_view>
+#include <stdio.h>
 
-#include <assert.h>
+#include <cassert>
 #include <stdlib.h>
-#include <windef.h> // for MAX_PATH
-#ifdef WIN32
-#ifdef HAVE_POSIX
-#include <windows.h>
-#else
+#ifdef _WIN32
 #include <shlobj.h>
-#endif
+#include <windef.h> // for MAX_PATH
+#include "system/Win32UTF8PathGuard.hpp"
 #endif
 
 #ifdef ANDROID
@@ -61,89 +46,103 @@ Copyright_License {
 #include <unistd.h>
 #endif
 
-#define XCSDATADIR "XCSoarData"
-
-/**
- * The default mount point of the SD card on Android.
- */
-#define ANDROID_SDCARD "/sdcard"
-
-/**
- * On the Samsung Galaxy Tab, the "external" SD card is mounted here.
- * Shame on the Samsung engineers, they didn't implement
- * Environment.getExternalStorageDirectory() properly.
- */
-#define ANDROID_SAMSUNG_EXTERNAL_SD "/sdcard/external_sd"
-
 /**
  * This is the partition that the Kobo software mounts on PCs
  */
 #define KOBO_USER_DATA "/mnt/onboard"
 
 /**
- * The absolute location of the XCSoarData directory.
+ * A list of product data directories.  The first one is the primary
+ * one, where "%LOCAL_PATH%\\" refers to.
  */
-static AllocatedPath data_path = AllocatedPath(nullptr);
+static std::list<AllocatedPath> data_paths;
+
+static AllocatedPath cache_path;
 
 Path
-GetPrimaryDataPath()
+GetPrimaryDataPath() noexcept
 {
-  assert(!data_path.IsNull());
+  assert(!data_paths.empty());
 
-  return data_path;
+  return data_paths.front();
 }
 
 void
-SetPrimaryDataPath(Path path)
+SetPrimaryDataPath(Path path) noexcept
 {
-  assert(!path.IsNull());
-  assert(!path.IsEmpty());
+  assert(path != nullptr);
+  assert(!path.empty());
 
-  data_path = path;
+  if (auto i = std::find(data_paths.begin(), data_paths.end(), path);
+      i != data_paths.end())
+    data_paths.erase(i);
+
+  data_paths.emplace_front(path);
+
+#ifndef ANDROID
+  cache_path = LocalPath("cache");
+#endif
+}
+
+void
+SetSingleDataPath(Path path) noexcept
+{
+  assert(path != nullptr);
+  assert(!path.empty());
+
+  data_paths.clear();
+  data_paths.emplace_front(path);
+
+#ifndef ANDROID
+  cache_path = LocalPath("cache");
+#endif
 }
 
 AllocatedPath
-LocalPath(Path file)
+LocalPath(Path file) noexcept
 {
-  assert(!data_path.IsNull());
-  assert(!file.IsNull());
+  assert(file != nullptr);
 
-  return AllocatedPath::Build(data_path, file);
+  return AllocatedPath::Build(GetPrimaryDataPath(), file);
 }
 
 AllocatedPath
-LocalPath(const TCHAR *file)
+LocalPath(const char *file) noexcept
 {
   return LocalPath(Path(file));
 }
 
 AllocatedPath
-MakeLocalPath(const TCHAR *name)
+MakeLocalPath(const char *name)
 {
   auto path = LocalPath(name);
   Directory::Create(path);
   return path;
 }
 
-Path
-RelativePath(Path path)
+AllocatedPath
+MakeLocalPath(const Path name)
 {
-  assert(!data_path.IsNull());
-
-  return path.RelativeTo(data_path);
+  return MakeLocalPath(name.c_str());
 }
 
-static constexpr TCHAR local_path_code[] = _T("%LOCAL_PATH%\\");
+Path
+RelativePath(Path path) noexcept
+{
+  return path.RelativeTo(GetPrimaryDataPath());
+}
 
-gcc_pure
-static const TCHAR *
-AfterLocalPathCode(const TCHAR *p)
+static constexpr char local_path_code[] = "%LOCAL_PATH%\\";
+
+[[gnu::pure]]
+static const char *
+AfterLocalPathCode(const char *p) noexcept
 {
   p = StringAfterPrefix(p, local_path_code);
   if (p == nullptr)
     return nullptr;
 
-  while (*p == _T('/') || *p == _T('\\'))
+  while (*p == '/' || *p == '\\')
     ++p;
 
   if (StringIsEmpty(p))
@@ -153,18 +152,18 @@ AfterLocalPathCode(const TCHAR *p)
 }
 
 AllocatedPath
-ExpandLocalPath(Path src)
+ExpandLocalPath(Path src) noexcept
 {
   // Get the relative file name and location (ptr)
-  const TCHAR *ptr = AfterLocalPathCode(src.c_str());
+  const char *ptr = AfterLocalPathCode(src.c_str());
   if (ptr == nullptr)
-    return Path(src);
+    return src;
 
-#ifndef WIN32
+#ifndef _WIN32
   // Convert backslashes to slashes on platforms where it matters
-  tstring src2(src.c_str());
+  std::string src2(ptr);
   std::replace(src2.begin(), src2.end(), '\\', '/');
-  src = Path(src2.c_str());
+  ptr = src2.c_str();
 #endif
 
   // Replace the code "%LOCAL_PATH%\\" by the full local path (output)
@@ -172,296 +171,232 @@ ExpandLocalPath(Path src)
 }
 
 AllocatedPath
-ContractLocalPath(Path src)
+ContractLocalPath(Path src) noexcept
 {
   // Get the relative file name and location (ptr)
   const Path relative = RelativePath(src);
-  if (relative.IsNull())
+  if (relative == nullptr)
     return nullptr;
 
   // Replace the full local path by the code "%LOCAL_PATH%\\" (output)
   return Path(local_path_code) + relative.c_str();
 }
 
-#ifdef WIN32
+#ifdef _WIN32
 
 /**
- * Find a XCSoarData folder in the same location as the executable.
+ * Replace the final path component of a UTF-8 path string.
  */
-static AllocatedPath
-FindDataPathAtModule(HMODULE hModule)
+static void
+ReplaceBaseNameUTF8(std::string &path, const char *new_base) noexcept
 {
-  TCHAR buffer[MAX_PATH];
-  if (GetModuleFileName(hModule, buffer, MAX_PATH) <= 0)
+  const auto slash = path.find_last_of("/\\");
+  if (slash == std::string::npos)
+    path = new_base;
+  else
+    path.replace(slash + 1, std::string::npos, new_base);
+}
+
+/**
+ * Find a product data folder in the same location as the executable.
+ */
+[[gnu::pure]]
+static AllocatedPath
+FindDataPathAtModule(HMODULE hModule) noexcept
+{
+  wchar_t buffer[MAX_PATH];
+  const DWORD n = GetModuleFileNameW(hModule, buffer, MAX_PATH);
+  /* n == MAX_PATH means truncated (and may lack a terminator). */
+  if (n == 0 || n >= MAX_PATH)
     return nullptr;
 
-  ReplaceBaseName(buffer, _T(XCSDATADIR));
-  return Directory::Exists(Path(buffer))
-    ? AllocatedPath(buffer)
+  std::string path = WideToUTF8(std::wstring_view(buffer, n));
+  if (path.empty())
+    return nullptr;
+
+  ReplaceBaseNameUTF8(path, PRODUCT_DATA_DIR);
+  return Directory::Exists(Path(path.c_str()))
+    ? AllocatedPath(path.c_str())
     : nullptr;
 }
 
-#endif
+#endif /* _WIN32 */
 
-#ifdef WIN32
-
-static const TCHAR *
-ModuleInFlash(HMODULE module, TCHAR *buffer)
+static std::list<AllocatedPath>
+FindDataPaths() noexcept
 {
-  if (GetModuleFileName(module, buffer, MAX_PATH) <= 0)
-    return nullptr;
+  std::list<AllocatedPath> result;
 
-  // At least "C:\"
-  if (StringLength(buffer) < 3 ||
-      buffer[1] != _T(':') ||
-      buffer[2] != _T('\\'))
-    return nullptr;
+  /* Kobo: hard-coded product data path */
+  if constexpr (IsKobo()) {
+    result.emplace_back(KOBO_USER_DATA DIR_SEPARATOR_S PRODUCT_DATA_DIR);
+    return result;
+  }
 
-  // Trim the module path to the drive letter plus colon
-  buffer[2] = _T('\0');
-  return buffer;
-}
-
-#endif
-
+  /* Android: ask the Android API */
+  if constexpr (IsAndroid()) {
 #ifdef ANDROID
+    const auto env = Java::GetEnv();
 
-/**
- * Determine whether a text file contains a given string
- *
- * If two strings are given, the second string is considered
- * as no-match for the given line (i.e. string1 AND !string2).
- */
-static bool
-fgrep(const char *fname, const char *string, const char *string2 = nullptr)
-{
-  char line[100];
-  FILE *fp;
-
-  if ((fp = fopen(fname, "r")) == nullptr)
-    return false;
-  while (fgets(line, sizeof(line), fp) != nullptr)
-    if (strstr(line, string) != nullptr &&
-        (string2 == nullptr || strstr(line, string2) == nullptr)) {
-        fclose(fp);
-        return true;
+    bool external_files_dirs_path_added = false;
+    for (auto &path : context->GetExternalFilesDirs(env)) {
+      __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
+                          "Context.getExternalFilesDirs()='%s'",
+                          path.c_str());
+      auto xcsoarlog_path = AllocatedPath::Build(Path(path), Path("xcsoar.log"));
+      if(File::Exists(xcsoarlog_path)) {
+        /*
+         * Old Android user will keep using getExternalFilesDirs() if they already have data in it
+         * Otherwise we should default them to the new getExternalMediaDirs
+         * 
+         * This is for backward compatibility so user won't surprise when
+         * all their config suddenly gone after upgrade the app
+         */
+        __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
+          "Found xcsoar.log in '%s', keep using Android private storage.",
+          xcsoarlog_path.c_str());
+        result.emplace_back(std::move(path));
+        external_files_dirs_path_added = true;
+      }
     }
-  fclose(fp);
-  return false;
-}
 
-/**
- * See if the given mount point contains a writable directory called
- * XCSoarData.  If so, it returns an allocated absolute path to that
- * XCSoarData directory.
- */
-static AllocatedPath
-TryMountPoint(const TCHAR *mnt)
-{
-  auto path = AllocatedPath::Build(mnt, _T(XCSDATADIR));
+    if(!external_files_dirs_path_added) {
+      for (auto &path : context->GetExternalMediaDirs(env)) {
+        __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
+                            "Context.getExternalMediaDirs()='%s'",
+                            path.c_str());
+        result.emplace_back(std::move(path));
+      }
+    }
 
-  __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
-                      "Try '%s' exists=%d access=%d",
-                      path.c_str(), Directory::Exists(path),
-                      access(path.c_str(), W_OK));
+    if (auto path = Environment::GetExternalStoragePublicDirectory(env,
+                                                                   PRODUCT_DATA_DIR);
+        path != nullptr) {
+      const bool writable = access(path.c_str(), W_OK) == 0;
 
-  if (Directory::Exists(path) && access(path.c_str(), W_OK) == 0)
-    return path;
+      __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
+                          "Environment.getExternalStoragePublicDirectory()='%s'%s",
+                          path.c_str(),
+                          writable ? "" : " (not accessible)");
 
-  return nullptr;
-}
+      if (writable)
+        /* the "legacy" external storage directory is writable (either
+           because this is Android 10 or older, or because the
+           "preserveLegacyExternalStorage" is still in effect) - we
+           can use it */
+        result.emplace_back(std::move(path));
+    }
+#endif
 
-#endif /* ANDROID */
+    return result;
+  }
 
-/**
- * Returns the location of XCSoarData in the user's home directory.
- *
- * @param create true creates the path if it does not exist
- * @return a buffer which may be used to build the path
- */
-static AllocatedPath
-GetHomeDataPath(bool create=false)
-{
-  if (IsAndroid() || IsKobo())
-    /* hard-coded path for Android */
-    return nullptr;
+#ifdef _WIN32
+  /* look for a product data directory in the same directory as
+     the executable */
+  if (auto path = FindDataPathAtModule(nullptr); path != nullptr)
+    result.emplace_back(std::move(path));
+
+  /* Windows: use "My Documents\<ProductDataDir>" */
+  {
+    wchar_t buffer[MAX_PATH];
+    if (SHGetSpecialFolderPathW(nullptr, buffer, CSIDL_PERSONAL,
+                                result.empty())) {
+      const std::string personal = WideToUTF8(buffer);
+      if (!personal.empty())
+        result.emplace_back(AllocatedPath::Build(personal.c_str(),
+                                                 PRODUCT_DATA_DIR));
+    }
+  }
+#endif // _WIN32
 
 #ifdef HAVE_POSIX
-  /* on Unix, use ~/.xcsoar */
-  const TCHAR *home = getenv("HOME");
-  if (home != nullptr) {
-    return AllocatedPath::Build(Path(home),
+  /* on Unix, use ~/.<product_name> */
+  if (const char *home = getenv("HOME"); home != nullptr) {
 #ifdef __APPLE__
-    /* Mac OS X users are not used to dot-files in their home
+    /* macOS users are not used to dot-files in their home
        directory - make it a little bit easier for them to find the
-       files.
-       If target is an iOS device, use the already existing "Documents" folder
-       inside the application's sandbox.
-       This folder can also be accessed via iTunes, if UIFileSharingEnabled is set
-       to YES in Info.plist
-    */
-#if (TARGET_OS_IPHONE)
-    _T("Documents")
-#else
-    _T(XCSDATADIR)
-#endif
-#else
-                                _T("/.xcsoar")
-#endif
-                                );
-  } else
-    return Path("/etc/xcsoar");
-#else
-
-  TCHAR buffer[MAX_PATH];
-  bool success = SHGetSpecialFolderPath(nullptr, buffer, CSIDL_PERSONAL,
-                                        create);
-  if (!success)
-    return nullptr;
-
-  return AllocatedPath::Build(buffer, _T(XCSDATADIR));
-#endif
-}
-
-static AllocatedPath
-FindDataPath()
-{
-#ifdef WIN32
-  {
-    auto path = FindDataPathAtModule(nullptr);
-    if (path != nullptr)
-      return path;
-  }
+       files.  If target is an iOS device, use the already existing
+       "Documents" folder inside the application's sandbox.  This
+       folder can also be accessed via iTunes, if
+       UIFileSharingEnabled is set to YES in Info.plist */
+    const Path in_home = Apple::GetDataPathInHome();
+#else // !APPLE
+    constexpr const char *in_home = PRODUCT_UNIX_HOME_DIR;
 #endif
 
-  if (IsKobo())
-    return Path(Path(_T(KOBO_USER_DATA DIR_SEPARATOR_S XCSDATADIR)));
-
-  if (IsAndroid()) {
-#ifdef ANDROID
-    /* on Samsung Galaxy S4 (and others), the "external" SD card is
-       mounted here */
-    auto result = TryMountPoint("/mnt/extSdCard");
-    if (result != nullptr)
-      /* found writable XCSoarData: use this SD card */
-      return result;
-
-    /* hack for Samsung Galaxy S and Samsung Galaxy Tab (which has a
-       built-in and an external SD card) */
-    struct stat st;
-    if (stat(ANDROID_SAMSUNG_EXTERNAL_SD, &st) == 0 &&
-        S_ISDIR(st.st_mode) &&
-        fgrep("/proc/mounts", ANDROID_SAMSUNG_EXTERNAL_SD " ", "tmpfs ")) {
-      __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
-                          "Enable Samsung hack, " XCSDATADIR " in "
-                          ANDROID_SAMSUNG_EXTERNAL_SD);
-      return Path(ANDROID_SAMSUNG_EXTERNAL_SD "/" XCSDATADIR);
+    result.emplace_back(AllocatedPath::Build(Path(home), in_home));
+#ifdef __APPLE__
+    const Path data_path(result.back().c_str());
+    if (!Apple::EnsureDataPathExists(data_path)) {
+      const std::string utf8_path = data_path.ToUTF8();
+      if (!utf8_path.empty())
+        fprintf(stderr, "Failed to create data path '%s'\n",
+                utf8_path.c_str());
+      else
+        fprintf(stderr, "Failed to create data path (unknown path)\n");
     }
-
-    /* try Context.getExternalStoragePublicDirectory() */
-    char buffer[MAX_PATH];
-    if (Environment::getExternalStoragePublicDirectory(buffer, sizeof(buffer),
-                                                       "XCSoarData") != nullptr) {
-      __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
-                          "Environment.getExternalStoragePublicDirectory()='%s'",
-                          buffer);
-      return Path(buffer);
-    }
-
-    /* now try Context.getExternalStorageDirectory(), because
-       getExternalStoragePublicDirectory() needs API level 8 */
-    if (Environment::getExternalStorageDirectory(buffer,
-                                                 sizeof(buffer) - 32) != nullptr) {
-      __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
-                          "Environment.getExternalStorageDirectory()='%s'",
-                          buffer);
-
-      return AllocatedPath::Build(buffer, XCSDATADIR);
-    }
-
-    /* hard-coded path for Android */
-    __android_log_print(ANDROID_LOG_DEBUG, "XCSoar",
-                        "Fallback " XCSDATADIR " in " ANDROID_SDCARD);
 #endif
-    return Path(_T(ANDROID_SDCARD "/" XCSDATADIR));
   }
 
-#ifdef WIN32
-  /* if XCSoar was started from a flash disk, put the XCSoarData onto
-     it, too */
-  {
-    TCHAR buffer[MAX_PATH];
-    if (ModuleInFlash(nullptr, buffer) != nullptr) {
-      _tcscat(buffer, _T(DIR_SEPARATOR_S));
-      _tcscat(buffer, _T(XCSDATADIR));
-      if (Directory::Exists(Path(buffer)))
-        return Path(buffer);
-    }
-  }
-#endif
+#ifndef __APPLE__
+  /* Linux (and others): allow global configuration in /etc/<product_name> */
+  if (Directory::Exists(Path{PRODUCT_UNIX_SYSCONF_DIR}))
+    result.emplace_back(Path{PRODUCT_UNIX_SYSCONF_DIR});
+#endif // !APPLE
+#endif // HAVE_POSIX
 
-  {
-    auto path = GetHomeDataPath(true);
-    if (path != nullptr)
-      return path;
-  }
-
-  return nullptr;
+  return result;
 }
 
 void
-VisitDataFiles(const TCHAR* filter, File::Visitor &visitor)
+VisitDataFiles(const char* filter, File::Visitor &visitor)
 {
-  const auto data_path = GetPrimaryDataPath();
-  Directory::VisitSpecificFiles(data_path, filter, visitor, true);
-
-  {
-    const auto home_path = GetHomeDataPath();
-    if (home_path != nullptr && data_path != home_path)
-      Directory::VisitSpecificFiles(home_path, filter, visitor, true);
-  }
+  for (const auto &i : data_paths)
+    Directory::VisitSpecificFiles(i, filter, visitor, true);
 }
 
-#ifdef ANDROID
-/**
- * Resolve all symlinks in the specified (allocated) string, and
- * returns a newly allocated string.  The specified string is freed by
- * this function.
- */
-static AllocatedPath
-RealPath(Path path)
+Path
+GetCachePath() noexcept
 {
-  char buffer[4096];
-  char *result = realpath(path.c_str(), buffer);
-  return AllocatedPath(result);
+  return cache_path;
 }
-#endif
 
-bool
+AllocatedPath
+MakeCacheDirectory(const char *name) noexcept
+{
+  Directory::Create(cache_path);
+  auto path = AllocatedPath::Build(cache_path, Path(name));
+  Directory::Create(path);
+  return path;
+}
+
+void
 InitialiseDataPath()
 {
-  data_path = FindDataPath();
-  if (data_path == nullptr)
-    return false;
+  // If data_paths is already set (e.g., by -datapath= command line option),
+  // don't overwrite it with default paths
+  if (data_paths.empty()) {
+    data_paths = FindDataPaths();
+    if (data_paths.empty())
+      throw std::runtime_error("No data path found");
+  }
 
 #ifdef ANDROID
-  /* on some Android devices, /sdcard or /sdcard/external_sd are
-     symlinks, and on some devices (Samsung phones), the Android
-     DownloadManager does not allow destination paths pointing inside
-     these symlinks; to avoid problems with this restriction, all
-     symlinks on the way must be resolved by RealPath(): */
-  auto rp = RealPath(data_path);
-  if (rp != nullptr)
-    data_path = std::move(rp);
-#endif
+  cache_path = context->GetExternalCacheDir(Java::GetEnv());
+  if (cache_path == nullptr)
+    throw std::runtime_error("No Android cache directory");
 
-  return true;
+  // TODO: delete the old cache directory in product data directory?
+#else
+  cache_path = LocalPath("cache");
+#endif
 }
 
 void
-DeinitialiseDataPath()
+DeinitialiseDataPath() noexcept
 {
-  data_path = nullptr;
+  data_paths.clear();
 }
 
 void

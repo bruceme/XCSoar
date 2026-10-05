@@ -1,73 +1,68 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Net/HTTP/Session.hpp"
-#include "Net/HTTP/Request.hpp"
-#include "Net/HTTP/Handler.hpp"
-#include "Net/HTTP/Init.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "Util/PrintException.hxx"
+#include "net/http/Init.hpp"
+#include "lib/curl/Request.hxx"
+#include "lib/curl/Handler.hxx"
+#include "io/async/AsioThread.hpp"
+#include "system/ConvertPathName.hpp"
+#include "thread/AsyncWaiter.hxx"
+#include "util/PrintException.hxx"
+#include "util/ScopeExit.hxx"
 
 #include <exception>
 #include <iostream>
 #include <stdio.h>
 
-#include <tchar.h>
-
 using namespace std;
 
-class MyResponseHandler final : public Net::ResponseHandler {
+class MyResponseHandler final : public CurlResponseHandler {
   FILE *const file;
+
+  AsyncWaiter waiter;
 
 public:
   explicit MyResponseHandler(FILE *_file):file(_file) {}
 
-  void ResponseReceived(int64_t content_length) override {
+  void Wait() noexcept {
+    waiter.Wait();
   }
 
-  void DataReceived(const void *data, size_t length) override {
-    fwrite(data, 1, length, stdout);
+  /* virtual methods from class CurlResponseHandler */
+  void OnHeaders(unsigned status, Curl::Headers &&headers) override {
+    printf("status: %u\n", status);
 
+    for (const auto &[name, value] : headers)
+      printf("%s: %s\n", name.c_str(), value.c_str());
+
+    printf("\n");
+  }
+
+  void OnData(std::span<const std::byte> data) override {
     if (file != nullptr)
-      fwrite(data, 1, length, file);
+      fwrite(data.data(), 1, data.size(), file);
+    else
+      fwrite(data.data(), 1, data.size(), stdout);
+  }
+
+  void OnEnd() override {
+    waiter.SetDone();
+  }
+
+  void OnError(std::exception_ptr e) noexcept override {
+    waiter.SetError(std::move(e));
   }
 };
 
 static void
-Download(const char *url, Path path)
+Download(CurlGlobal &curl, const char *url, Path path)
 {
-  cout << "Creating Session ... ";
-  Net::Session session;
-  cout << "done" << endl;
-
-  cout << "Creating Request ... ";
-
-  FILE *file = path != nullptr ? _tfopen(path.c_str(), _T("wb")) : nullptr;
+  FILE *file = path != nullptr ? fopen(path.c_str(), "wb") : nullptr;
   MyResponseHandler handler(file);
-  Net::Request request(session, handler, url);
-  cout << "done" << endl;
+  CurlRequest request(curl, url, handler);
 
-  request.Send();
+  request.StartIndirect();
+  handler.Wait();
 
   if (file != NULL)
     fclose(file);
@@ -85,12 +80,13 @@ main(int argc, char *argv[])
   }
 
   try {
-    Net::Initialise();
+    AsioThread io_thread;
+    io_thread.Start();
+    AtScopeExit(&) { io_thread.Stop(); };
+    const Net::ScopeInit net_init(io_thread.GetEventLoop());
 
     const char *url = argv[1];
-    Download(url, argc > 2 ? (Path)PathName(argv[2]) : nullptr);
-
-    Net::Deinitialise();
+    Download(*Net::curl, url, argc > 2 ? (Path)PathName(argv[2]) : nullptr);
   } catch (const std::exception &exception) {
     PrintException(exception);
     return EXIT_FAILURE;

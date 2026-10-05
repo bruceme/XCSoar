@@ -1,48 +1,97 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Form/CheckBox.hpp"
-#include "Form/ActionListener.hpp"
 #include "Look/DialogLook.hpp"
-#include "Screen/Canvas.hpp"
-#include "Event/KeyCode.hpp"
+#include "ui/window/Window.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "Screen/Layout.hpp"
+#include "Form/Button.hpp"
 #include "Asset.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
+
+void
+DrawCheckBox(Canvas &canvas, const DialogLook &look,
+             const PixelRect &box_rc,
+             bool checked, bool focused, bool pressed,
+             bool enabled) noexcept
+{
+  const auto &cb_look = look.check_box;
+
+  const auto &state_look = enabled
+    ? (pressed
+       ? cb_look.pressed
+       : (focused
+          ? cb_look.focused
+          : cb_look.standard))
+    : cb_look.disabled;
+
+  canvas.Select(state_look.box_brush);
+  canvas.Select(state_look.box_pen);
+  canvas.DrawRectangle(box_rc);
+
+  unsigned box_size = box_rc.right - box_rc.left;
+  if (checked && box_size > 4) {
+    canvas.Select(state_look.check_brush);
+    canvas.SelectNullPen();
+
+    BulkPixelPoint check_mark[] = {
+      {-8, -2},
+      {-3, 6},
+      {7, -9},
+      {8, -5},
+      {-3, 9},
+      {-9, 2},
+    };
+
+    int center_x = (box_rc.left + box_rc.right) / 2;
+    int center_y = (box_rc.top + box_rc.bottom) / 2;
+
+    for (auto &p : check_mark) {
+      p.x = (p.x * (int)box_size) / 24 + center_x;
+      p.y = (p.y * (int)box_size) / 24 + center_y;
+    }
+
+    canvas.DrawPolygon(check_mark, ARRAY_SIZE(check_mark));
+  }
+}
 
 void
 CheckBoxControl::Create(ContainerWindow &parent, const DialogLook &_look,
-                        tstring::const_pointer _caption,
+                        std::string::const_pointer _caption,
                         const PixelRect &rc,
                         const WindowStyle style,
-                        ActionListener &_listener, int _id)
+                        Callback _callback) noexcept
 {
   checked = dragging = pressed = false;
   look = &_look;
   caption = _caption;
 
-  listener = &_listener;
-  id = _id;
+  callback = std::move(_callback);
+
   PaintWindow::Create(parent, rc, style);
+}
+
+void
+CheckBoxControl::CreateInDialogForm(ContainerWindow &parent,
+                                    const DialogLook &look,
+                                    std::string::const_pointer caption,
+                                    const PixelRect &rc,
+                                    Callback callback) noexcept
+{
+  WindowStyle style;
+  style.Hide();
+  style.TabStop();
+  Create(parent, look, caption, rc, style, std::move(callback));
+}
+
+unsigned
+CheckBoxControl::GetMinimumWidth(const DialogLook &look, unsigned height,
+                                 std::string::const_pointer caption) noexcept
+{
+  const unsigned padding = Layout::GetTextPadding();
+  return 3 * padding + height + look.check_box.font->TextSize(caption).width;
 }
 
 void
@@ -66,10 +115,10 @@ CheckBoxControl::SetPressed(bool value)
 }
 
 bool
-CheckBoxControl::OnClicked()
+CheckBoxControl::OnClicked() noexcept
 {
-  if (listener != nullptr) {
-    listener->OnAction(id);
+  if (callback) {
+    callback(GetState());
     return true;
   }
 
@@ -77,7 +126,7 @@ CheckBoxControl::OnClicked()
 }
 
 bool
-CheckBoxControl::OnKeyCheck(unsigned key_code) const
+CheckBoxControl::OnKeyCheck(unsigned key_code) const noexcept
 {
   switch (key_code) {
   case KEY_RETURN:
@@ -89,7 +138,7 @@ CheckBoxControl::OnKeyCheck(unsigned key_code) const
 }
 
 bool
-CheckBoxControl::OnKeyDown(unsigned key_code)
+CheckBoxControl::OnKeyDown(unsigned key_code) noexcept
 {
   switch (key_code) {
   case KEY_RETURN:
@@ -103,7 +152,7 @@ CheckBoxControl::OnKeyDown(unsigned key_code)
 }
 
 bool
-CheckBoxControl::OnMouseMove(PixelPoint p, unsigned keys)
+CheckBoxControl::OnMouseMove(PixelPoint p, unsigned keys) noexcept
 {
   if (dragging) {
     SetPressed(IsInside(p));
@@ -113,10 +162,14 @@ CheckBoxControl::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 bool
-CheckBoxControl::OnMouseDown(PixelPoint p)
+CheckBoxControl::OnMouseDown([[maybe_unused]] PixelPoint p) noexcept
 {
   if (IsTabStop())
     SetFocus();
+
+#ifdef HAVE_VIBRATOR
+  PlayHapticFeedback(HapticFeedbackType::PRESS);
+#endif
 
   SetPressed(true);
   SetCapture();
@@ -125,7 +178,7 @@ CheckBoxControl::OnMouseDown(PixelPoint p)
 }
 
 bool
-CheckBoxControl::OnMouseUp(PixelPoint p)
+CheckBoxControl::OnMouseUp([[maybe_unused]] PixelPoint p) noexcept
 {
   if (!dragging)
     return true;
@@ -143,21 +196,21 @@ CheckBoxControl::OnMouseUp(PixelPoint p)
 }
 
 void
-CheckBoxControl::OnSetFocus()
+CheckBoxControl::OnSetFocus() noexcept
 {
   PaintWindow::OnSetFocus();
   Invalidate();
 }
 
 void
-CheckBoxControl::OnKillFocus()
+CheckBoxControl::OnKillFocus() noexcept
 {
   PaintWindow::OnKillFocus();
   Invalidate();
 }
 
 void
-CheckBoxControl::OnCancelMode()
+CheckBoxControl::OnCancelMode() noexcept
 {
   dragging = false;
   SetPressed(false);
@@ -166,7 +219,7 @@ CheckBoxControl::OnCancelMode()
 }
 
 void
-CheckBoxControl::OnPaint(Canvas &canvas)
+CheckBoxControl::OnPaint(Canvas &canvas) noexcept
 {
   const auto &cb_look = look->check_box;
 
@@ -174,8 +227,6 @@ CheckBoxControl::OnPaint(Canvas &canvas)
 
   if (focused)
     canvas.Clear(cb_look.focus_background_brush);
-  else if (HaveClipping())
-    canvas.Clear(look->background_brush);
 
   const auto &state_look = IsEnabled()
     ? (pressed
@@ -185,36 +236,21 @@ CheckBoxControl::OnPaint(Canvas &canvas)
           : cb_look.standard))
     : cb_look.disabled;
 
-  unsigned size = canvas.GetHeight() - 4;
+  const unsigned padding = Layout::GetTextPadding();
+  unsigned size = canvas.GetHeight() - 2 * padding;
 
-  canvas.Select(state_look.box_brush);
-  canvas.Select(state_look.box_pen);
-  canvas.Rectangle(2, 2, size, size);
-
-  if (checked) {
-    canvas.Select(state_look.check_brush);
-    canvas.SelectNullPen();
-
-    BulkPixelPoint check_mark[] = {
-      {-8, -2},
-      {-3, 6},
-      {7, -9},
-      {8, -5},
-      {-3, 9},
-      {-9, 2},
-    };
-
-    unsigned top = canvas.GetHeight() / 2;
-    for (unsigned i = 0; i < ARRAY_SIZE(check_mark); ++i) {
-      check_mark[i].x = (check_mark[i].x * (int)size) / 24 + top;
-      check_mark[i].y = (check_mark[i].y * (int)size) / 24 + top;
-    }
-
-    canvas.DrawPolygon(check_mark, ARRAY_SIZE(check_mark));
-  }
+  PixelRect box_rc;
+  box_rc.left = (int)padding;
+  box_rc.top = (int)padding;
+  box_rc.right = box_rc.left + (int)size;
+  box_rc.bottom = box_rc.top + (int)size;
+  DrawCheckBox(canvas, *look, box_rc, checked, focused, pressed, IsEnabled());
 
   canvas.Select(*cb_look.font);
   canvas.SetTextColor(state_look.text_color);
   canvas.SetBackgroundTransparent();
-  canvas.DrawText(canvas.GetHeight() + 2, 2, caption.c_str());
+
+  const PixelPoint caption_position(canvas.GetHeight() + 2 * padding,
+                                    ((int)canvas.GetHeight() - (int)cb_look.font->GetHeight()) / 2);
+  canvas.DrawText(caption_position, caption.c_str());
 }

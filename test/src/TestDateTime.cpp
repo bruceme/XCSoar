@@ -1,29 +1,17 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Time/BrokenDateTime.hpp"
+#include "time/BrokenDateTime.hpp"
+#include "time/Convert.hxx"
 #include "TestUtil.hpp"
 
 #include <stdio.h>
+
+#include <chrono>
+#include <cstdint>
+#include <ctime>
+
+using namespace std::chrono;
 
 static void
 TestDate()
@@ -92,6 +80,14 @@ TestDate()
   ok1(BrokenDate(2014, 1, 1).DaysSince(BrokenDate(2013, 1, 1)) == 365);
   ok1(BrokenDate(2012, 3, 1).DaysSince(BrokenDate(2012, 2, 28)) == 2);
   ok1(BrokenDate(2013, 1, 1).DaysSince(BrokenDate(2012, 1, 1)) == 366);
+
+  d = BrokenDate::FromJulianDate(2460191);
+  ok1(d == BrokenDate(2023,9,3)); // Sunday
+  ok1(d.day_of_week == 0);
+
+  d = BrokenDate::FromJulianDate(2439230);
+  ok1(d == BrokenDate(1966,4,14)); // Thursday
+  ok1(d.day_of_week == 4);
 }
 
 static void
@@ -129,18 +125,17 @@ TestTime()
   ok1(!BrokenTime(12, 15, 60).IsPlausible());
 
   ok1(BrokenTime(12, 15, 30).GetSecondOfDay() == 44130);
-  ok1(BrokenTime::FromSecondOfDay(44130) == BrokenTime(12, 15, 30));
-  ok1(BrokenTime::FromSecondOfDayChecked(130530) == BrokenTime(12, 15, 30));
+  ok1(BrokenTime::FromSinceMidnight(seconds{44130}) == BrokenTime(12, 15, 30));
+  ok1(BrokenTime::FromSinceMidnightChecked(seconds{130530}) == BrokenTime(12, 15, 30));
 
   ok1(BrokenTime(12, 15, 30).GetMinuteOfDay() == 735);
   ok1(BrokenTime::FromMinuteOfDay(735) == BrokenTime(12, 15));
   ok1(BrokenTime::FromMinuteOfDayChecked(735) == BrokenTime(12, 15));
 
-  ok1(BrokenTime(12, 15) + 120 == BrokenTime(12, 17));
-  ok1(BrokenTime(23, 59) + 120 == BrokenTime(0, 1));
-  ok1(BrokenTime(23, 59) + 120 == BrokenTime(0, 1));
-  ok1(BrokenTime(0, 1) - 120 == BrokenTime(23, 59));
-  ok1(BrokenTime(0, 1) - 120u == BrokenTime(23, 59));
+  ok1(BrokenTime(12, 15) + std::chrono::minutes(2) == BrokenTime(12, 17));
+  ok1(BrokenTime(23, 59) + std::chrono::minutes(2) == BrokenTime(0, 1));
+  ok1(BrokenTime(23, 59) + std::chrono::minutes(2) == BrokenTime(0, 1));
+  ok1(BrokenTime(0, 1) - std::chrono::minutes(2) == BrokenTime(23, 59));
 }
 
 static void
@@ -168,26 +163,75 @@ TestDateTime()
   ok1(BrokenDateTime(2010, 1, 2, 12, 15, 30).second == 30);
 
   ok1(BrokenDateTime(2010, 2, 28, 23, 0, 0) == BrokenDateTime(2010, 2, 28, 23, 0, 0));
-  ok1(BrokenDateTime(2010, 2, 28, 23, 0, 0) + 3600 == BrokenDateTime(2010, 3, 1));
-  ok1(BrokenDateTime(2010, 2, 28, 23, 59, 59) + 1 == BrokenDateTime(2010, 3, 1));
-  ok1(BrokenDateTime(2010, 2, 28, 23, 59, 59) + 2 == BrokenDateTime(2010, 3, 1, 0, 0, 1));
-  ok1(BrokenDateTime(2010, 12, 31, 23, 59, 59) + 1 == BrokenDateTime(2011, 1, 1));
+  ok1(BrokenDateTime(2010, 2, 28, 23, 0, 0) + std::chrono::hours(1) == BrokenDateTime(2010, 3, 1));
+  ok1(BrokenDateTime(2010, 2, 28, 23, 59, 59) + std::chrono::seconds(1) == BrokenDateTime(2010, 3, 1));
+  ok1(BrokenDateTime(2010, 2, 28, 23, 59, 59) + std::chrono::seconds(2) == BrokenDateTime(2010, 3, 1, 0, 0, 1));
+  ok1(BrokenDateTime(2010, 12, 31, 23, 59, 59) + std::chrono::seconds(1) == BrokenDateTime(2011, 1, 1));
 
-  ok1(BrokenDateTime(2010, 1, 2, 12, 15, 30).ToUnixTimeUTC() == 1262434530);
+  ok1(std::chrono::system_clock::to_time_t(BrokenDateTime(2010, 1, 2, 12, 15, 30).ToTimePoint()) == 1262434530);
 
   ok1(BrokenDateTime(2010, 1, 1, 0, 0 ,1) -
-      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == 1);
+      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == std::chrono::seconds(1));
   ok1(BrokenDateTime(2010, 1, 1, 0, 1 ,0) -
-      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == 60);
+      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == std::chrono::minutes(1));
   ok1(BrokenDateTime(2010, 1, 1, 1, 0 ,0) -
-      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == 60 * 60);
+      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == std::chrono::hours(1));
   ok1(BrokenDateTime(2010, 1, 2, 0, 0 ,0) -
-      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == 60 * 60 * 24);
+      BrokenDateTime(2010, 1, 1, 0, 0 ,0) == std::chrono::hours(24));
+
+  /* `BrokenDateTime(system_clock::time_point)` (all platforms) */
+  {
+    const auto tp = std::chrono::system_clock::from_time_t(1262434530);
+    ok1(BrokenDateTime{tp} ==
+        BrokenDateTime(2010, 1, 2, 12, 15, 30));
+  }
+
+  ok1(BrokenDateTime::FromUnixTime(1262434530) ==
+      BrokenDateTime(2010, 1, 2, 12, 15, 30));
+  ok1(std::chrono::system_clock::to_time_t(
+        BrokenDateTime::FromUnixTime(1262434530).ToTimePoint()) ==
+      1262434530);
+  ok1(BrokenDateTime::FromUnixTime(0) ==
+      BrokenDateTime(1970, 1, 1, 0, 0, 0));
+
+  /* Beyond 32-bit signed time_t: int64_t must not narrow to time_t. */
+  ok1(BrokenDateTime::FromUnixTime(int64_t(2) << 32) ==
+      BrokenDateTime(2242, 3, 16, 12, 56, 32));
+
+  {
+    const auto tp = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(tp);
+    ok1(BrokenDateTime{tp} == BrokenDateTime::FromUnixTime(t));
+  }
+
+  ok1(BrokenDateTime::NowUTC().IsPlausible());
+  ok1(BrokenDateTime::NowLocal().IsPlausible());
+
+  ok1(BrokenDateTime(2026, 3, 12, 14, 37, 59).FloorToHour() ==
+      BrokenDateTime(2026, 3, 12, 14, 0, 0));
+
+  ok1(BrokenDateTime(2026, 3, 12, 14, 14, 59).FloorToQuarterHour() ==
+      BrokenDateTime(2026, 3, 12, 14, 0, 0));
+  ok1(BrokenDateTime(2026, 3, 12, 14, 15, 30).FloorToQuarterHour() ==
+      BrokenDateTime(2026, 3, 12, 14, 15, 0));
+  ok1(BrokenDateTime(2026, 3, 12, 14, 44, 59).FloorToQuarterHour() ==
+      BrokenDateTime(2026, 3, 12, 14, 30, 0));
+  ok1(BrokenDateTime(2026, 3, 12, 14, 45, 12).FloorToQuarterHour() ==
+      BrokenDateTime(2026, 3, 12, 14, 45, 0));
+  ok1(!BrokenDateTime::Invalid().FloorToQuarterHour().IsPlausible());
+
+  {
+    const BrokenDateTime utc(2010, 1, 2, 12, 15, 30);
+    const auto tm = LocalTime(utc.ToTimePoint());
+    const BrokenDateTime expected(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                                  tm.tm_hour, tm.tm_min, tm.tm_sec);
+    ok1(utc.ToLocal() == expected);
+  }
 }
 
-int main(int argc, char **argv)
+int main()
 {
-  plan_tests(107);
+  plan_tests(110 + 10 + 5);
 
   TestDate();
   TestTime();

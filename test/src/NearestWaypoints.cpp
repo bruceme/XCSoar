@@ -1,51 +1,23 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Waypoint/WaypointReader.hpp"
 #include "Waypoint/Factory.hpp"
 #include "Waypoint/Waypoints.hpp"
-#include "Engine/Waypoint/WaypointVisitor.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "OS/Args.hpp"
-#include "Operation/Operation.hpp"
+#include "system/ConvertPathName.hpp"
+#include "system/Args.hpp"
+#include "Operation/ConsoleOperationEnvironment.hpp"
+#include "util/PrintException.hxx"
 
-#include <stdint.h>
+#include <cstdint>
 #include <stdio.h>
-#include <tchar.h>
-
-static bool
+static void
 LoadWaypoints(Path path, Waypoints &waypoints)
 {
-  NullOperationEnvironment operation;
-  if (!ReadWaypointFile(path, waypoints,
-                        WaypointFactory(WaypointOrigin::NONE),
-                        operation)) {
-    fprintf(stderr, "ReadWaypointFile() failed\n");
-    return false;
-  }
-
-  waypoints.Optimise();
-  return true;
+  ConsoleOperationEnvironment operation;
+  ReadWaypointFile(path, waypoints,
+                   WaypointFactory(WaypointOrigin::NONE),
+                   operation);
 }
 
 static bool
@@ -77,7 +49,7 @@ enum class WaypointType: uint8_t {
 };
 
 static bool
-AlwaysTrue(const Waypoint &waypoint)
+AlwaysTrue([[maybe_unused]] const Waypoint &waypoint)
 {
   return true;
 }
@@ -120,15 +92,15 @@ PrintWaypoint(const Waypoint *waypoint)
   if (!waypoint)
     printf("\n");
   else
-    _ftprintf(stdout, _T("%f %f %.0f %s\n"),
+    fprintf(stdout, "%f %f %.0f %s\n",
               (double)waypoint->location.latitude.Degrees(),
               (double)waypoint->location.longitude.Degrees(),
-              (double)waypoint->elevation,
+              (double)waypoint->GetElevationOrZero(),
               waypoint->name.c_str());
 }
 
 int main(int argc, char **argv)
-{
+try {
   WaypointType type = WaypointType::ALL;
   double range = 100000;
 
@@ -164,8 +136,7 @@ int main(int argc, char **argv)
   args.ExpectEnd();
 
   Waypoints waypoints;
-  if (!LoadWaypoints(path, waypoints))
-    return EXIT_FAILURE;
+  LoadWaypoints(path, waypoints);
 
   char buffer[1024];
   const char *line;
@@ -180,4 +151,7 @@ int main(int argc, char **argv)
   }
 
   return EXIT_SUCCESS;
+} catch (...) {
+  PrintException(std::current_exception());
+  return EXIT_FAILURE;
 }

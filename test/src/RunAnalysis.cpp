@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_LOOK
 #define ENABLE_DIALOG
@@ -28,8 +8,8 @@ Copyright_License {
 #define USAGE "DRIVER FILE"
 
 #include "Main.hpp"
-#include "Screen/SingleWindow.hpp"
-#include "Screen/BufferCanvas.hpp"
+#include "ui/window/SingleWindow.hpp"
+#include "ui/canvas/BufferCanvas.hpp"
 #include "InfoBoxes/InfoBoxLayout.hpp"
 #include "Logger/Logger.hpp"
 #include "Terrain/RasterTerrain.hpp"
@@ -57,12 +37,12 @@ Copyright_License {
 #include "LocalPath.hpp"
 #include "Blackboard/InterfaceBlackboard.hpp"
 #include "DebugReplay.hpp"
-#include "IO/FileLineReader.hpp"
-#include "Operation/Operation.hpp"
+#include "io/FileLineReader.hpp"
+#include "Operation/ConsoleOperationEnvironment.hpp"
 #include "Look/Look.hpp"
-#include "OS/Args.hpp"
+#include "system/Args.hpp"
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <shellapi.h>
 #endif
 
@@ -76,27 +56,28 @@ void dlgBasicSettingsShowModal() {}
 void ShowWindSettingsDialog() {}
 
 void
-dlgAirspaceWarningsShowModal(ProtectedAirspaceWarningManager &warnings,
-                             bool auto_close)
+dlgAirspaceWarningsShowModal([[maybe_unused]] ProtectedAirspaceWarningManager &warnings,
+                             [[maybe_unused]] bool auto_close)
 {
 }
 
 void
-dlgStatusShowModal(int page)
+dlgStatusShowModal([[maybe_unused]] int page)
 {
 }
 
 void
-ConditionMonitorsUpdate(const NMEAInfo &basic, const DerivedInfo &calculated,
-                        const ComputerSettings &settings)
+ConditionMonitors::Update([[maybe_unused]] const NMEAInfo &basic,
+                          [[maybe_unused]] const DerivedInfo &calculated,
+                          [[maybe_unused]] const ComputerSettings &settings) noexcept
 {
 }
 
 bool InputEvents::processGlideComputer(unsigned) { return false; }
 
-void Logger::LogStartEvent(const NMEAInfo &gps_info) {}
-void Logger::LogFinishEvent(const NMEAInfo &gps_info) {}
-void Logger::LogPoint(const NMEAInfo &gps_info) {}
+void Logger::LogStartEvent([[maybe_unused]] const NMEAInfo &gps_info) {}
+void Logger::LogFinishEvent([[maybe_unused]] const NMEAInfo &gps_info) {}
+void Logger::LogPoint([[maybe_unused]] const NMEAInfo &gps_info) {}
 
 /* done with fake symbols. */
 
@@ -105,12 +86,15 @@ static RasterTerrain *terrain;
 static void
 LoadFiles(Airspaces &airspace_database)
 {
-  NullOperationEnvironment operation;
+  ConsoleOperationEnvironment operation;
 
-  terrain = RasterTerrain::OpenTerrain(NULL, operation);
+  terrain = RasterTerrain::OpenTerrain(nullptr, operation).release();
 
   const AtmosphericPressure pressure = AtmosphericPressure::Standard();
-  ReadAirspace(airspace_database, terrain, pressure, operation);
+  ReadAirspace(airspace_database, pressure, operation);
+
+  if (terrain != nullptr)
+    SetAirspaceGroundLevels(airspace_database, *terrain);
 }
 
 static void
@@ -147,7 +131,7 @@ ParseCommandLine(Args &args)
 }
 
 static void
-Main()
+Main(UI::Display &display)
 {
   const Waypoints way_points;
 
@@ -172,12 +156,10 @@ Main()
 
   LoadFiles(airspace_database);
 
-  OrderedTask *task = LoadDefaultTask(blackboard.GetComputerSettings().task,
-                                      &way_points);
-  if (task != nullptr) {
+  auto task = LoadDefaultTask(blackboard.GetComputerSettings().task,
+                              &way_points);
+  if (task)
     protected_task_manager.TaskCommit(*task);
-    delete task;
-  }
 
   GlideComputer glide_computer(blackboard.GetComputerSettings(),
                                way_points, airspace_database,
@@ -190,8 +172,8 @@ Main()
   LoadReplay(replay, glide_computer, blackboard);
   delete replay;
 
-  SingleWindow main_window;
-  main_window.Create(_T("RunAnalysis"),
+  UI::SingleWindow main_window{display};
+  main_window.Create("RunAnalysis",
                      {640, 480});
 
   dlgAnalysisShowModal(main_window, *look, blackboard, glide_computer,

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "CirclingComputer.hpp"
 #include "NMEA/MoreData.hpp"
@@ -27,11 +7,11 @@ Copyright_License {
 #include "NMEA/FlyingState.hpp"
 #include "Settings.hpp"
 #include "Math/LowPassFilter.hpp"
-#include "Util/Clamp.hpp"
+#include "time/Cast.hxx"
+
+#include <algorithm> // for std::clamp()
 
 static constexpr Angle MIN_TURN_RATE = Angle::Degrees(4);
-static constexpr double CRUISE_CLIMB_SWITCH(15);
-static constexpr double CLIMB_CRUISE_SWITCH(10);
 
 void
 CirclingComputer::Reset()
@@ -64,12 +44,14 @@ CirclingComputer::TurnRate(CirclingInfo &circling_info,
 
     // initialize turn_rate_delta_time on first call
     if (basic.time_available)
-      turn_rate_delta_time.Update(basic.time, 1./3., 10);
+      turn_rate_delta_time.Update(basic.time, FloatDuration{1./3.},
+                                  std::chrono::seconds{10});
     return;
   }
 
-  const auto dt = turn_rate_delta_time.Update(basic.time, 1./3., 10);
-  if (dt < 0) {
+  const auto dt = turn_rate_delta_time.Update(basic.time, FloatDuration{1./3.},
+                                              std::chrono::seconds{10});
+  if (dt.count() < 0) {
     circling_info.turn_rate = Angle::Zero();
     circling_info.turn_rate_heading = Angle::Zero();
     circling_info.turn_rate_smoothed = Angle::Zero();
@@ -79,16 +61,16 @@ CirclingComputer::TurnRate(CirclingInfo &circling_info,
     return;
   }
 
-  if (dt > 0) {
+  if (dt.count() > 0) {
     circling_info.turn_rate =
-      (basic.track - last_track).AsDelta() / dt;
+      (basic.track - last_track).AsDelta() / ToFloatSeconds(dt);
     circling_info.turn_rate_heading =
-      (basic.attitude.heading - last_heading).AsDelta() / dt;
+      (basic.attitude.heading - last_heading).AsDelta() / ToFloatSeconds(dt);
 
     // JMW limit rate to 50 deg per second otherwise a big spike
     // will cause spurious lock on circling for a long time
-    Angle turn_rate = Clamp(circling_info.turn_rate,
-                            Angle::Degrees(-50), Angle::Degrees(50));
+    Angle turn_rate = std::clamp(circling_info.turn_rate,
+                                 Angle::Degrees(-50), Angle::Degrees(50));
 
     // Make the turn rate more smooth using the LowPassFilter
     auto smoothed = LowPassFilter(circling_info.turn_rate_smoothed.Native(),
@@ -96,8 +78,8 @@ CirclingComputer::TurnRate(CirclingInfo &circling_info,
     circling_info.turn_rate_smoothed = Angle::Native(smoothed);
 
     // Makes smoothing of heading turn rate
-    turn_rate = Clamp(circling_info.turn_rate_heading,
-                      Angle::Degrees(-50), Angle::Degrees(50));
+    turn_rate = std::clamp(circling_info.turn_rate_heading,
+                           Angle::Degrees(-50), Angle::Degrees(50));
     // Make the heading turn rate more smooth using the LowPassFilter
     smoothed = LowPassFilter(circling_info.turn_rate_heading_smoothed.Native(),
                              turn_rate.Native(), 0.3);
@@ -118,8 +100,8 @@ CirclingComputer::Turning(CirclingInfo &circling_info,
   if (!basic.time_available || !flight.flying)
     return;
 
-  const auto dt = turning_delta_time.Update(basic.time, 0, 0);
-  if (dt <= 0)
+  const auto dt = turning_delta_time.Update(basic.time, {}, {});
+  if (dt.count() <= 0)
     return;
 
   circling_info.turning =
@@ -157,9 +139,7 @@ CirclingComputer::Turning(CirclingInfo &circling_info,
     if (!force_circling)
       break;
 
-#if GCC_CHECK_VERSION(7,0)
     [[fallthrough]];
-#endif
 
   case CirclingMode::POSSIBLE_CLIMB:
     if (force_cruise) {
@@ -167,7 +147,7 @@ CirclingComputer::Turning(CirclingInfo &circling_info,
       break;
     }
     if (circling_info.turning || force_circling) {
-      if (((basic.time - turn_start_time) > CRUISE_CLIMB_SWITCH)
+      if (((basic.time - turn_start_time) > settings.cruise_to_circling_mode_switch_threshold)
           || force_circling) {
         // yes, we are certain now that we are circling
         circling_info.circling = true;
@@ -202,9 +182,7 @@ CirclingComputer::Turning(CirclingInfo &circling_info,
     if (!force_cruise)
       break;
 
-#if GCC_CHECK_VERSION(7,0)
     [[fallthrough]];
-#endif
 
   case CirclingMode::POSSIBLE_CRUISE:
     if (force_circling) {
@@ -213,7 +191,7 @@ CirclingComputer::Turning(CirclingInfo &circling_info,
     }
 
     if (!circling_info.turning || force_cruise) {
-      if (basic.time - turn_start_time > CLIMB_CRUISE_SWITCH || force_cruise) {
+      if (basic.time - turn_start_time > settings.circling_to_cruise_mode_switch_threshold || force_cruise) {
         // yes, we are certain now that we are cruising again
         circling_info.circling = false;
 
@@ -245,13 +223,19 @@ CirclingComputer::PercentCircling(const MoreData &basic,
   // JMW circling % only when really circling,
   // to prevent bad stats due to flap switches and dolphin soaring
 
-  const auto dt = percent_delta_time.Update(basic.time, 0, 0);
-  if (dt <= 0)
+  const auto dt = percent_delta_time.Update(basic.time, {}, {});
+  if (dt.count() <= 0)
     return;
 
   // don't increment the accumulators unless actually flying
   if (!flight.flying)
     return;
+
+  /* Integrate brutto vario only when available so T Avg matches the
+     cockpit vario and is not corrupted by pressure-altitude
+     differentiation spikes (#2754). */
+  const bool vario_available = basic.brutto_vario_available;
+  const double vario = vario_available ? basic.brutto_vario : 0;
 
   // if (Circling)
   if (circling_info.circling && circling_info.turning) {
@@ -260,24 +244,23 @@ CirclingComputer::PercentCircling(const MoreData &basic,
     circling_info.time_circling += dt;
 
     // Add the Vario signal to the total climb height
-    circling_info.total_height_gain += basic.gps_vario * dt;
+    if (vario_available)
+      circling_info.total_height_gain += vario * ToFloatSeconds(dt);
 
-    if (basic.gps_vario>= 0) {
+    if (vario_available && vario >= 0)
       circling_info.time_climb_circling += dt;
-    }
   } else {
     // Add time step to the cruise time
     // timeCruising += (Basic->Time-LastTime);
     circling_info.time_cruise += dt;
 
-    if (basic.gps_vario>= 0) {
+    if (vario_available && vario >= 0)
       circling_info.time_climb_noncircling += dt;
-    }
   }
 
   const auto time_total = (circling_info.time_cruise + circling_info.time_circling);
   // Calculate the circling and non-circling percentages
-  if (time_total > 0) {
+  if (time_total.count() > 0) {
     circling_info.circling_percentage = 100 * circling_info.time_circling / time_total;
     circling_info.circling_climb_percentage = 100 * circling_info.time_climb_circling / time_total;
     circling_info.noncircling_climb_percentage = 100 * circling_info.time_climb_noncircling /

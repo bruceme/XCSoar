@@ -1,69 +1,72 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_POLAR_COEFF_HPP
-#define XCSOAR_POLAR_COEFF_HPP
-
-#include "Compiler.h"
+#pragma once
 
 struct PolarCoefficients
 {
   double a, b, c;
 
-  PolarCoefficients() = default;
-  constexpr PolarCoefficients(double _a, double _b, double _c)
+  PolarCoefficients() noexcept = default;
+  constexpr PolarCoefficients(double _a, double _b, double _c) noexcept
     :a(_a), b(_b), c(_c) {}
 
   /**
    * Construct an invalid object.
    */
-  gcc_const
-  static PolarCoefficients Invalid() {
+  static constexpr PolarCoefficients Invalid() noexcept {
     return PolarCoefficients(0, 0, 0);
   }
 
-  void SetInvalid() {
+  constexpr void SetInvalid() noexcept {
     a = b = c = 0;
   }
 
-  gcc_pure
-  bool IsValid() const;
+  [[gnu::pure]]
+  constexpr bool IsValid() const noexcept {
+    return a > 0 && b < 0 && c > 0;
+  }
 
   /**
    * Calculates the three polynomial polar coefficients from
    * three pairs of horizontal vs. vertical speed.
    */
-  gcc_pure
-  static PolarCoefficients From3VW(double v1, double v2, double v3,
-                                   double w1, double w2, double w3);
+  [[gnu::pure]]
+  static constexpr PolarCoefficients From3VW(double v1, double v2, double v3,
+                                             double w1, double w2, double w3) noexcept {
+    PolarCoefficients pc;
+
+    auto d = v1 * v1 * (v2 - v3) + v2 * v2 * (v3 - v1) + v3 * v3 * (v1 - v2);
+    pc.a = d == 0
+      ? 0.
+      : -((v2 - v3) * (w1 - w3) + (v3 - v1) * (w2 - w3)) / d;
+
+    d = v2 - v3;
+    pc.b = d == 0
+      ? 0.
+      : -(w2 - w3 + pc.a * (v2 * v2 - v3 * v3)) / d;
+
+    pc.c = -(w3 + pc.a * v3 * v3 + pc.b * v3);
+
+    return pc;
+  }
 
   /**
    * Calculates the three polynomial polar coefficients from
    * two pairs of horizontal vs. vertical speed. The first pair defines
    * the point where the polar is flat (derivative equals zero)!
    */
-  gcc_pure
-  static PolarCoefficients From2VW(double v1, double v2, double w1, double w2);
-};
+  static constexpr PolarCoefficients From2VW(double v1, double v2,
+                                             double w1, double w2) noexcept {
+    PolarCoefficients pc;
 
-#endif
+    auto d = (v2 - v1) * (v2 - v1);
+    pc.a = d == 0
+      ? 0.
+      : (w2 - w1) / d;
+    pc.b = -2 * pc.a * v1;
+    pc.c = pc.a * v1 * v1 + w1;
+
+    return pc;
+  }
+};

@@ -1,57 +1,37 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "GlueMapWindow.hpp"
-#include "Components.hpp"
 #include "DrawThread.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
 #include "Look/Look.hpp"
 #include "Interface.hpp"
-#include "Time/PeriodClock.hpp"
-#include "Event/Idle.hpp"
+#include "PageActions.hpp"
+#include "time/PeriodClock.hpp"
+#include "ui/event/Idle.hpp"
 #include "Topography/Thread.hpp"
 #include "Terrain/Thread.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
 
-GlueMapWindow::GlueMapWindow(const Look &look)
+#include <cassert>
+
+GlueMapWindow::GlueMapWindow(const Look &look) noexcept
   :MapWindow(look.map, look.traffic),
-#ifdef ENABLE_OPENGL
-   kinetic_timer(*this),
-#endif
    thermal_band_renderer(look.thermal_band, look.chart),
    final_glide_bar_renderer(look.final_glide_bar, look.map.task),
    vario_bar_renderer(look.vario_bar),
-   gesture_look(look.gesture),
-   map_item_timer(*this)
+   gesture_look(look.gesture)
 {
 }
 
-GlueMapWindow::~GlueMapWindow()
+GlueMapWindow::~GlueMapWindow() noexcept
 {
   Destroy();
 }
 
 void
-GlueMapWindow::SetTopography(TopographyStore *_topography)
+GlueMapWindow::SetTopography(TopographyStore *_topography) noexcept
 {
   if (topography_thread != nullptr) {
     topography_thread->LockStop();
@@ -63,14 +43,11 @@ GlueMapWindow::SetTopography(TopographyStore *_topography)
 
   if (_topography != nullptr)
     topography_thread =
-      new TopographyThread(*_topography,
-                           [this](){
-                             SendUser(unsigned(Command::INVALIDATE));
-                           });
+      new TopographyThread(*_topography, [this](){ InjectRedraw(); });
 }
 
 void
-GlueMapWindow::SetTerrain(RasterTerrain *_terrain)
+GlueMapWindow::SetTerrain(RasterTerrain *_terrain) noexcept
 {
   if (terrain_thread != nullptr) {
     terrain_thread->LockStop();
@@ -82,65 +59,79 @@ GlueMapWindow::SetTerrain(RasterTerrain *_terrain)
 
   if (_terrain != nullptr)
     terrain_thread =
-      new TerrainThread(*_terrain,
-                        [this](){
-                          SendUser(unsigned(Command::INVALIDATE));
-                        });
+      new TerrainThread(*_terrain, [this](){ InjectRedraw(); });
 }
 
 void
-GlueMapWindow::SetMapSettings(const MapSettings &new_value)
+GlueMapWindow::SetMapSettings(const MapSettings &new_value) noexcept
 {
   AssertThreadOrUndefined();
 
 #ifdef ENABLE_OPENGL
   ReadMapSettings(new_value);
 #else
-  ScopeLock protect(next_mutex);
+  const std::lock_guard lock{next_mutex};
   next_settings_map = new_value;
 #endif
 }
 
 void
-GlueMapWindow::SetComputerSettings(const ComputerSettings &new_value)
+GlueMapWindow::SetComputerSettings(const ComputerSettings &new_value) noexcept
 {
   AssertThreadOrUndefined();
 
 #ifdef ENABLE_OPENGL
   ReadComputerSettings(new_value);
 #else
-  ScopeLock protect(next_mutex);
+  const std::lock_guard lock{next_mutex};
   next_settings_computer = new_value;
 #endif
 }
 
 void
-GlueMapWindow::SetUIState(const UIState &new_value)
+GlueMapWindow::SetUIState(const UIState &new_value) noexcept
 {
   AssertThreadOrUndefined();
 
 #ifdef ENABLE_OPENGL
   ReadUIState(new_value);
 #else
-  ScopeLock protect(next_mutex);
-  next_ui_state = new_value;
+  {
+    const std::lock_guard lock{next_mutex};
+    next_ui_state = new_value;
+  }
 #endif
+
+  page_indicator_count = new_value.pages.special_page.IsDefined()
+    ? 0
+    : new_value.page_indicator_count;
+  page_indicator_index = new_value.pages.current_index;
+
+  if (new_value.page_indicator_time != page_indicator_time) {
+    page_indicator_time = new_value.page_indicator_time;
+    OnPageIndicatorTimer();
+
+    /* the page indicator is painted over the buffered map, which need
+       not be rendered again for it */
+    PaintWindow::Invalidate();
+  }
 }
 
 void
-GlueMapWindow::ExchangeBlackboard()
+GlueMapWindow::ExchangeBlackboard() noexcept
 {
   /* copy device_blackboard to MapWindow */
 
   {
-    const ScopeLock lock(device_blackboard->mutex);
-    ReadBlackboard(device_blackboard->Basic(),
-                   device_blackboard->Calculated());
+    auto &device_blackboard = *backend_components->device_blackboard;
+    const std::lock_guard lock{device_blackboard.mutex};
+    ReadBlackboard(device_blackboard.Basic(),
+                   device_blackboard.Calculated());
   }
 
 #ifndef ENABLE_OPENGL
   {
-    const ScopeLock lock(next_mutex);
+    const std::lock_guard lock{next_mutex};
     ReadMapSettings(next_settings_map);
     ReadComputerSettings(next_settings_computer);
     ReadUIState(next_ui_state);
@@ -149,7 +140,7 @@ GlueMapWindow::ExchangeBlackboard()
 }
 
 void
-GlueMapWindow::SuspendThreads()
+GlueMapWindow::SuspendThreads() noexcept
 {
 #ifndef ENABLE_OPENGL
   if (draw_thread != nullptr)
@@ -158,7 +149,7 @@ GlueMapWindow::SuspendThreads()
 }
 
 void
-GlueMapWindow::ResumeThreads()
+GlueMapWindow::ResumeThreads() noexcept
 {
 #ifndef ENABLE_OPENGL
   if (draw_thread != nullptr)
@@ -167,23 +158,88 @@ GlueMapWindow::ResumeThreads()
 }
 
 void
-GlueMapWindow::FullRedraw()
+GlueMapWindow::InjectRedraw() noexcept
 {
+#ifdef ENABLE_OPENGL
+  /* async tile/topography loads may arrive after the idle upgrade
+     timer has already fired (common in simulator startup) */
+  terrain_quantisation_idle_done = false;
+#endif
+
+  redraw_notify.SendNotification();
+}
+
+void
+GlueMapWindow::EndCoalesceFullRedraw() noexcept
+{
+  assert(coalesce_full_redraw > 0);
+
+  if (--coalesce_full_redraw > 0)
+    return;
+
+  if (!full_redraw_pending)
+    return;
+
+  full_redraw_pending = false;
+  FullRedraw();
+}
+
+void
+GlueMapWindow::FullRedraw() noexcept
+{
+  if (coalesce_full_redraw > 0) {
+    full_redraw_pending = true;
+    return;
+  }
+
   UpdateDisplayMode();
   UpdateScreenAngle();
   UpdateProjection();
   UpdateMapScale();
   UpdateScreenBounds();
 
+  DeferRedraw();
+
 #ifdef ENABLE_OPENGL
-  Invalidate();
-#else
-  draw_thread->TriggerRedraw();
+  NoteTerrainQuantisationUserActivity();
 #endif
 }
 
 void
-GlueMapWindow::QuickRedraw()
+GlueMapWindow::OnProjectionModified() noexcept
+{
+  PageActions::OnMapProjectionModified();
+}
+
+void
+GlueMapWindow::PartialRedraw() noexcept
+{
+
+#ifdef ENABLE_OPENGL
+  Invalidate();
+#else
+  if (draw_thread != nullptr)
+    draw_thread->TriggerRedraw();
+#endif
+}
+
+void
+GlueMapWindow::SetHudMargins(unsigned left, unsigned top,
+                             unsigned right, unsigned bottom) noexcept
+{
+  if (left == hud_margin_left && top == hud_margin_top &&
+      right == hud_margin_right && bottom == hud_margin_bottom)
+    return;
+
+  MapWindow::SetHudMargins(left, top, right, bottom);
+
+  /* UpdateProjection() centres on GetHudRect().  Invalidate() alone
+     leaves published_projection on the DrawThread at the old origin. */
+  QuickRedraw();
+}
+
+void
+GlueMapWindow::QuickRedraw() noexcept
 {
   UpdateScreenAngle();
   UpdateProjection();
@@ -205,23 +261,60 @@ GlueMapWindow::QuickRedraw()
 #ifndef ENABLE_OPENGL
   /* we suppose that the operation will need a full redraw later, so
      trigger that now */
-  draw_thread->TriggerRedraw();
-#endif
-}
-
-bool
-GlueMapWindow::OnUser(unsigned id)
-{
-  switch (Command(id)) {
-  case Command::INVALIDATE:
-#ifdef ENABLE_OPENGL
-    Invalidate();
+  DeferRedraw();
 #else
-    draw_thread->TriggerRedraw();
+  NoteTerrainQuantisationUserActivity();
 #endif
-    return true;
-
-  default:
-    return MapWindow::OnUser(id);
-  }
 }
+
+#ifdef ENABLE_OPENGL
+
+/** Must match the steps in RasterRenderer::GetQuantisation(). */
+static constexpr auto TERRAIN_QUANTISATION_IDLE_STEP =
+  std::chrono::milliseconds(750);
+
+void
+GlueMapWindow::NoteTerrainQuantisationUserActivity() noexcept
+{
+  terrain_quantisation_idle_done = false;
+  terrain_quantisation_timer.Schedule(TERRAIN_QUANTISATION_IDLE_STEP);
+}
+
+void
+GlueMapWindow::PollTerrainQuantisationIdle() noexcept
+{
+  if (!IsUserIdle(750)) {
+    terrain_quantisation_idle_done = false;
+    return;
+  }
+
+  if (terrain_quantisation_timer.IsPending())
+    return;
+
+  if (IsUserIdle(1500)) {
+    if (!terrain_quantisation_idle_done) {
+      terrain_quantisation_idle_done = true;
+      PartialRedraw();
+    }
+    return;
+  }
+
+  /* idle past the first threshold but the one-shot timer was missed
+     (e.g. simulator startup before the map was shown) */
+  terrain_quantisation_idle_done = false;
+  PartialRedraw();
+  terrain_quantisation_timer.Schedule(TERRAIN_QUANTISATION_IDLE_STEP);
+}
+
+void
+GlueMapWindow::OnTerrainQuantisationTimer() noexcept
+{
+  PartialRedraw();
+
+  if (!IsUserIdle(1500))
+    terrain_quantisation_timer.Schedule(TERRAIN_QUANTISATION_IDLE_STEP);
+  else
+    terrain_quantisation_idle_done = true;
+}
+
+#endif

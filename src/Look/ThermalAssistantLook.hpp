@@ -1,40 +1,21 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef THERMAL_ASSISTANT_WINDOW_LOOK_HPP
-#define THERMAL_ASSISTANT_WINDOW_LOOK_HPP
-
-#include "Screen/Color.hpp"
-#include "Screen/Pen.hpp"
-#include "Screen/Brush.hpp"
-#include "Screen/Font.hpp"
+#include "ui/canvas/Color.hpp"
+#include "ui/canvas/Pen.hpp"
+#include "ui/canvas/Brush.hpp"
+#include "ui/canvas/Font.hpp"
 
 struct ThermalAssistantLook {
+  static constexpr Color circle_color{0xB0, 0xB0, 0xB0};
+  static constexpr Color polygon_fill_color{0xCC, 0xCC, 0xFF};
+  static constexpr Color polygon_border_color = COLOR_BLUE;
+  
   Color background_color;
-  Color circle_color;
   Color text_color;
-  Color polygon_fill_color;
-  Color polygon_border_color;
+  
 
   Brush polygon_brush;
 
@@ -46,5 +27,3 @@ struct ThermalAssistantLook {
 
   void Initialise(bool small, bool inverse);
 };
-
-#endif

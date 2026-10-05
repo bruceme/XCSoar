@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TrafficDialogs.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -27,16 +7,15 @@ Copyright_License {
 #include "Widget/TwoWidgets.hpp"
 #include "Widget/RowFormWidget.hpp"
 #include "Renderer/TwoTextRowsRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
 #include "Form/DataField/Prefix.hpp"
 #include "Form/DataField/Listener.hpp"
-#include "FLARM/FlarmNetRecord.hpp"
-#include "FLARM/FlarmDetails.hpp"
-#include "FLARM/FlarmId.hpp"
+#include "FLARM/Details.hpp"
+#include "FLARM/Id.hpp"
 #include "FLARM/Global.hpp"
 #include "FLARM/TrafficDatabases.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
 #include "Language/Language.hpp"
 #include "UIGlobals.hpp"
 #include "Look/DialogLook.hpp"
@@ -45,11 +24,18 @@ Copyright_License {
 #include "Formatter/UserUnits.hpp"
 #include "Formatter/AngleFormatter.hpp"
 #include "Blackboard/BlackboardListener.hpp"
-#include "Tracking/SkyLines/Data.hpp"
-#include "Tracking/TrackingGlue.hpp"
+#include "FLARM/Traffic.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
-#include "Components.hpp"
 #include "Pan.hpp"
+
+#ifdef HAVE_SKYLINES_TRACKING
+#include "Components.hpp"
+#include "NetComponents.hpp"
+#include "Tracking/TrackingGlue.hpp"
+#include "Tracking/SkyLines/TrafficDisplay.hpp"
+#endif
+
+using namespace std::chrono;
 
 enum Controls {
   CALLSIGN,
@@ -63,22 +49,13 @@ enum Buttons {
 class TrafficListButtons;
 
 class TrafficListWidget : public ListWidget, public DataFieldListener,
-                          public ActionListener, NullBlackboardListener {
+                          NullBlackboardListener {
   struct Item {
     /**
      * The FLARM traffic id.  If this is "undefined", then this object
      * does not refer to FLARM traffic.
      */
     FlarmId id;
-
-#ifdef HAVE_SKYLINES_TRACKING
-    /**
-     * The SkyLines account id.
-     */
-    uint32_t skylines_id = 0;
-
-    uint32_t time_of_day_ms;
-#endif
 
     /**
      * The color that was assigned by the user to this FLARM peer.  It
@@ -93,8 +70,10 @@ class TrafficListWidget : public ListWidget, public DataFieldListener,
      */
     bool loaded = false;
 
-    const FlarmNetRecord *record;
-    const TCHAR *callsign;
+    /** 
+     * Resolved human-readable FLARM fields plus metadata about their origin. 
+     */
+    ResolvedInfo info;
 
     /**
      * This object's location.  Check GeoPoint::IsValid().
@@ -110,76 +89,24 @@ class TrafficListWidget : public ListWidget, public DataFieldListener,
     /**
      * The display name of the SkyLines account.
      */
-    tstring name;
-
-#ifdef HAVE_SKYLINES_TRACKING
-    StaticString<20> near_name;
-    double near_distance;
-
-    int altitude;
-#endif
+    std::string name;
 
     explicit Item(FlarmId _id)
       :id(_id) {
       assert(id.IsDefined());
-      assert(IsFlarm());
-
-#ifdef HAVE_SKYLINES_TRACKING
-      near_name.clear();
-#endif
     }
 
-#ifdef HAVE_SKYLINES_TRACKING
-    explicit Item(uint32_t _id, uint32_t _time_of_day_ms,
-                  const GeoPoint &_location, int _altitude,
-                  tstring &&_name)
-      :id(FlarmId::Undefined()), skylines_id(_id),
-       time_of_day_ms(_time_of_day_ms),
-       color(FlarmColor::COUNT),
-       loaded(false),
-       location(_location),
-       vector(GeoVector::Invalid()), name(std::move(_name)),
-       altitude(_altitude) {
-      assert(IsSkyLines());
-
-      near_name.clear();
-    }
-#endif
-
-    /**
-     * Does this object describe a FLARM?
-     */
     bool IsFlarm() const {
       return id.IsDefined();
     }
 
-#ifdef HAVE_SKYLINES_TRACKING
-    /**
-     * Does this object describe data from SkyLines live tracking?
-     */
-    bool IsSkyLines() const {
-      return skylines_id != 0;
-    }
-#endif
-
     void Load() {
-      if (IsFlarm()) {
-        record = traffic_databases->flarm_net.FindRecordById(id);
-        callsign = traffic_databases->FindNameById(id);
-#ifdef HAVE_SKYLINES_TRACKING
-      } else if (IsSkyLines()) {
-        record = nullptr;
-        callsign = nullptr;
-#endif
-      } else {
-        gcc_unreachable();
-      }
-
+      info = FlarmDetails::ResolveInfo(id);
       loaded = true;
     }
 
     void AutoLoad() {
-      if (IsFlarm() && color == FlarmColor::COUNT)
+      if (color == FlarmColor::COUNT)
         color = traffic_databases->GetColor(id);
 
       if (!loaded)
@@ -189,7 +116,7 @@ class TrafficListWidget : public ListWidget, public DataFieldListener,
 
   typedef std::vector<Item> ItemList;
 
-  ActionListener &action_listener;
+  WndForm &dialog;
 
   const RowFormWidget *const filter_widget;
 
@@ -206,9 +133,9 @@ class TrafficListWidget : public ListWidget, public DataFieldListener,
   TwoTextRowsRenderer row_renderer;
 
 public:
-  TrafficListWidget(ActionListener &_action_listener,
+  TrafficListWidget(WndForm &_dialog,
                     const FlarmId *array, size_t count)
-    :action_listener(_action_listener), filter_widget(nullptr),
+    :dialog(_dialog), filter_widget(nullptr),
      buttons(nullptr) {
     items.reserve(count);
 
@@ -216,14 +143,14 @@ public:
       items.emplace_back(array[i]);
   }
 
-  TrafficListWidget(ActionListener &_action_listener,
+  TrafficListWidget(WndForm &_dialog,
                     const RowFormWidget &_filter_widget,
                     TrafficListButtons &_buttons)
-    :action_listener(_action_listener), filter_widget(&_filter_widget),
+    :dialog(_dialog), filter_widget(&_filter_widget),
      buttons(&_buttons) {
   }
 
-  gcc_pure
+  [[gnu::pure]]
   FlarmId GetCursorId() const {
     return items.empty()
       ? FlarmId::Undefined()
@@ -235,7 +162,7 @@ private:
    * Find an existing item by its FLARM id.  This is a simple linear
    * search that doesn't scale well with a large list.
    */
-  gcc_pure
+  [[gnu::pure]]
   ItemList::iterator FindItem(FlarmId id) {
     assert(id.IsDefined());
 
@@ -267,18 +194,24 @@ private:
   void UpdateButtons();
 
   void OpenDetails(unsigned index);
+
   void OpenMap(unsigned index);
 
 public:
-  /* virtual methods from class Widget */
-
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
-  virtual void Unprepare() override {
-    DeleteWindow();
+  void OpenDetails() noexcept {
+    OpenDetails(GetList().GetCursorIndex());
   }
 
-  virtual void Show(const PixelRect &rc) override {
+  void OpenMap() noexcept {
+    OpenMap(GetList().GetCursorIndex());
+  }
+
+  /* virtual methods from class Widget */
+
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override;
+
+  void Show(const PixelRect &rc) noexcept override {
     ListWidget::Show(rc);
 
     if (filter_widget != nullptr)
@@ -287,7 +220,7 @@ public:
     CommonInterface::GetLiveBlackboard().AddListener(*this);
   }
 
-  virtual void Hide() override {
+  void Hide() noexcept override {
     CommonInterface::GetLiveBlackboard().RemoveListener(*this);
 
     ListWidget::Hide();
@@ -295,30 +228,27 @@ public:
 
   /* virtual methods from ListItemRenderer */
   virtual void OnPaintItem(Canvas &canvas, const PixelRect rc,
-                           unsigned idx) override;
+                           unsigned idx) noexcept override;
 
   /* virtual methods from ListCursorHandler */
-  virtual void OnCursorMoved(unsigned index) override {
+  virtual void OnCursorMoved([[maybe_unused]] unsigned index) noexcept override {
     UpdateButtons();
   }
 
-  virtual bool CanActivateItem(unsigned index) const override {
+  virtual bool CanActivateItem([[maybe_unused]] unsigned index) const noexcept override {
     return true;
   }
 
-  virtual void OnActivateItem(unsigned index) override;
+  virtual void OnActivateItem(unsigned index) noexcept override;
 
   /* virtual methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override {
+  void OnModified([[maybe_unused]] DataField &df) noexcept override {
     UpdateList();
   }
 
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override;
-
 private:
   /* virtual methods from BlackboardListener */
-  virtual void OnGPSUpdate(const MoreData &basic) override {
+  virtual void OnGPSUpdate([[maybe_unused]] const MoreData &basic) override {
     UpdateVolatile();
   }
 };
@@ -334,30 +264,30 @@ public:
     listener = _listener;
   }
 
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override {
-    PrefixDataField *callsign_df = new PrefixDataField(_T(""), listener);
+  void Prepare([[maybe_unused]] ContainerWindow &parent,
+               [[maybe_unused]] const PixelRect &rc) noexcept override {
+    PrefixDataField *callsign_df = new PrefixDataField("", listener);
     Add(_("Competition ID"), nullptr, callsign_df);
   }
 };
 
 class TrafficListButtons : public RowFormWidget {
-  ActionListener &dialog;
-  ActionListener *list;
+  WndForm &dialog;
+  TrafficListWidget *list;
 
 public:
-  TrafficListButtons(const DialogLook &look, ActionListener &_dialog)
+  TrafficListButtons(const DialogLook &look, WndForm &_dialog)
     :RowFormWidget(look), dialog(_dialog) {}
 
-  void SetList(ActionListener *_list) {
+  void SetList(TrafficListWidget *_list) noexcept {
     list = _list;
   }
 
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override {
-    AddButton(_("Details"), *list, DETAILS);
-    AddButton(_("Map"), *list, MAP);
-    AddButton(_("Close"), dialog, mrCancel);
+  void Prepare([[maybe_unused]] ContainerWindow &parent,
+               [[maybe_unused]] const PixelRect &rc) noexcept override {
+    AddButton(_("Details"), [this](){ list->OpenDetails(); });
+    AddButton(_("Map"), [this](){ list->OpenMap(); });
+    AddButton(_("Close"), dialog.MakeModalResultCallback(mrCancel));
   }
 };
 
@@ -369,7 +299,7 @@ TrafficListWidget::UpdateList()
   items.clear();
   last_update.Clear();
 
-  const TCHAR *callsign = filter_widget->GetValueString(CALLSIGN);
+  const char *callsign = filter_widget->GetValueString(CALLSIGN);
   if (!StringIsEmpty(callsign)) {
     FlarmId ids[30];
     unsigned count = FlarmDetails::FindIdsByCallSign(callsign, ids, 30);
@@ -395,39 +325,6 @@ TrafficListWidget::UpdateList()
     for (const auto &i : traffic_databases->flarm_names) {
       AddItem(i.id);
     }
-
-#ifdef HAVE_SKYLINES_TRACKING
-    /* show SkyLines traffic unless this is a FLARM traffic picker
-       dialog (from dlgTeamCode) */
-    if (buttons != nullptr) {
-      const auto &data = tracking->GetSkyLinesData();
-      const ScopeLock protect(data.mutex);
-      for (const auto &i : data.traffic) {
-        const auto name_i = data.user_names.find(i.first);
-        tstring name = name_i != data.user_names.end()
-          ? name_i->second
-          : tstring();
-
-        items.emplace_back(i.first, i.second.time_of_day_ms,
-                           i.second.location, i.second.altitude,
-                           std::move(name));
-        Item &item = items.back();
-
-        if (i.second.location.IsValid()) {
-          if (CommonInterface::Basic().location_available)
-            item.vector = GeoVector(CommonInterface::Basic().location,
-                                    i.second.location);
-
-          const auto wp = way_points.GetNearestLandable(i.second.location,
-                                                        20000);
-          if (wp != nullptr) {
-            item.near_name = wp->name.c_str();
-            item.near_distance = wp->location.DistanceS(i.second.location);
-          }
-        }
-      }
-    }
-#endif
   }
 
   GetList().SetLength(items.size());
@@ -449,56 +346,23 @@ TrafficListWidget::UpdateVolatile()
   max_time.Clear();
 
   for (auto &i : items) {
-    if (i.IsFlarm()) {
-      const FlarmTraffic *live = live_list.FindTraffic(i.id);
+    const FlarmTraffic *live = live_list.FindTraffic(i.id);
 
-      if (live != nullptr) {
-        if (live->valid.Modified(last_update))
-          /* if this #FlarmTraffic is newer than #last_update, then we
-             need to redraw the list */
-          modified = true;
+    if (live != nullptr) {
+      if (live->valid.Modified(last_update))
+        modified = true;
 
-        if (live->valid.Modified(max_time))
-          /* update max_time (and last_update) for the next
-             UpdateVolatile() call */
-          max_time = live->valid;
+      if (live->valid.Modified(max_time))
+        max_time = live->valid;
 
-        i.location = live->location;
-        i.vector = GeoVector(live->distance, live->track);
-      } else {
-        if (i.location.IsValid() || i.vector.IsValid())
-          /* this item has disappeared from our FLARM: redraw the
-             list */
-          modified = true;
+      i.location = live->location;
+      i.vector = GeoVector(live->distance, live->track);
+    } else {
+      if (i.location.IsValid() || i.vector.IsValid())
+        modified = true;
 
-        i.location.SetInvalid();
-        i.vector.SetInvalid();
-      }
-#ifdef HAVE_SKYLINES_TRACKING
-    } else if (i.IsSkyLines()) {
-      const auto &data = tracking->GetSkyLinesData();
-      const ScopeLock protect(data.mutex);
-
-      auto live = data.traffic.find(i.skylines_id);
-      if (live != data.traffic.end()) {
-        if (live->second.location != i.location)
-          modified = true;
-
-        i.location = live->second.location;
-
-        if (i.location.IsValid() &&
-            CommonInterface::Basic().location_available)
-          i.vector = GeoVector(CommonInterface::Basic().location,
-                               i.location);
-      } else {
-        if (i.location.IsValid() || i.vector.IsValid())
-          /* this item has disappeared: redraw the list */
-          modified = true;
-
-        i.location.SetInvalid();
-        i.vector.SetInvalid();
-      }
-#endif
+      i.location.SetInvalid();
+      i.vector.SetInvalid();
     }
   }
 
@@ -519,13 +383,13 @@ TrafficListWidget::UpdateButtons()
   bool flarm_cursor = valid_cursor && items[cursor].IsFlarm();
   bool valid_location = valid_cursor && items[cursor].location.IsValid();
 
-  buttons->SetRowVisible(DETAILS, flarm_cursor);
-  buttons->SetRowVisible(MAP, valid_location);
+  buttons->SetRowEnabled(DETAILS, flarm_cursor);
+  buttons->SetRowEnabled(MAP, valid_location);
 }
 
 void
 TrafficListWidget::Prepare(ContainerWindow &parent,
-                           const PixelRect &rc)
+                           const PixelRect &rc) noexcept
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
   ListControl &list = CreateList(parent, look, rc,
@@ -538,81 +402,65 @@ TrafficListWidget::Prepare(ContainerWindow &parent,
     list.SetLength(items.size());
 }
 
-#ifdef HAVE_SKYLINES_TRACKING
-
-/**
- * Calculate how many minutes have passed since #past_ms.
- */
-gcc_const
-static unsigned
-SinceInMinutes(double now_s, uint32_t past_ms)
-{
-  const unsigned day_minutes = 24 * 60;
-  unsigned now_minutes = uint32_t(now_s / 60) % day_minutes;
-  unsigned past_minutes = (past_ms / 60000) % day_minutes;
-
-  if (past_minutes >= 20 * 60 && now_minutes < 4 * 60)
-    /* midnight rollover */
-    now_minutes += day_minutes;
-
-  if (past_minutes > now_minutes)
-    return 0;
-
-  return now_minutes - past_minutes;
-}
-
-#endif
-
 void
 TrafficListWidget::OnPaintItem(Canvas &canvas, PixelRect rc,
-                               unsigned index)
+                               unsigned index) noexcept
 {
   assert(index < items.size());
   Item &item = items[index];
 
-  assert(item.IsFlarm()
-#ifdef HAVE_SKYLINES_TRACKING
-         || item.IsSkyLines()
-#endif
-         );
+  assert(item.IsFlarm());
 
   item.AutoLoad();
 
-  const FlarmNetRecord *record = item.record;
-  const TCHAR *callsign = item.callsign;
+  const ResolvedInfo &info = item.info;
+  const FlarmTraffic *live =
+    CommonInterface::Basic().flarm.traffic.FindTraffic(item.id);
 
   const DialogLook &look = UIGlobals::GetDialogLook();
   const Font &name_font = *look.list.font_bold;
-  const Font &small_font = look.small_font;
 
   const unsigned text_padding = Layout::GetTextPadding();
   const unsigned frame_padding = text_padding / 2;
 
-  TCHAR tmp_id[10];
+  char tmp_id[10];
   item.id.Format(tmp_id);
 
   canvas.Select(name_font);
 
   StaticString<256> tmp;
 
-  if (item.IsFlarm()) {
-    if (record != nullptr)
-      tmp.Format(_T("%s - %s - %s"),
-                 callsign, record->registration.c_str(), tmp_id);
-    else if (callsign != nullptr)
-      tmp.Format(_T("%s - %s"), callsign, tmp_id);
-    else
-      tmp.Format(_T("%s"), tmp_id);
+  if (live != nullptr &&
+      FlarmTraffic::IsInjectedSource(live->source)) {
 #ifdef HAVE_SKYLINES_TRACKING
-  } else if (item.IsSkyLines()) {
-    if (!item.name.empty())
-      tmp = item.name.c_str();
+    StaticString<64> title;
+    uint32_t pilot_id = 0;
+    StaticString<64> server_name;
+    if (net_components != nullptr && net_components->tracking != nullptr) {
+      pilot_id = net_components->tracking->GetOnlinePilotId(item.id);
+      net_components->tracking->CopyOnlineUserName(pilot_id, server_name);
+    }
+    SkyLinesTracking::FormatTrafficTitle(title, pilot_id, item.id,
+                                         server_name.empty()
+                                         ? nullptr
+                                         : server_name.c_str(),
+                                         live->HasName()
+                                         ? live->name.c_str()
+                                         : nullptr);
+    if (!title.empty())
+      tmp.Format("%s - %s", title.c_str(), tmp_id);
     else
-      tmp.UnsafeFormat(_T("SkyLines %u"), item.skylines_id);
+      tmp = tmp_id;
+#else
+    tmp = tmp_id;
 #endif
-  } else {
-    tmp = _T("?");
-  }
+  } else if (!info.callsign.empty() && !info.registration.empty())
+    tmp.Format("%s - %s - %s",
+               info.callsign.c_str(), info.registration.c_str(), tmp_id);
+  else if (!info.callsign.empty())
+    tmp.Format("%s - %s", info.callsign.c_str(), tmp_id);
+  else
+    tmp.Format("%s", tmp_id);
 
   if (item.color != FlarmColor::NONE) {
     const TrafficLook &traffic_look = UIGlobals::GetLook().traffic;
@@ -639,15 +487,10 @@ TrafficListWidget::OnPaintItem(Canvas &canvas, PixelRect rc,
     canvas.SelectHollowBrush();
 
     const PixelSize size = canvas.CalcTextSize(tmp);
-    canvas.Rectangle(rc.left + row_renderer.GetX() - frame_padding,
-                     rc.top + row_renderer.GetFirstY() - frame_padding,
-                     rc.left + row_renderer.GetX() + size.cx + frame_padding,
-                     rc.top + row_renderer.GetFirstY() + size.cy + frame_padding);
+    canvas.DrawRectangle(PixelRect{{rc.left + row_renderer.GetX(), rc.top + row_renderer.GetFirstY()}, size}.WithMargin(frame_padding));
   }
 
   row_renderer.DrawFirstRow(canvas, rc, tmp);
-
-  canvas.Select(small_font);
 
   /* draw bearing and distance on the right */
   if (item.vector.IsValid()) {
@@ -659,46 +502,46 @@ TrafficListWidget::OnPaintItem(Canvas &canvas, PixelRect rc,
                                                FormatBearing(item.vector.bearing).c_str());
   }
 
-  if (record != nullptr) {
+  if (!info.IsEmpty()) {
     tmp.clear();
 
-    if (!record->pilot.empty())
-      tmp = record->pilot.c_str();
+    if (!info.pilot.empty())
+      tmp = info.pilot.c_str();
 
-    if (!record->plane_type.empty()) {
+    if (!info.plane_type.empty()) {
       if (!tmp.empty())
-        tmp.append(_T(" - "));
+        tmp.append(" - ");
 
-      tmp.append(record->plane_type);
+      tmp.append(info.plane_type.c_str());
     }
 
-    if (!record->airfield.empty()) {
+    if (!info.airfield.empty()) {
       if (!tmp.empty())
-        tmp.append(_T(" - "));
+        tmp.append(" - ");
 
-      tmp.append(record->airfield);
+      tmp.append(info.airfield.c_str());
     }
+
+#ifdef HAVE_SKYLINES_TRACKING
+    if (live != nullptr &&
+        FlarmTraffic::IsInjectedSource(live->source)) {
+      if (!tmp.empty())
+        tmp.append(" - ");
+
+      tmp.append(FlarmTraffic::GetSourceString(live->source));
+    }
+#endif
 
     if (!tmp.empty())
       row_renderer.DrawSecondRow(canvas, rc, tmp);
 #ifdef HAVE_SKYLINES_TRACKING
-  } else if (item.IsSkyLines()) {
-    if (CommonInterface::Basic().time_available) {
-      tmp.UnsafeFormat(_("%u minutes ago"),
-                       SinceInMinutes(CommonInterface::Basic().time,
-                                      item.time_of_day_ms));
-    } else
-      tmp.clear();
-
-    if (!item.near_name.empty())
-      tmp.AppendFormat(_T(" near %s (%s)"),
-                       item.near_name.c_str(),
-                       FormatUserDistanceSmart(item.near_distance).c_str());
-
-    if (!tmp.empty())
-      tmp.append(_T("; "));
-    tmp.append(FormatUserAltitude(item.altitude));
-
+  } else if (live != nullptr &&
+             FlarmTraffic::IsInjectedSource(live->source)) {
+    tmp = FlarmTraffic::GetSourceString(live->source);
+    if (live->altitude_available) {
+      tmp.append("; ");
+      tmp.append(FormatUserAltitude(live->altitude).c_str());
+    }
     if (!tmp.empty())
       row_renderer.DrawSecondRow(canvas, rc, tmp);
 #endif
@@ -714,7 +557,7 @@ TrafficListWidget::OpenDetails(unsigned index)
   Item &item = items[index];
 
   if (item.IsFlarm()) {
-    dlgFlarmTrafficDetailsShowModal(item.id);
+    (void)dlgFlarmTrafficDetailsShowModal(item.id);
     UpdateList();
   }
 }
@@ -730,74 +573,68 @@ TrafficListWidget::OpenMap(unsigned index)
     return;
 
   if (PanTo(item.location))
-    action_listener.OnAction(mrCancel);
+    dialog.SetModalResult(mrCancel);
 }
 
 void
-TrafficListWidget::OnActivateItem(unsigned index)
+TrafficListWidget::OnActivateItem(unsigned index) noexcept
 {
   if (buttons == nullptr)
     /* it's a traffic picker: finish the dialog */
-    action_listener.OnAction(mrOK);
+    dialog.SetModalResult(mrOK);
   else
     OpenDetails(index);
-}
-
-void
-TrafficListWidget::OnAction(int id)
-{
-  switch (Buttons(id)) {
-  case DETAILS:
-    OpenDetails(GetList().GetCursorIndex());
-    break;
-
-  case MAP:
-    OpenMap(GetList().GetCursorIndex());
-    break;
-  }
 }
 
 void
 TrafficListDialog()
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
 
-  TrafficFilterWidget *filter_widget = new TrafficFilterWidget(look);
+  WidgetDialog dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+                      look, _("Traffic"));
 
-  TrafficListButtons *buttons_widget = new TrafficListButtons(look, dialog);
+  auto filter_widget = std::make_unique<TrafficFilterWidget>(look);
 
-  TwoWidgets *left_widget =
-    new TwoWidgets(filter_widget, buttons_widget, true);
+  auto buttons_widget = std::make_unique<TrafficListButtons>(look, dialog);
 
-  TrafficListWidget *const list_widget =
-    new TrafficListWidget(dialog, *filter_widget, *buttons_widget);
+  auto list_widget =
+    std::make_unique<TrafficListWidget>(dialog, *filter_widget,
+                                        *buttons_widget);
 
-  filter_widget->SetListener(list_widget);
-  buttons_widget->SetList(list_widget);
+  filter_widget->SetListener(list_widget.get());
+  buttons_widget->SetList(list_widget.get());
 
-  TwoWidgets *widget = new TwoWidgets(left_widget, list_widget, false);
+  auto left_widget =
+    std::make_unique<TwoWidgets>(std::move(filter_widget),
+                                 std::move(buttons_widget),
+                                 true);
 
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Traffic"), widget);
+  auto widget = std::make_unique<TwoWidgets>(std::move(left_widget),
+                                             std::move(list_widget),
+                                             false);
+
+  dialog.FinishPreliminary(widget.release());
   dialog.ShowModal();
 }
 
 FlarmId
-PickFlarmTraffic(const TCHAR *title, FlarmId array[], unsigned count)
+PickFlarmTraffic(const char *title, FlarmId array[], unsigned count)
 {
   assert(count > 0);
 
-  WidgetDialog dialog(UIGlobals::GetDialogLook());
+  WidgetDialog dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+                      UIGlobals::GetDialogLook(), title);
 
   TrafficListWidget *const list_widget =
     new TrafficListWidget(dialog, array, count);
 
   Widget *widget = list_widget;
 
-  dialog.CreateFull(UIGlobals::GetMainWindow(), title, widget);
   dialog.AddButton(_("Select"), mrOK);
   dialog.AddButton(_("Cancel"), mrCancel);
   dialog.EnableCursorSelection();
+  dialog.FinishPreliminary(widget);
 
   return dialog.ShowModal() == mrOK
     ? list_widget->GetCursorId()

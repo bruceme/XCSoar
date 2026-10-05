@@ -1,34 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CAI302_INTERNAL_HPP
-#define XCSOAR_CAI302_INTERNAL_HPP
+#pragma once
 
 #include "Device/Driver.hpp"
 #include "Protocol.hpp"
 
 #include <vector>
-#include <stdint.h>
+#include <cstdint>
 
 /** 
  * Device driver for Cambridge Aero Instruments 302 
@@ -53,9 +32,9 @@ public:
     :config(_config), port(_port), mode(Mode::UNKNOWN) {}
 
 private:
-  bool CommandMode(OperationEnvironment &env);
-  bool DownloadMode(OperationEnvironment &env);
-  bool UploadMode(OperationEnvironment &env);
+  void CommandMode(OperationEnvironment &env);
+  void DownloadMode(OperationEnvironment &env);
+  void UploadMode(OperationEnvironment &env);
 
   bool SetBaudRate(unsigned baud_rate, OperationEnvironment &env);
 
@@ -87,42 +66,42 @@ public:
   /**
    * Restart the CAI302 by sending the command "SIF 0 0".
    */
-  bool Reboot(OperationEnvironment &env);
+  void Reboot(OperationEnvironment &env);
 
   /**
    * Power off the CAI302 by sending the command "DIE".
    */
-  bool PowerOff(OperationEnvironment &env);
+  void PowerOff(OperationEnvironment &env);
 
   /**
    * Start logging unconditionally.
    */
-  bool StartLogging(OperationEnvironment &env);
+  void StartLogging(OperationEnvironment &env);
 
   /**
    * Stop logging unconditionally.
    */
-  bool StopLogging(OperationEnvironment &env);
+  void StopLogging(OperationEnvironment &env);
 
   /**
    * Set audio volume 0 is loudest, 170 is silent.
    */
-  bool SetVolume(unsigned volume, OperationEnvironment &env);
+  void SetVolume(unsigned volume, OperationEnvironment &env);
 
   /**
    * Erase all waypoints.
    */
-  bool ClearPoints(OperationEnvironment &env);
+  void ClearPoints(OperationEnvironment &env);
 
   /**
    * Erase the pilot name.
    */
-  bool ClearPilot(OperationEnvironment &env);
+  void ClearPilot(OperationEnvironment &env);
 
   /**
    * Erase all log memory.
    */
-  bool ClearLog(OperationEnvironment &env);
+  void ClearLog(OperationEnvironment &env);
 
   bool ReadPilotList(std::vector<CAI302::Pilot> &list,
                      unsigned &active_index,
@@ -143,7 +122,5 @@ public:
   bool WriteNavpoint(unsigned id, const Waypoint &wp,
                      OperationEnvironment &env);
 
-  bool CloseNavpoints(OperationEnvironment &env);
+  void CloseNavpoints(OperationEnvironment &env);
 };
-
-#endif

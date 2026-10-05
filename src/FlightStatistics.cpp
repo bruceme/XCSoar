@@ -1,30 +1,28 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlightStatistics.hpp"
 
-void FlightStatistics::Reset() {
-  ScopeLock lock(mutex);
+using namespace std::chrono;
+
+static constexpr double
+ToHours(FloatDuration t) noexcept
+{
+  return duration_cast<duration<double, hours::period>>(t).count();
+}
+
+static constexpr double
+ToNormalisedHours(FloatDuration t) noexcept
+{
+  return t.count() > 0
+    ? ToHours(t)
+    : 0.;
+}
+
+void
+FlightStatistics::Reset() noexcept
+{
+  const std::lock_guard lock{mutex};
 
   thermal_average.Reset();
   altitude.Reset();
@@ -37,9 +35,9 @@ void FlightStatistics::Reset() {
 }
 
 void
-FlightStatistics::StartTask()
+FlightStatistics::StartTask() noexcept
 {
-  ScopeLock lock(mutex);
+  const std::lock_guard lock{mutex};
   // JMW clear thermal climb average on task start
   //  thermal_average.Reset();
   vario_circling_histogram.Clear();
@@ -47,19 +45,20 @@ FlightStatistics::StartTask()
 }
 
 void
-FlightStatistics::AddAltitudeTerrain(const double tflight, const double terrainalt)
+FlightStatistics::AddAltitudeTerrain(const FloatDuration tflight,
+                                     const double terrainalt) noexcept
 {
-  ScopeLock lock(mutex);
-  altitude_terrain.Update(std::max(0., tflight / 3600.),
-                          terrainalt);
+  const std::lock_guard lock{mutex};
+  altitude_terrain.Update(ToNormalisedHours(tflight), terrainalt);
 }
 
 void
-FlightStatistics::AddAltitude(const double tflight, const double alt, const bool final_glide)
+FlightStatistics::AddAltitude(const FloatDuration tflight,
+                              const double alt, const bool final_glide) noexcept
 {
-  ScopeLock lock(mutex);
+  const double t = ToNormalisedHours(tflight);
 
-  const double t = std::max(0., tflight / 3600);
+  const std::lock_guard lock{mutex};
 
   altitude.Update(t, alt);
 
@@ -74,9 +73,9 @@ FlightStatistics::AddAltitude(const double tflight, const double alt, const bool
 
 double
 FlightStatistics::AverageThermalAdjusted(const double mc_current,
-                                         const bool circling)
+                                         const bool circling) noexcept
 {
-  ScopeLock lock(mutex);
+  const std::lock_guard lock{mutex};
 
   double mc_stats;
   if (! thermal_average.IsEmpty() && (thermal_average.GetAverageY() > 0)) {
@@ -93,29 +92,32 @@ FlightStatistics::AverageThermalAdjusted(const double mc_current,
 }
 
 void
-FlightStatistics::AddTaskSpeed(const double tflight, const double val)
+FlightStatistics::AddTaskSpeed(const FloatDuration tflight,
+                               const double val) noexcept
 {
-  ScopeLock lock(mutex);
-  task_speed.Update(tflight / 3600, val);
+  const std::lock_guard lock{mutex};
+  task_speed.Update(ToHours(tflight), val);
 }
 
 void
-FlightStatistics::AddClimbBase(const double tflight, const double alt)
+FlightStatistics::AddClimbBase(const FloatDuration tflight,
+                               const double alt) noexcept
 {
-  ScopeLock lock(mutex);
+  const std::lock_guard lock{mutex};
 
   // only add base after finished second climb, to avoid having the takeoff height
   // as the base
   //
   if (altitude_ceiling.HasResult())
-    altitude_base.UpdateConvexNegative(std::max(0., tflight) / 3600, alt);
+    altitude_base.UpdateConvexNegative(ToNormalisedHours(tflight), alt);
 }
 
 void
-FlightStatistics::AddClimbCeiling(const double tflight, const double alt)
+FlightStatistics::AddClimbCeiling(const FloatDuration tflight,
+                                  const double alt) noexcept
 {
-  ScopeLock lock(mutex);
-  altitude_ceiling.UpdateConvexPositive(std::max(0., tflight) / 3600, alt);
+  const std::lock_guard lock{mutex};
+  altitude_ceiling.UpdateConvexPositive(ToNormalisedHours(tflight), alt);
 }
 
 /**
@@ -123,18 +125,20 @@ FlightStatistics::AddClimbCeiling(const double tflight, const double alt)
  * @param v Average climb speed of the last thermal
  */
 void
-FlightStatistics::AddThermalAverage(const double tflight_start,
-                                    const double tflight_end, const double v)
+FlightStatistics::AddThermalAverage(const FloatDuration tflight_start,
+                                    const FloatDuration tflight_end,
+                                    const double v) noexcept
 {
-  ScopeLock lock(mutex);
-  thermal_average.Update(std::max(0., tflight_start) / 3600, v,
-                         (tflight_end-tflight_start)/3600);
+  const std::lock_guard lock{mutex};
+  thermal_average.Update(ToNormalisedHours(tflight_start), v,
+                         ToHours(tflight_end - tflight_start));
 }
 
 void
-FlightStatistics::AddClimbRate(const double tflight, const double vario, const bool circling)
+FlightStatistics::AddClimbRate([[maybe_unused]] const FloatDuration tflight,
+                               const double vario, const bool circling) noexcept
 {
-  ScopeLock lock(mutex);
+  const std::lock_guard lock{mutex};
   if (circling) {
     vario_circling_histogram.UpdateHistogram(vario);
   } else {
@@ -143,7 +147,7 @@ FlightStatistics::AddClimbRate(const double tflight, const double vario, const b
 }
 
 double
-FlightStatistics::GetMinWorkingHeight() const
+FlightStatistics::GetMinWorkingHeight() const noexcept
 {
   if (altitude_base.IsEmpty())
     return 0;
@@ -154,29 +158,33 @@ FlightStatistics::GetMinWorkingHeight() const
 }
 
 double
-FlightStatistics::GetMaxWorkingHeight() const
+FlightStatistics::GetMaxWorkingHeight() const noexcept
 {
   if (altitude_ceiling.IsEmpty())
     return 0;
 
   // working height is average ceiling plus one standard deviation, or
   // the maximum encountered if this is lower
-  return std::max(altitude.GetMaxY(),
-                  std::min(altitude_ceiling.GetMaxY(), altitude_ceiling.GetAverageY() + sqrt(altitude_ceiling.GetVarY())));
+  double result = std::min(altitude_ceiling.GetMaxY(),
+                           altitude_ceiling.GetAverageY() + sqrt(altitude_ceiling.GetVarY()));
+  if (!altitude.IsEmpty())
+    result = std::max(altitude.GetMaxY(), result);
+
+  return result;
 }
 
 // percentile to look up to determine max/min value
 static constexpr double PERCENTILE_VARIO = 0.1;
 
 double
-FlightStatistics::GetVarioScalePositive() const
+FlightStatistics::GetVarioScalePositive() const noexcept
 {
   return std::max(vario_circling_histogram.GetPercentile(1-PERCENTILE_VARIO),
                   vario_cruise_histogram.GetPercentile(1-PERCENTILE_VARIO));
 }
 
 double
-FlightStatistics::GetVarioScaleNegative() const
+FlightStatistics::GetVarioScaleNegative() const noexcept
 {
   return std::min(vario_circling_histogram.GetPercentile(PERCENTILE_VARIO),
                   vario_cruise_histogram.GetPercentile(PERCENTILE_VARIO));

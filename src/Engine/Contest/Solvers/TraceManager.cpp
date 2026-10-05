@@ -1,32 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TraceManager.hpp"
 #include "Trace/Trace.hpp"
 
-#include <assert.h>
+#include <cassert>
 
-TraceManager::TraceManager(const Trace &_trace)
+TraceManager::TraceManager(const Trace &_trace) noexcept
   :trace_master(_trace),
    predicted(TracePoint::Invalid())
 {
@@ -34,7 +14,7 @@ TraceManager::TraceManager(const Trace &_trace)
 
 
 bool
-TraceManager::SetPredicted(const TracePoint &_predicted)
+TraceManager::SetPredicted(const TracePoint &_predicted) noexcept
 {
   TracePoint n(_predicted);
   if (n.IsDefined() && !trace_master.empty())
@@ -60,7 +40,7 @@ TraceManager::SetPredicted(const TracePoint &_predicted)
 }
 
 bool
-TraceManager::IsMasterUpdated(bool continuous) const
+TraceManager::IsMasterUpdated(bool continuous) const noexcept
 {
   /* disabled assertion, TraceManager doesn't know about stages */
   // assert(num_stages <= MAX_STAGES);
@@ -79,7 +59,7 @@ TraceManager::IsMasterUpdated(bool continuous) const
   //  return true;
 
   // find min distance and time step within this trace
-  const unsigned threshold_delta_t_trace = trace_master.GetAverageDeltaTime();
+  const auto threshold_delta_t_trace = trace_master.GetAverageDeltaTime();
   const unsigned threshold_distance_trace = trace_master.GetAverageDeltaDistance();
 
   const TracePoint &last_master = trace_master.back();
@@ -92,7 +72,7 @@ TraceManager::IsMasterUpdated(bool continuous) const
 }
 
 void
-TraceManager::ClearTrace()
+TraceManager::ClearTrace() noexcept
 {
   append_serial = modify_serial = Serial();
   trace_dirty = true;
@@ -102,7 +82,7 @@ TraceManager::ClearTrace()
 }
 
 void
-TraceManager::UpdateTraceFull()
+TraceManager::UpdateTraceFull() noexcept
 {
   trace.reserve(trace_master.GetMaxSize());
   trace_master.GetPoints(trace);
@@ -116,7 +96,7 @@ TraceManager::UpdateTraceFull()
 }
 
 bool
-TraceManager::UpdateTraceTail()
+TraceManager::UpdateTraceTail() noexcept
 {
   /* the following assertions were disabled because this method doesn't
      get the "force" and "continuous" parameter */
@@ -138,7 +118,7 @@ TraceManager::UpdateTraceTail()
 }
 
 void
-TraceManager::UpdateTrace(bool force)
+TraceManager::UpdateTrace([[maybe_unused]] bool force) noexcept
 {
 }
 

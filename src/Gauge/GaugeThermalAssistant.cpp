@@ -1,53 +1,31 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Gauge/GaugeThermalAssistant.hpp"
 #include "Gauge/ThermalAssistantWindow.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Blackboard/LiveBlackboard.hpp"
 #include "Input/InputEvents.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scope.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
 #endif
 
 class GaugeThermalAssistantWindow : public ThermalAssistantWindow {
-  bool dragging, pressed;
+  bool dragging = false, pressed = false;
 
 public:
   GaugeThermalAssistantWindow(ContainerWindow &parent,
                               PixelRect rc,
                               const ThermalAssistantLook &look,
-                              WindowStyle style=WindowStyle())
-    :ThermalAssistantWindow(look, 5, true, true),
-     dragging(false), pressed(false)
+                              WindowStyle style=WindowStyle()) noexcept
+    :ThermalAssistantWindow(look, 5, true, true)
   {
     Create(parent, rc, style);
   }
 
 private:
-  void SetPressed(bool _pressed) {
+  void SetPressed(bool _pressed) noexcept {
     if (_pressed == pressed)
       return;
 
@@ -56,15 +34,15 @@ private:
   }
 
 protected:
-  virtual void OnCancelMode() override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
-  virtual void OnPaint(Canvas &canvas) override;
+  void OnCancelMode() noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
+  void OnPaint(Canvas &canvas) noexcept override;
 };
 
 void
-GaugeThermalAssistantWindow::OnCancelMode()
+GaugeThermalAssistantWindow::OnCancelMode() noexcept
 {
   if (dragging) {
     dragging = false;
@@ -77,7 +55,7 @@ GaugeThermalAssistantWindow::OnCancelMode()
 }
 
 bool
-GaugeThermalAssistantWindow::OnMouseDown(PixelPoint p)
+GaugeThermalAssistantWindow::OnMouseDown([[maybe_unused]] PixelPoint p) noexcept
 {
   if (!dragging) {
     dragging = true;
@@ -91,7 +69,7 @@ GaugeThermalAssistantWindow::OnMouseDown(PixelPoint p)
 }
 
 bool
-GaugeThermalAssistantWindow::OnMouseUp(PixelPoint p)
+GaugeThermalAssistantWindow::OnMouseUp([[maybe_unused]] PixelPoint p) noexcept
 {
   if (dragging) {
     const bool was_pressed = pressed;
@@ -103,7 +81,7 @@ GaugeThermalAssistantWindow::OnMouseUp(PixelPoint p)
     ReleaseCapture();
 
     if (was_pressed)
-      InputEvents::eventThermalAssistant(_T(""));
+      InputEvents::eventThermalAssistant("");
 
     return true;
   }
@@ -112,7 +90,8 @@ GaugeThermalAssistantWindow::OnMouseUp(PixelPoint p)
 }
 
 bool
-GaugeThermalAssistantWindow::OnMouseMove(PixelPoint p, unsigned keys)
+GaugeThermalAssistantWindow::OnMouseMove(PixelPoint p,
+                                         [[maybe_unused]] unsigned keys) noexcept
 {
   if (dragging) {
     SetPressed(IsInside(p));
@@ -123,7 +102,7 @@ GaugeThermalAssistantWindow::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 void
-GaugeThermalAssistantWindow::OnPaint(Canvas &canvas)
+GaugeThermalAssistantWindow::OnPaint(Canvas &canvas) noexcept
 {
   ThermalAssistantWindow::OnPaint(canvas);
 
@@ -142,25 +121,18 @@ GaugeThermalAssistantWindow::OnPaint(Canvas &canvas)
 }
 
 void
-GaugeThermalAssistant::Prepare(ContainerWindow &parent, const PixelRect &rc)
+GaugeThermalAssistant::Prepare(ContainerWindow &parent,
+                               const PixelRect &rc) noexcept
 {
   WindowStyle style;
   style.Hide();
 
-  GaugeThermalAssistantWindow *window =
-    new GaugeThermalAssistantWindow(parent, rc, look, style);
-  SetWindow(window);
+  SetWindow(std::make_unique<GaugeThermalAssistantWindow>(parent, rc,
+                                                          look, style));
 }
 
 void
-GaugeThermalAssistant::Unprepare()
-{
-  DeleteWindow();
-  OverlappedWidget::Unprepare();
-}
-
-void
-GaugeThermalAssistant::Show(const PixelRect &rc)
+GaugeThermalAssistant::Show(const PixelRect &rc) noexcept
 {
   Update(blackboard.Basic().attitude, blackboard.Calculated());
 
@@ -170,14 +142,14 @@ GaugeThermalAssistant::Show(const PixelRect &rc)
 }
 
 void
-GaugeThermalAssistant::Hide()
+GaugeThermalAssistant::Hide() noexcept
 {
   blackboard.RemoveListener(*this);
   OverlappedWidget::Hide();
 }
 
 bool
-GaugeThermalAssistant::SetFocus()
+GaugeThermalAssistant::SetFocus() noexcept
 {
   return false;
 }
@@ -191,7 +163,7 @@ GaugeThermalAssistant::OnCalculatedUpdate(const MoreData &basic,
 
 void
 GaugeThermalAssistant::Update(const AttitudeState &attitude,
-                              const DerivedInfo &calculated)
+                              const DerivedInfo &calculated) noexcept
 {
   ThermalAssistantWindow &window = (ThermalAssistantWindow &)GetWindow();
   window.Update(attitude, calculated);

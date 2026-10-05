@@ -1,41 +1,23 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Replay.hpp"
 #include "IgcReplay.hpp"
 #include "NmeaReplay.hpp"
 #include "DemoReplayGlue.hpp"
-#include "IO/FileLineReader.hpp"
+#include "io/FileLineReader.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
+#include "CalculationThread.hpp"
+#include "MergeThread.hpp"
 #include "Logger/Logger.hpp"
-#include "Components.hpp"
-#include "Interface.hpp"
+#include "Device/Config.hpp"
+#include "Repository/FileType.hpp"
 #include "CatmullRomInterpolator.hpp"
-#include "Util/Clamp.hpp"
+#include "time/Cast.hxx"
 
+#include <algorithm> // for std::clamp()
+#include <cassert>
 #include <stdexcept>
-
-#include <assert.h>
 
 void
 Replay::Stop()
@@ -43,7 +25,7 @@ Replay::Stop()
   if (replay == nullptr)
     return;
 
-  Timer::Cancel();
+  timer.Cancel();
 
   delete replay;
   replay = nullptr;
@@ -51,14 +33,14 @@ Replay::Stop()
   delete cli;
   cli = nullptr;
 
-  device_blackboard->StopReplay();
+  device_blackboard.StopReplay();
 
   if (logger != nullptr)
     logger->ClearBuffer();
 }
 
 void
-Replay::Start(Path _path)
+Replay::Start(Path _path, const DeviceConfig &device)
 {
   assert(_path != nullptr);
 
@@ -68,26 +50,27 @@ Replay::Start(Path _path)
 
   path = _path;
 
-  if (path.IsNull() || path.IsEmpty()) {
-    replay = new DemoReplayGlue(task_manager);
-  } else if (path.MatchesExtension(_T(".igc"))) {
+  if (path == nullptr || path.empty()) {
+    replay = new DemoReplayGlue(device_blackboard, task_manager);
+  } else if (FilenameMatchesFileType(path.GetBase().c_str(),
+                                      FileType::IGC)) {
     replay = new IgcReplay(std::make_unique<FileLineReaderA>(path));
 
-    cli = new CatmullRomInterpolator(0.98);
+    cli = new CatmullRomInterpolator(FloatDuration{0.98});
     cli->Reset();
   } else {
     replay = new NmeaReplay(std::make_unique<FileLineReaderA>(path),
-                            CommonInterface::GetSystemSettings().devices[0]);
+                            device);
   }
 
   if (logger != nullptr)
     logger->ClearBuffer();
 
-  virtual_time = -1;
-  fast_forward = -1;
+  virtual_time = TimeStamp::Undefined();
+  fast_forward = TimeStamp::Undefined();
   next_data.Reset();
 
-  Timer::Schedule(100);
+  timer.Schedule(std::chrono::milliseconds(100));
 }
 
 bool
@@ -105,20 +88,20 @@ Replay::Update()
     return true;
   }
 
-  const double old_virtual_time = virtual_time;
+  const auto old_virtual_time = virtual_time;
 
-  if (virtual_time >= 0) {
+  if (virtual_time.IsDefined()) {
     /* update the virtual time */
     assert(clock.IsDefined());
 
-    if (fast_forward < 0) {
-      virtual_time += clock.ElapsedUpdate() * time_scale / 1000;
+    if (!fast_forward.IsDefined()) {
+      virtual_time += clock.ElapsedUpdate() * time_scale;
     } else {
       clock.Update();
 
-      virtual_time += 1;
+      virtual_time += std::chrono::seconds{1};
       if (virtual_time >= fast_forward)
-        fast_forward = -1;
+        fast_forward = TimeStamp::Undefined();
     }
   } else {
     /* if we ever received a valid time from the AbstractReplay, then
@@ -126,15 +109,15 @@ Replay::Update()
     assert(!next_data.time_available);
   }
 
-  if (cli == nullptr || fast_forward >= 0) {
+  if (cli == nullptr || fast_forward.IsDefined()) {
     if (next_data.time_available && virtual_time < next_data.time)
       /* still not time to use next_data */
       return true;
 
     {
-      ScopeLock protect(device_blackboard->mutex);
-      device_blackboard->SetReplayState() = next_data;
-      device_blackboard->ScheduleMerge();
+      const std::lock_guard lock{device_blackboard.mutex};
+      device_blackboard.SetReplayState() = next_data;
+      device_blackboard.ScheduleMerge();
     }
 
     while (true) {
@@ -146,10 +129,10 @@ Replay::Update()
       assert(!next_data.gps.real);
 
       if (next_data.time_available) {
-        if (virtual_time < 0) {
+        if (!virtual_time.IsDefined()) {
           virtual_time = next_data.time;
-          if (fast_forward >= 0)
-            fast_forward += virtual_time;
+          if (fast_forward.IsDefined())
+            fast_forward = virtual_time + fast_forward.ToDuration();
           clock.Update();
           break;
         }
@@ -180,10 +163,10 @@ Replay::Update()
                     next_data.pressure_altitude);
     }
 
-    if (virtual_time < 0) {
+    if (!virtual_time.IsDefined()) {
       virtual_time = cli->GetMaxTime();
-      if (fast_forward >= 0)
-        fast_forward += virtual_time;
+      if (fast_forward.IsDefined())
+        fast_forward = virtual_time + fast_forward.ToDuration();
       clock.Update();
     }
 
@@ -206,13 +189,52 @@ Replay::Update()
     data.ProvideBaroAltitudeTrue(r.baro_altitude);
 
     {
-      ScopeLock protect(device_blackboard->mutex);
-      device_blackboard->SetReplayState() = data;
-      device_blackboard->ScheduleMerge();
+      const std::lock_guard lock{device_blackboard.mutex};
+      device_blackboard.SetReplayState() = data;
+      device_blackboard.ScheduleMerge();
     }
   }
 
   return true;
+}
+
+unsigned
+Replay::ProcessAllFixes(MergeThread &merge_thread,
+                        CalculationThread &calc_thread)
+{
+  if (replay == nullptr || path == nullptr || path.empty())
+    return 0;
+
+  timer.Cancel();
+  fast_forward = TimeStamp::Undefined();
+
+  NMEAInfo data;
+  data.Reset();
+  unsigned count = 0;
+
+  while (replay->Update(data)) {
+    assert(!data.gps.real);
+
+    if (data.time_available)
+      virtual_time = data.time;
+
+    {
+      const std::lock_guard lock{device_blackboard.mutex};
+      device_blackboard.SetReplayState() = data;
+    }
+
+    merge_thread.ProcessReplayFix();
+    calc_thread.ProcessReplayFix();
+    ++count;
+
+    if (data.time_available)
+      data.Expire();
+  }
+
+  if (count > 0)
+    next_data = data;
+
+  return count;
 }
 
 void
@@ -221,20 +243,34 @@ Replay::OnTimer()
   if (!Update())
     return;
 
-  unsigned schedule;
+  std::chrono::steady_clock::duration schedule;
   if (time_scale <= 0)
-    schedule = 1000;
-  else if (fast_forward >= 0)
-    schedule = 100;
-  else if (virtual_time < 0 || !next_data.time_available)
-    schedule = 500;
-  else if (cli != nullptr)
-    schedule = 1000;
-  else {
-    double delta_s = (next_data.time - virtual_time) / time_scale;
-    int delta_ms = int(delta_s * 1000);
-    schedule = Clamp(delta_ms, 100, 3000);
+    schedule = std::chrono::seconds(1);
+  else if (fast_forward.IsDefined())
+    schedule = std::chrono::milliseconds(100);
+  else if (!virtual_time.IsDefined() || !next_data.time_available)
+    schedule = std::chrono::milliseconds(500);
+  else if (cli != nullptr) {
+    /* Interpolated IGC emits one GPS sample per timer tick, with
+       virtual time advancing by elapsed × rate.  A fixed 1 s wall
+       timer therefore produces 10 s flight steps at 10×, which is too
+       sparse for circling wind.  Keep flight-time steps near 1 Hz. */
+    const double scale = std::max(time_scale, 0.1);
+    constexpr std::chrono::steady_clock::duration lower =
+      std::chrono::milliseconds(50);
+    constexpr std::chrono::steady_clock::duration upper =
+      std::chrono::seconds(1);
+    const auto period =
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        FloatDuration{1} / scale);
+    schedule = std::clamp(period, lower, upper);
+  } else {
+    constexpr std::chrono::steady_clock::duration lower = std::chrono::milliseconds(100);
+    constexpr std::chrono::steady_clock::duration upper = std::chrono::seconds(3);
+    const FloatDuration delta_s((next_data.time - virtual_time) / time_scale);
+    const auto delta = std::chrono::duration_cast<std::chrono::steady_clock::duration>(delta_s);
+    schedule = std::clamp(delta, lower, upper);
   }
 
-  Timer::Schedule(schedule);
+  timer.Schedule(schedule);
 }

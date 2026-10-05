@@ -1,54 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MAP_ITEM_HPP
-#define XCSOAR_MAP_ITEM_HPP
+#pragma once
 
 #include "Geo/GeoPoint.hpp"
 #include "Geo/GeoVector.hpp"
-#include "FLARM/FlarmId.hpp"
+#include "Rough/RoughAngle.hpp"
+#include "FLARM/Id.hpp"
 #include "FLARM/Color.hpp"
 #include "NMEA/ThermalLocator.hpp"
 #include "Weather/Features.hpp"
 #include "Engine/Waypoint/Ptr.hpp"
+#include "Engine/Airspace/Ptr.hpp"
 #include "Engine/Route/ReachResult.hpp"
+#include "Engine/Route/WaypointReachability.hpp"
 #include "Tracking/SkyLines/Features.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
 
 #ifdef HAVE_NOAA
 #include "Weather/NOAAStore.hpp"
 #endif
 
-#include <tchar.h>
+#include <chrono>
 
 enum class TaskPointType : uint8_t;
 
-class AbstractAirspace;
 class ObservationZonePoint;
 
 struct MapItem
 {
-  enum Type {
+  enum class Type {
     LOCATION,
     ARRIVAL_ALTITUDE,
     SELF,
@@ -60,9 +41,6 @@ struct MapItem
     THERMAL,
     WAYPOINT,
     TRAFFIC,
-#ifdef HAVE_SKYLINES_TRACKING
-    SKYLINES_TRAFFIC,
-#endif
     OVERLAY,
     RASP,
   } type;
@@ -74,7 +52,7 @@ public:
   /* we need this virtual dummy destructor, because there is code that
      "deletes" MapItem objects without knowing that it's really a
      TaskOZMapItem */
-  virtual ~MapItem() {}
+  virtual ~MapItem() noexcept = default;
 };
 
 struct LocationMapItem: public MapItem
@@ -89,6 +67,15 @@ struct LocationMapItem: public MapItem
    */
   static constexpr double UNKNOWN_ELEVATION_THRESHOLD = -1e4;
 
+  /**
+   * The actual clicked location.
+   */
+  GeoPoint location;
+
+  /**
+   * Vector from current aircraft position to the clicked location.
+   * Used for display purposes.
+   */
   GeoVector vector;
 
   /**
@@ -96,8 +83,10 @@ struct LocationMapItem: public MapItem
    */
   double elevation;
 
-  LocationMapItem(const GeoVector &_vector, double _elevation)
-    :MapItem(LOCATION), vector(_vector), elevation(_elevation) {}
+  LocationMapItem(const GeoPoint &_location, const GeoVector &_vector,
+                  double _elevation)
+    :MapItem(Type::LOCATION), location(_location), vector(_vector),
+     elevation(_elevation) {}
 
   bool HasElevation() const {
     return elevation > UNKNOWN_ELEVATION_THRESHOLD;
@@ -136,7 +125,7 @@ struct ArrivalAltitudeMapItem: public MapItem
   ArrivalAltitudeMapItem(double _elevation,
                          ReachResult _reach,
                          double _safety_height)
-    :MapItem(ARRIVAL_ALTITUDE),
+    :MapItem(Type::ARRIVAL_ALTITUDE),
      elevation(_elevation), reach(_reach), safety_height(_safety_height) {}
 
   bool HasElevation() const {
@@ -150,35 +139,43 @@ struct SelfMapItem: public MapItem
   Angle bearing;
 
   SelfMapItem(const GeoPoint &_location, const Angle _bearing)
-    :MapItem(SELF), location(_location), bearing(_bearing) {}
+    :MapItem(Type::SELF), location(_location), bearing(_bearing) {}
 };
 
 struct TaskOZMapItem: public MapItem
 {
   int index;
-  const ObservationZonePoint *oz;
+  std::unique_ptr<ObservationZonePoint> oz;
   TaskPointType tp_type;
   WaypointPtr waypoint;
 
   TaskOZMapItem(int _index, const ObservationZonePoint &_oz,
                 TaskPointType _tp_type, WaypointPtr &&_waypoint);
-  virtual ~TaskOZMapItem();
+  ~TaskOZMapItem() noexcept override;
 };
 
 struct AirspaceMapItem: public MapItem
 {
-  const AbstractAirspace *airspace;
+  ConstAirspacePtr airspace;
 
-  AirspaceMapItem(const AbstractAirspace &_airspace)
-    :MapItem(AIRSPACE), airspace(&_airspace) {}
+  template<typename T>
+  explicit AirspaceMapItem(T &&_airspace) noexcept
+    :MapItem(Type::AIRSPACE), airspace(std::forward<T>(_airspace)) {}
 };
 
 struct WaypointMapItem: public MapItem
 {
   WaypointPtr waypoint;
 
-  WaypointMapItem(const WaypointPtr &_waypoint)
-    :MapItem(WAYPOINT), waypoint(_waypoint) {}
+  /**
+   * The reachability of this waypoint, calculated the same way as on
+   * the map, so the icon in the dialog matches the one on the map.
+   */
+  WaypointReachability reachable;
+
+  WaypointMapItem(const WaypointPtr &_waypoint,
+                  WaypointReachability _reachable=WaypointReachability::INVALID)
+    :MapItem(Type::WAYPOINT), waypoint(_waypoint), reachable(_reachable) {}
 };
 
 #ifdef HAVE_NOAA
@@ -187,7 +184,7 @@ struct WeatherStationMapItem: public MapItem
   NOAAStore::iterator station;
 
   WeatherStationMapItem(const NOAAStore::iterator &_station)
-    :MapItem(WEATHER), station(_station) {}
+    :MapItem(Type::WEATHER), station(_station) {}
 };
 #endif
 
@@ -197,35 +194,13 @@ struct TrafficMapItem: public MapItem
   FlarmColor color;
 
   TrafficMapItem(FlarmId _id, FlarmColor _color)
-    :MapItem(TRAFFIC), id(_id), color(_color) {}
+    :MapItem(Type::TRAFFIC), id(_id), color(_color) {}
 };
-
-#ifdef HAVE_SKYLINES_TRACKING
-
-struct SkyLinesTrafficMapItem : public MapItem
-{
-  uint32_t id, time_of_day_ms;
-
-  int altitude;
-
-  StaticString<40> name;
-
-  SkyLinesTrafficMapItem(uint32_t _id, uint32_t _time_of_day_ms,
-                         int _altitude,
-                         const TCHAR *_name)
-    :MapItem(SKYLINES_TRAFFIC), id(_id), time_of_day_ms(_time_of_day_ms),
-     altitude(_altitude),
-     name(_name) {}
-};
-
-#endif
 
 struct ThermalMapItem: public MapItem
 {
   ThermalSource thermal;
 
   ThermalMapItem(const ThermalSource &_thermal)
-    :MapItem(THERMAL), thermal(_thermal) {}
+    :MapItem(Type::THERMAL), thermal(_thermal) {}
 };
-
-#endif

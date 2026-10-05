@@ -1,63 +1,76 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include <cstdint>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_HARDWARE_VIBRATOR_HPP
-#define XCSOAR_HARDWARE_VIBRATOR_HPP
-
-#ifdef ANDROID
-
-#include "Compiler.h"
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 /**
- * This macro specifies whether this platform has support for a
- * vibrator.  Before actually using it, you have to check
+ * The macro HAVE_VIBRATOR specifies whether this platform has support
+ * for a vibrator.  Before actually using it, you have to check
  * HaveVibrator().
  */
+#ifdef ANDROID
 #define HAVE_VIBRATOR
+#elif defined(__APPLE__)
+#if TARGET_OS_IPHONE
+/* iOS generates haptic feedback with UIFeedbackGenerator */
+#define HAVE_VIBRATOR
+#endif
+#endif
+
+/**
+ * The kind of event the haptic feedback belongs to.  Each platform
+ * maps these to the strength and the pattern which is customary
+ * there.
+ */
+enum class HapticFeedbackType : uint_least8_t {
+  /** the selection moved to another item */
+  SELECTION,
+
+  /** a button or an InfoBox was pressed */
+  PRESS,
+
+  /** a long press was recognised */
+  LONG_PRESS,
+
+  /** a gesture was recognised */
+  GESTURE,
+
+  /** a message was shown to the user */
+  NOTIFICATION,
+
+  /** the pilot was warned about a collision or an airspace */
+  ALARM,
+};
+
+#ifdef HAVE_VIBRATOR
 
 /**
  * Check whether this device has a vibrator.
  */
-gcc_const
+[[gnu::const]]
 bool
-HaveVibrator();
+HaveVibrator() noexcept;
 
 /**
- * Vibrate for a very short amount of time.  This function has no
- * effect if the device does not have a vibrator.
+ * Generate haptic feedback for the given event.  This function has no
+ * effect if the device does not have a vibrator.  The caller must
+ * check the haptic-feedback setting before calling.
  */
 void
-VibrateShort();
+Vibrate(HapticFeedbackType type) noexcept;
 
 #else
 
-constexpr
-static inline bool
-HaveVibrator()
+static constexpr bool
+HaveVibrator() noexcept
 {
   return false;
 }
-
-#endif
 
 #endif

@@ -1,12 +1,13 @@
 #include "CommonStats.hpp"
 
 void
-CommonStats::ResetTask()
+CommonStats::ResetTask() noexcept
 {
-  start_open_time_span = RoughTimeSpan::Invalid();
+  start_open_time_span = TimeSpan::Invalid();
+  pev_start_time_span = TimeSpan::Invalid();
   landable_reachable = false;
-  TimeUnderStartMaxHeight = -1;
-  aat_time_remaining = 0;
+  TimeUnderStartMaxHeight = TimeStamp::Undefined();
+  aat_time_remaining = {};
   aat_speed_target = -1;
   aat_speed_max = -1;
   aat_speed_min = -1;
@@ -20,7 +21,7 @@ CommonStats::ResetTask()
 }
 
 void
-CommonStats::Reset()
+CommonStats::Reset() noexcept
 {
   vector_home.SetInvalid();
 

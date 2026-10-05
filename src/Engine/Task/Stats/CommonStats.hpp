@@ -1,28 +1,10 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-#ifndef COMMON_STATS_HPP
-#define COMMON_STATS_HPP
-
-#include "Time/RoughTime.hpp"
+#include "time/RoughTime.hpp"
+#include "time/Stamp.hpp"
 #include "Geo/GeoVector.hpp"
 #include "TaskSummary.hpp"
 #include "../TaskType.hpp"
@@ -40,15 +22,25 @@ class CommonStats
 public:
   /**
    * A copy of #StartConstraints::open_time_span.
+   * If defined, a valid start can only be made within this window.
    */
-  RoughTimeSpan start_open_time_span;
+  TimeSpan start_open_time_span;
+
+  /**
+   * The start window resulting from the last Pilot Event declared, based on
+   * the task settings #StartConstraints::pev_start_wait_time and
+   * #StartConstraints::pev_start_window.
+   * If defined, it defines a soft start window, which is informative
+   * to the pilot only and will not be enforced in any way.
+   */
+  TimeSpan pev_start_time_span;
 
   /** Whether the task found landable reachable waypoints (aliases abort) */
   bool landable_reachable;
   /** time UTC ship descended through max task start height */
-  double TimeUnderStartMaxHeight;
+  TimeStamp TimeUnderStartMaxHeight;
   /** Time (s) until assigned minimum time is achieved */
-  double aat_time_remaining;
+  FloatDuration aat_time_remaining;
   /** Average speed over target task distance at minimum assigned time + margin (m/s) */
   double aat_speed_target;
   /** Average speed over max task at minimum assigned time + margin (m/s) */
@@ -93,12 +85,12 @@ public:
   /**
    * Reset the stats as if never flown
    */
-  void Reset();
+  void Reset() noexcept;
 
   /**
    * Reset the task stats
    */
-  void ResetTask();
+  void ResetTask() noexcept;
 
   /**
    * Automatic positive vario scale from history [m/s]
@@ -112,5 +104,3 @@ public:
 };
 
 static_assert(std::is_trivial<CommonStats>::value, "type is not trivial");
-
-#endif

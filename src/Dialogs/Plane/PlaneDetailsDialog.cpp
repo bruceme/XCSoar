@@ -1,37 +1,22 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "PlaneDialogs.hpp"
+#include "WeGlideTypePicker.hpp"
 #include "Dialogs/WidgetDialog.hpp"
 #include "Widget/RowFormWidget.hpp"
 #include "Form/Button.hpp"
+#include "Form/DataField/Integer.hpp"
 #include "Form/DataField/Listener.hpp"
+#include "net/client/WeGlide/AircraftList.hpp"
 #include "Plane/Plane.hpp"
 #include "Language/Language.hpp"
+#include "Interface.hpp"
+#include "Computer/Settings.hpp"
 #include "UIGlobals.hpp"
 
 class PlaneEditWidget final
-  : public RowFormWidget, DataFieldListener, ActionListener {
+  : public RowFormWidget, DataFieldListener {
   enum Controls {
     REGISTRATION,
     COMPETITION_ID,
@@ -39,9 +24,12 @@ class PlaneEditWidget final
     TYPE,
     HANDICAP,
     WING_AREA,
+    EMPTY_MASS,
     MAX_BALLAST,
     DUMP_TIME,
     MAX_SPEED,
+    WEGLIDE_ID,
+    WEGLIDE_NAME,
   };
 
   WndForm *dialog;
@@ -50,47 +38,67 @@ class PlaneEditWidget final
 
 public:
   PlaneEditWidget(const Plane &_plane, const DialogLook &_look,
-                  WndForm *_dialog)
+                  WndForm *_dialog) noexcept
     :RowFormWidget(_look), dialog(_dialog), plane(_plane) {}
 
-  const Plane &GetValue() const {
+  const Plane &GetValue() const noexcept {
     return plane;
   }
 
-  void UpdateCaption();
-  void UpdatePolarButton();
-  void PolarButtonClicked();
+  void UpdateCaption() noexcept;
+  void UpdatePolarButton() noexcept;
+  void UpdateWeGlideName() noexcept;
+  void PolarButtonClicked() noexcept;
 
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
 private:
   /* methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override;
-
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override;
+  void OnModified(DataField &df) noexcept override;
 };
 
+static bool
+EditWeGlideType([[maybe_unused]] const char *caption, DataField &df,
+                [[maybe_unused]] const char *help_text)
+{
+  if (df.GetType() != DataField::Type::INTEGER)
+    return false;
+
+  auto &integer = static_cast<DataFieldInteger &>(df);
+  const int current_value = integer.GetValue();
+  unsigned weglide_type = current_value > 0
+    ? static_cast<unsigned>(current_value)
+    : 0;
+
+  if (!SelectWeGlideAircraftType(weglide_type,
+                                 CommonInterface::GetComputerSettings()
+                                   .weglide))
+    return false;
+
+  integer.ModifyValue(static_cast<int>(weglide_type));
+  return true;
+}
+
 void
-PlaneEditWidget::UpdateCaption()
+PlaneEditWidget::UpdateCaption() noexcept
 {
   if (dialog == nullptr)
     return;
 
   StaticString<128> tmp;
-  tmp.Format(_T("%s: %s"), _("Plane Details"), GetValueString(REGISTRATION));
+  tmp.Format("%s: %s", _("Plane Details"), GetValueString(REGISTRATION));
   dialog->SetCaption(tmp);
 }
 
 void
-PlaneEditWidget::UpdatePolarButton()
+PlaneEditWidget::UpdatePolarButton() noexcept
 {
-  const TCHAR *caption = _("Polar");
+  const char *caption = _("Polar");
   StaticString<64> buffer;
   if (!plane.polar_name.empty()) {
-    buffer.Format(_T("%s: %s"), caption, plane.polar_name.c_str());
+    buffer.Format("%s: %s", caption, plane.polar_name.c_str());
     caption = buffer;
   }
 
@@ -99,74 +107,99 @@ PlaneEditWidget::UpdatePolarButton()
 }
 
 void
-PlaneEditWidget::OnModified(DataField &df)
+PlaneEditWidget::UpdateWeGlideName() noexcept
 {
-  if (IsDataField(REGISTRATION, df))
-    UpdateCaption();
+  if (plane.weglide_glider_type == 0) {
+    SetText(WEGLIDE_NAME, "-");
+    return;
+  }
+
+  StaticString<96> name;
+  if (WeGlide::LookupAircraftTypeName(plane.weglide_glider_type, name))
+    SetText(WEGLIDE_NAME, name.c_str());
+  else
+    SetText(WEGLIDE_NAME, _("Unknown"));
 }
 
 void
-PlaneEditWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+PlaneEditWidget::OnModified(DataField &df) noexcept
+{
+  if (IsDataField(REGISTRATION, df))
+    UpdateCaption();
+  else if (IsDataField(WEGLIDE_ID, df)) {
+    SaveValueInteger(WEGLIDE_ID, plane.weglide_glider_type);
+    UpdateWeGlideName();
+  }
+}
+
+void
+PlaneEditWidget::Prepare([[maybe_unused]] ContainerWindow &parent, [[maybe_unused]] const PixelRect &rc) noexcept
 {
   AddText(_("Registration"), nullptr, plane.registration, this);
   AddText(_("Comp. ID"), nullptr, plane.competition_id);
-  AddButton(_("Polar"), *this, POLAR);
+  AddButton(_("Polar"), [this](){ PolarButtonClicked(); });
   AddText(_("Type"), nullptr, plane.type);
   AddInteger(_("Handicap"), nullptr,
-             _T("%u %%"), _T("%u"),
+             "%u %%", "%u",
              50, 150, 1,
              plane.handicap);
   AddFloat(_("Wing Area"), nullptr,
-           _T("%.1f m²"), _T("%.1f"),
+           "%.1f m²", "%.1f",
            0, 40, 0.1,
            false, plane.wing_area);
+  AddFloat(_("Empty Mass"), _("Net mass of the rigged plane."),
+           "%.0f %s", "%.0f",
+           0, 1000, 5, false,
+           UnitGroup::MASS, plane.empty_mass);
   AddFloat(_("Max. Ballast"), nullptr,
-           _T("%.0f l"), _T("%.0f"),
+           "%.0f l", "%.0f",
            0, 500, 5,
            false, plane.max_ballast);
   AddInteger(_("Dump Time"), nullptr,
-             _T("%u s"), _T("%u"),
+             "%u s", "%u",
              10, 300, 5,
              plane.dump_time);
-  AddFloat(_("Max. Cruise Speed"), nullptr,
-           _T("%.0f %s"), _T("%.0f"), 0, 300, 5,
+  AddFloat(_("Max. Cruise Speed"),
+           _("Upper limit for MacCready speed-to-fly, including final "
+             "glide. Prevents the glide computer from commanding "
+             "unrealistically high cruise speeds. A typical choice is "
+             "the rough-air / green-arc limit from the flight manual."),
+           "%.0f %s", "%.0f", 0, 300, 5,
            false, UnitGroup::HORIZONTAL_SPEED, plane.max_speed);
+
+  auto *row = AddInteger(_("WeGlide Type"), nullptr, "%u", "%u", 0,
+                         9999, 1, plane.weglide_glider_type, this);
+  row->SetEditCallback(EditWeGlideType);
+  AddReadOnly(_("WeGlide Aircraft"), nullptr, "");
 
   UpdateCaption();
   UpdatePolarButton();
+  UpdateWeGlideName();
 }
 
 bool
-PlaneEditWidget::Save(bool &_changed)
+PlaneEditWidget::Save(bool &_changed) noexcept
 {
   bool changed = false;
 
   changed |= SaveValue(REGISTRATION, plane.registration);
   changed |= SaveValue(COMPETITION_ID, plane.competition_id);
   changed |= SaveValue(TYPE, plane.type);
-  changed |= SaveValue(HANDICAP, plane.handicap);
+  changed |= SaveValueInteger(HANDICAP, plane.handicap);
   changed |= SaveValue(WING_AREA, plane.wing_area);
+  changed |= SaveValue(EMPTY_MASS, UnitGroup::MASS, plane.empty_mass);
   changed |= SaveValue(MAX_BALLAST, plane.max_ballast);
-  changed |= SaveValue(DUMP_TIME, plane.dump_time);
+  changed |= SaveValueInteger(DUMP_TIME, plane.dump_time);
   changed |= SaveValue(MAX_SPEED, UnitGroup::HORIZONTAL_SPEED,
                        plane.max_speed);
+  changed |= SaveValueInteger(WEGLIDE_ID, plane.weglide_glider_type);
 
   _changed |= changed;
   return true;
 }
 
-void
-PlaneEditWidget::OnAction(int id)
-{
-  switch (id) {
-  case POLAR:
-    PolarButtonClicked();
-    break;
-  }
-}
-
 inline void
-PlaneEditWidget::PolarButtonClicked()
+PlaneEditWidget::PolarButtonClicked() noexcept
 {
   bool changed = false;
   if (!Save(changed))
@@ -174,30 +207,32 @@ PlaneEditWidget::PolarButtonClicked()
 
   dlgPlanePolarShowModal(plane);
   UpdatePolarButton();
-  if (plane.polar_name != _T("Custom"))
+  if (plane.polar_name != "Custom")
     LoadValue(TYPE, plane.polar_name.c_str());
 
   /* reload attributes that may have been modified */
+  LoadValue(HANDICAP, plane.handicap);
   LoadValue(WING_AREA, plane.wing_area);
+  LoadValue(EMPTY_MASS, plane.empty_mass, UnitGroup::MASS);
   LoadValue(MAX_BALLAST, plane.max_ballast);
   LoadValue(MAX_SPEED, plane.max_speed, UnitGroup::HORIZONTAL_SPEED);
 }
 
 bool
-dlgPlaneDetailsShowModal(Plane &_plane)
+dlgPlaneDetailsShowModal(Plane &_plane) noexcept
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
-  PlaneEditWidget widget(_plane, look, &dialog);
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _("Plane Details"), &widget);
+  TWidgetDialog<PlaneEditWidget>
+    dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+           look, _("Plane Details"));
   dialog.AddButton(_("OK"), mrOK);
   dialog.AddButton(_("Cancel"), mrCancel);
+  dialog.SetWidget(_plane, look, &dialog);
   const int result = dialog.ShowModal();
-  dialog.StealWidget();
 
   if (result != mrOK)
     return false;
 
-  _plane = widget.GetValue();
+  _plane = dialog.GetWidget().GetValue();
   return true;
 }

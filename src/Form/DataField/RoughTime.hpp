@@ -1,31 +1,10 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DATA_FIELD_ROUGH_TIME_HPP
-#define XCSOAR_DATA_FIELD_ROUGH_TIME_HPP
+#pragma once
 
 #include "Base.hpp"
-#include "Time/RoughTime.hpp"
+#include "time/RoughTime.hpp"
 
 /**
  * This #DataField implementation stores a UTC time of day with a
@@ -43,38 +22,35 @@ class RoughTimeDataField final : public DataField {
 
 public:
   RoughTimeDataField(RoughTime _value, RoughTimeDelta _time_zone,
-                     DataFieldListener *listener=nullptr)
+                     DataFieldListener *listener=nullptr) noexcept
     :DataField(Type::ROUGH_TIME, false, listener),
      value(_value), time_zone(_time_zone) {}
 
-  RoughTimeDelta GetTimeZone() const {
+  RoughTimeDelta GetTimeZone() const noexcept {
     return time_zone;
   }
 
-  void SetTimeZone(RoughTimeDelta _time_zone) {
+  void SetTimeZone(RoughTimeDelta _time_zone) noexcept {
     time_zone = _time_zone;
   }
 
-  RoughTime GetValue() const {
+  RoughTime GetValue() const noexcept {
     return value;
   }
 
-  void SetValue(RoughTime _value) {
+  void SetValue(RoughTime _value) noexcept {
     value = _value;
   }
 
-  RoughTime GetLocalValue() const {
+  RoughTime GetLocalValue() const noexcept {
     return value + time_zone;
   }
 
-  void ModifyValue(RoughTime _value);
+  void ModifyValue(RoughTime _value) noexcept;
 
   /* virtual methods from class DataField */
-  void Inc() override;
-  void Dec() override;
-  int GetAsInteger() const override;
-  const TCHAR *GetAsString() const override;
-  const TCHAR *GetAsDisplayString() const override;
+  void Inc() noexcept override;
+  void Dec() noexcept override;
+  const char *GetAsString() const noexcept override;
+  const char *GetAsDisplayString() const noexcept override;
 };
-
-#endif

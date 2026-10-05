@@ -1,67 +1,55 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WaypointDetailsReader.hpp"
-#include "Language/Language.hpp"
-#include "Profile/ProfileKeys.hpp"
+
 #include "Engine/Waypoint/Waypoint.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
-#include "IO/ConfiguredFile.hpp"
-#include "IO/LineReader.hpp"
-#include "Operation/Operation.hpp"
+#include "Language/Language.hpp"
+#include "LogFile.hpp"
+#include "Operation/ProgressListener.hpp"
+#include "Profile/Keys.hpp"
+#include "Profile/Profile.hpp"
+#include "Repository/FileType.hpp"
+#include "WaypointDetailsFormat.hpp"
+#include "io/BufferedReader.hxx"
+#include "io/ConfiguredFile.hpp"
+#include "io/FileReader.hxx"
+#include "io/MapFile.hpp"
+#include "io/ProgressReader.hpp"
+#include "io/StringConverter.hpp"
+#include "io/ZipReader.hpp"
+#include "system/Path.hpp"
 
-#include <vector>
+namespace WaypointDetails {
 
 static WaypointPtr
-FindWaypoint(Waypoints &way_points, const TCHAR *name)
+FindWaypoint(Waypoints &way_points, const char *name)
 {
-  auto wp = way_points.LookupName(name);
-  if (wp != nullptr)
-    return wp;
-
-  // TODO: Comments please! What is this supposed to do? Why do we need it?
-  size_t name_length = _tcslen(name);
-  TCHAR buffer[name_length + 4];
-  _tcscpy(buffer, name);
-  _tcscpy(buffer + name_length, _T(" AF"));
-  wp = way_points.LookupName(buffer);
-  if (wp != nullptr)
-    return wp;
-
-  _tcscpy(buffer + name_length, _T(" AD"));
-  wp = way_points.LookupName(buffer);
-  if (wp != nullptr)
-    return wp;
-
-  return nullptr;
+  return way_points.LookupName(name);
 }
 
-static void
-SetAirfieldDetails(Waypoints &way_points, const TCHAR *name,
-                   const tstring &Details,
-                   const std::vector<tstring> &files_external,
-                   const std::vector<tstring> &files_embed)
+struct WaypointDetailsBuilder {
+  char name[201];
+  std::string details;
+#ifdef HAVE_RUN_FILE
+  std::forward_list<std::string> files_external;
+#endif
+  std::forward_list<std::string> files_embed;
+
+  void Reset() noexcept {
+    details.clear();
+#ifdef HAVE_RUN_FILE
+    files_external.clear();
+#endif
+    files_embed.clear();
+  }
+
+  void Commit(Waypoints &way_points) noexcept;
+};
+
+inline void
+WaypointDetailsBuilder::Commit(Waypoints &way_points) noexcept
 {
   auto wp = FindWaypoint(way_points, name);
   if (wp == nullptr)
@@ -69,95 +57,92 @@ SetAirfieldDetails(Waypoints &way_points, const TCHAR *name,
 
   // TODO: eliminate this const_cast hack
   Waypoint &new_wp = const_cast<Waypoint &>(*wp);
-  new_wp.details = Details.c_str();
-  new_wp.files_embed.assign(files_embed.begin(), files_embed.end());
+  new_wp.details = std::move(details);
+
+  files_embed.reverse();
+  new_wp.files_embed = std::move(files_embed);
+
 #ifdef HAVE_RUN_FILE
-  new_wp.files_external.assign(files_external.begin(), files_external.end());
+  files_external.reverse();
+  new_wp.files_external = std::move(files_external);
 #endif
 }
 
-/**
- * Parses the data provided by the airfield details file handle
- */
-static void
-ParseAirfieldDetails(Waypoints &way_points, TLineReader &reader,
-                     OperationEnvironment &operation)
+void
+ReadFile(BufferedReader &reader, Waypoints &way_points)
 {
-  tstring details;
-  std::vector<tstring> files_external, files_embed;
-  TCHAR name[201];
-  const TCHAR *filename;
-
-  name[0] = 0;
+  StringConverter string_converter;
+  WaypointDetailsBuilder builder;
 
   bool in_details = false;
   int i;
 
-  const long filesize = std::max(reader.GetSize(), 1l);
-  operation.SetProgressRange(100);
-
-  TCHAR *line;
+  char *line;
   while ((line = reader.ReadLine()) != nullptr) {
-    if (line[0] == _T('[')) { // Look for start
-      if (in_details)
-        SetAirfieldDetails(way_points, name, details, files_external,
-                           files_embed);
+    const auto trimmed = Strip(std::string_view{line});
 
-      details.clear();
-      files_external.clear();
-      files_embed.clear();
+    if (IsSectionHeader(line)) {
+      if (in_details)
+        builder.Commit(way_points);
+
+      builder.Reset();
 
       // extract name
       for (i = 1; i < 201; i++) {
-        if (line[i] == _T(']'))
+        if (line[i] == ']')
           break;
 
-        name[i - 1] = line[i];
+        builder.name[i - 1] = line[i];
       }
-      name[i - 1] = 0;
+      builder.name[i - 1] = 0;
 
       in_details = true;
-
-      operation.SetProgressPosition(reader.Tell() * 100 / filesize);
-    } else if ((filename =
-                StringAfterPrefixCI(line, _T("image="))) != nullptr) {
-      files_embed.emplace_back(filename);
-    } else if ((filename =
-                StringAfterPrefixCI(line, _T("file="))) != nullptr) {
+    } else if (const auto filename =
+               StringAfterPrefixIgnoreCase(trimmed, "image=");
+               !filename.empty()) {
+      builder.files_embed.emplace_front(string_converter.Convert(filename));
+    } else if (const auto filename =
+               StringAfterPrefixIgnoreCase(trimmed, "file=");
+               !filename.empty()) {
 #ifdef HAVE_RUN_FILE
-      files_external.emplace_back(filename);
+      builder.files_external.emplace_front(string_converter.Convert(filename));
 #endif
     } else {
       // append text to details string
       if (!StringIsEmpty(line)) {
-        details += line;
-        details += _T('\n');
+        builder.details += string_converter.Convert(line);
+        builder.details += '\n';
       }
     }
   }
 
   if (in_details)
-    SetAirfieldDetails(way_points, name, details, files_external, files_embed);
-}
-
-/**
- * Opens the airfield details file and parses it
- */
-void
-WaypointDetails::ReadFile(TLineReader &reader, Waypoints &way_points,
-                          OperationEnvironment &operation)
-{
-  operation.SetText(_("Loading Airfield Details File..."));
-  ParseAirfieldDetails(way_points, reader, operation);
+    builder.Commit(way_points);
 }
 
 void
-WaypointDetails::ReadFileFromProfile(Waypoints &way_points,
-                                     OperationEnvironment &operation)
+ReadFileFromProfile(Waypoints &way_points,
+                    ProgressListener &progress)
 {
-  auto reader = OpenConfiguredTextFile(ProfileKeys::AirfieldFile,
-                                       "airfields.txt",
-                                       Charset::AUTO);
-  if (reader)
-    ReadFile(*reader, way_points, operation);
+  auto paths =
+      Profile::GetMultiplePaths(ProfileKeys::AirfieldFileList,
+                                GetFileTypePatterns(FileType::WAYPOINTDETAILS));
+  for (const auto &path : paths) {
+    try {
+      auto reader = std::make_unique<FileReader>(Path(path));
+      ProgressReader progress_reader{*reader, reader->GetSize(), progress};
+      BufferedReader buffered_reader{progress_reader};
+      ReadFile(buffered_reader, way_points);
+    } catch (...) {
+      LogError(std::current_exception());
+    }
+  }
+
+  if (auto reader = OpenInMapFile("airfields.txt")) {
+    ProgressReader progress_reader{*reader, reader->GetSize(), progress};
+    BufferedReader buffered_reader{progress_reader};
+    ReadFile(buffered_reader, way_points);
+  }
 }
+
+} // namespace WaypointDetails

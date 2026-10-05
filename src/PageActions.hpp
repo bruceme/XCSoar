@@ -1,32 +1,10 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "PageSettings.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_PAGES_HPP
-#define XCSOAR_PAGES_HPP
-
-#include "Compiler.h"
-
-struct PageLayout;
 class GlueMapWindow;
 class Widget;
 
@@ -36,14 +14,21 @@ namespace PageActions
    * Returns the configured #PageLayout that was most recently
    * visible.
    */
-  gcc_pure
+  [[gnu::pure]]
   const PageLayout &GetConfiguredLayout();
 
   /**
    * Returns the #PageLayout that is currently visible.
    */
-  gcc_pure
+  [[gnu::pure]]
   const PageLayout &GetCurrentLayout();
+
+  /**
+   * True after pan was disabled without Restore(), leaving the transient
+   * FullScreen layout active while a different page is configured.
+   */
+  [[gnu::pure]]
+  bool IsStuckPanFullScreenLayout() noexcept;
 
   /**
    * Opens the next page.
@@ -64,13 +49,13 @@ namespace PageActions
   /**
    * Determine the index of the next configured page.
    */
-  gcc_pure
+  [[gnu::pure]]
   unsigned NextIndex();
 
   /**
    * Determine the index of the next configured page.
    */
-  gcc_pure
+  [[gnu::pure]]
   unsigned PrevIndex();
 
   /**
@@ -79,9 +64,26 @@ namespace PageActions
   void Update();
 
   /**
+   * Like Update(), but runs on the next event-loop iteration.
+   */
+  void ScheduleUpdate() noexcept;
+
+  /**
    * Restore the current page as it was configured.
    */
   void Restore();
+
+  /**
+   * The map's projection has been edited -- the pilot zoomed, panned
+   * or rotated, or the map followed the aircraft.
+   *
+   * Overlays that fetch imagery for the visible area need to know, or
+   * they would keep showing the section that was on screen when they
+   * last looked.  Called from GlueMapWindow, which knows nothing about
+   * the individual providers; each decides for itself whether it is on
+   * the map at all.
+   */
+  void OnMapProjectionModified() noexcept;
 
   /**
    * Schedule a call to Restore().  The function returns immediately,
@@ -121,10 +123,32 @@ namespace PageActions
   void ShowThermalAssistant();
 
   /**
+   * Show the dedicated weather map page.
+   */
+  void ShowWeatherPage();
+
+  /**
+   * Preserve active weather overlays across a temporary pan full-screen.
+   */
+  void SuspendWeatherOverlaysForPan() noexcept;
+
+  /**
+   * Clear temporary pan suspension flags for all weather overlays.
+   */
+  void ResumeWeatherOverlaysAfterPan() noexcept;
+
+  /**
    * Use a custom widget for the "bottom" area.  This is a wrapper for
    * MainWindow::SetBottomWidget().  Call RestoreBottom() to undo this.
    */
   void SetCustomBottom(Widget *widget);
-};
 
-#endif
+  /**
+   * Whether map overlay buttons (menu, QuickMenu, zoom) should be
+   * shown.  False for most special pages (e.g. pan fullscreen); true
+   * when #special_page is only a #SetCustomBottom() overlay such as a
+   * QuestionWidget on an otherwise normal map page.
+   */
+  [[gnu::pure]]
+  bool AllowMapOverlayButtons() noexcept;
+};

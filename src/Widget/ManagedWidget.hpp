@@ -1,30 +1,12 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "ui/dim/Rect.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MANAGED_WIDGET_HPP
-#define XCSOAR_MANAGED_WIDGET_HPP
-
-#include "Screen/Point.hpp"
+#include <cstdint>
+#include <memory>
 
 class ContainerWindow;
 class Widget;
@@ -37,84 +19,102 @@ class Widget;
  * twice.
  */
 class ManagedWidget {
-  ContainerWindow &parent;
+  ContainerWindow *parent = nullptr;
   PixelRect position;
 
-  Widget *widget;
+  Widget *widget = nullptr;
 
-  bool prepared, visible;
+  /**
+   * Only valid if the #widget is set.
+   */
+  enum class State : uint8_t {
+    NONE,
+    INITIALISED,
+    PREPARED,
+    VISIBLE,
+  } state;
 
 #ifndef NDEBUG
-  bool have_position;
+  bool have_position = false;
 #endif
 
 public:
-  ManagedWidget(ContainerWindow &_parent)
-    :parent(_parent), widget(nullptr)
-#ifndef NDEBUG
-    , have_position(false)
-#endif
-  {}
+  ManagedWidget() noexcept = default;
 
-  ManagedWidget(ContainerWindow &_parent, Widget *_widget)
-    :parent(_parent), widget(_widget), prepared(false)
-#ifndef NDEBUG
-    , have_position(false)
-#endif
-  {}
+  explicit ManagedWidget(ContainerWindow &_parent) noexcept
+    :parent(&_parent) {}
 
-  ~ManagedWidget() {
+  ManagedWidget(ContainerWindow &_parent, Widget *_widget) noexcept
+    :parent(&_parent), widget(_widget), state(State::NONE) {}
+
+  explicit ManagedWidget(Widget *_widget) noexcept
+    :widget(_widget), state(State::NONE) {}
+
+  ~ManagedWidget() noexcept {
     Clear();
   }
+
+  ManagedWidget(const ManagedWidget &) = delete;
+  ManagedWidget &operator=(const ManagedWidget &) = delete;
 
   /**
    * Return the Widget object (in the current state), and "forget"
    * about it.
    */
-  Widget *Steal() {
+  Widget *Steal() noexcept {
     Widget *result = widget;
     widget = nullptr;
     return result;
   }
 
-  bool IsDefined() const {
+  bool IsDefined() const noexcept {
     return widget != nullptr;
   }
 
-  bool IsPrepared() const {
-    return IsDefined() && prepared;
+  bool IsPrepared() const noexcept {
+    return IsDefined() && state >= State::PREPARED;
   }
 
-  bool IsVisible() const {
-    return IsPrepared() && visible;
+  bool IsVisible() const noexcept {
+    return IsDefined() && state == State::VISIBLE;
   }
+
+  /**
+   * This call is only needed (and allowed) if no parent was passed to
+   * the constructor.
+   */
+  void Initialise(ContainerWindow &_parent, const PixelRect &_position);
 
   /**
    * Ensure that the Widget is prepared.
    */
   void Prepare();
 
-  void Unprepare();
-  void Clear();
+  void Unprepare() noexcept;
+  void Clear() noexcept;
 
   /**
    * @param widget an uninitialised Widget
    */
-  void Set(Widget *widget);
+  void Set(Widget *widget) noexcept;
+  void Set(std::unique_ptr<Widget> widget) noexcept;
 
-  Widget *Get() {
+  Widget *Get() noexcept {
     return widget;
   }
 
-  void Move(const PixelRect &position);
+  void Move(const PixelRect &position) noexcept;
 
-  void Show();
-  void Hide();
+  void Show() noexcept;
+  void Hide() noexcept;
 
-  void SetVisible(bool _visible);
+  void SetVisible(bool _visible) noexcept;
 
-  bool SetFocus();
-  bool KeyPress(unsigned key_code);
+  bool Save(bool &changed);
+  bool SetFocus() noexcept;
+
+  [[gnu::pure]]
+  bool HasFocus() const noexcept;
+
+  bool KeyPress(unsigned key_code) noexcept;
 };
-
-#endif

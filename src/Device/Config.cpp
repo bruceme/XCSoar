@@ -1,38 +1,20 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Config.hpp"
 #include "Asset.hpp"
 #include "Language/Language.hpp"
-#include "Util/StringCompare.hxx"
+#include "util/Compiler.h"
+#include "util/StringCompare.hxx"
 
 #ifdef ANDROID
+#include "Android/Main.hpp"
 #include "Android/BluetoothHelper.hpp"
-#include "Java/Global.hxx"
+#include "java/Global.hxx"
 #endif
 
 bool
-DeviceConfig::IsAvailable() const
+DeviceConfig::IsAvailable() const noexcept
 {
   if (!enabled)
     return false;
@@ -45,7 +27,11 @@ DeviceConfig::IsAvailable() const
     return true;
 
   case PortType::RFCOMM:
+  case PortType::BLE_SERIAL:
+  case PortType::BLE_SENSOR:
   case PortType::RFCOMM_SERVER:
+  case PortType::GLIDER_LINK:
+  case PortType::ANDROID_USB_SERIAL:
     return IsAndroid();
 
   case PortType::IOIOUART:
@@ -55,9 +41,6 @@ DeviceConfig::IsAvailable() const
   case PortType::IOIOVOLTAGE:
     return HasIOIOLib();
 
-  case PortType::AUTO:
-    return false;
-
   case PortType::INTERNAL:
     return IsAndroid() || IsApple();
 
@@ -66,6 +49,7 @@ DeviceConfig::IsAvailable() const
 
   case PortType::TCP_LISTENER:
   case PortType::UDP_LISTENER:
+  case PortType::SPECTATE_FILE:
     return true;
 
   case PortType::PTY:
@@ -81,19 +65,20 @@ DeviceConfig::IsAvailable() const
 }
 
 bool
-DeviceConfig::ShouldReopenOnTimeout() const
+DeviceConfig::ShouldReopenOnTimeout() const noexcept
 {
   switch (port_type) {
   case PortType::DISABLED:
     return false;
 
   case PortType::SERIAL:
-  case PortType::AUTO:
-    /* TODO: old branch for Windows CE due to its quirks */
     return false;
 
   case PortType::RFCOMM:
+  case PortType::BLE_SENSOR:
+  case PortType::BLE_SERIAL:
   case PortType::RFCOMM_SERVER:
+  case PortType::ANDROID_USB_SERIAL:
   case PortType::IOIOUART:
   case PortType::DROIDSOAR_V2:
   case PortType::NUNCHUCK:
@@ -109,12 +94,12 @@ DeviceConfig::ShouldReopenOnTimeout() const
 
   case PortType::TCP_LISTENER:
   case PortType::UDP_LISTENER:
-    /* this is a server, and if no data gets received, this can just
-       mean that nobody connected to it, but reopening it periodically
-       doesn't help */
+  case PortType::SPECTATE_FILE:
+    /* local file polling; reopening does not help */
     return false;
 
   case PortType::PTY:
+  case PortType::GLIDER_LINK:
     return false;
   }
 
@@ -122,7 +107,7 @@ DeviceConfig::ShouldReopenOnTimeout() const
 }
 
 bool
-DeviceConfig::MaybeBluetooth(PortType port_type, const TCHAR *path)
+DeviceConfig::MaybeBluetooth(PortType port_type, [[maybe_unused]] const char *path) noexcept
 {
   /* note: RFCOMM_SERVER is not considered here because this
      function is used to check for the K6-Bt protocol, but the K6-Bt
@@ -132,7 +117,7 @@ DeviceConfig::MaybeBluetooth(PortType port_type, const TCHAR *path)
     return true;
 
 #ifdef HAVE_POSIX
-  if (port_type == PortType::SERIAL && _tcsstr(path, _T("/rfcomm")) != nullptr)
+  if (port_type == PortType::SERIAL && strstr(path, "/rfcomm") != nullptr)
     return true;
 #endif
 
@@ -140,7 +125,7 @@ DeviceConfig::MaybeBluetooth(PortType port_type, const TCHAR *path)
 }
 
 bool
-DeviceConfig::MaybeBluetooth() const
+DeviceConfig::MaybeBluetooth() const noexcept
 {
   /* note: RFCOMM_SERVER is not considered here because this
      function is used to check for the K6-Bt protocol, but the K6-Bt
@@ -150,7 +135,7 @@ DeviceConfig::MaybeBluetooth() const
     return true;
 
 #ifdef HAVE_POSIX
-  if (port_type == PortType::SERIAL && path.Contains(_T("/rfcomm")))
+  if (port_type == PortType::SERIAL && path.Contains("/rfcomm"))
     return true;
 #endif
 
@@ -158,14 +143,18 @@ DeviceConfig::MaybeBluetooth() const
 }
 
 bool
-DeviceConfig::BluetoothNameStartsWith(const char *prefix) const
+DeviceConfig::BluetoothNameStartsWith([[maybe_unused]] const char *prefix) const noexcept
 {
 #ifdef ANDROID
   if (port_type != PortType::RFCOMM)
     return false;
 
+  if (bluetooth_helper == nullptr)
+    return false;
+
   const char *name =
-    BluetoothHelper::GetNameFromAddress(Java::GetEnv(), bluetooth_mac.c_str());
+    bluetooth_helper->GetNameFromAddress(Java::GetEnv(),
+                                         bluetooth_mac.c_str());
   return name != nullptr && StringStartsWith(name, prefix);
 #else
   return false;
@@ -173,7 +162,14 @@ DeviceConfig::BluetoothNameStartsWith(const char *prefix) const
 }
 
 void
-DeviceConfig::Clear()
+DeviceConfig::ApplySpectateDefaults() noexcept
+{
+  if (path.empty())
+    path = DEFAULT_SPECTATE_PATH;
+}
+
+void
+DeviceConfig::Clear() noexcept
 {
   port_type = PortType::DISABLED;
   baud_rate = 4800u;
@@ -188,14 +184,18 @@ DeviceConfig::Clear()
   enabled = true;
   sync_from_device = true;
   sync_to_device = true;
+  send_position = true;
   k6bt = false;
+  polar_sync = PolarSync::OFF;
+  engine_type = EngineType::NONE;
+  instrument_alignment = InstrumentAlignment::NONE;
 #ifndef NDEBUG
   dump_port = false;
 #endif
 }
 
-const TCHAR *
-DeviceConfig::GetPortName(TCHAR *buffer, size_t max_size) const
+const char *
+DeviceConfig::GetPortName(char *buffer, size_t max_size) const noexcept
 {
   switch (port_type) {
   case PortType::DISABLED:
@@ -204,16 +204,50 @@ DeviceConfig::GetPortName(TCHAR *buffer, size_t max_size) const
   case PortType::SERIAL:
     return path.c_str();
 
-  case PortType::RFCOMM: {
-    const TCHAR *name = bluetooth_mac.c_str();
+  case PortType::BLE_SENSOR: {
+    const char *name = bluetooth_mac.c_str();
 #ifdef ANDROID
-    const char *name2 =
-      BluetoothHelper::GetNameFromAddress(Java::GetEnv(), name);
-    if (name2 != nullptr)
-      name = name2;
+    if (bluetooth_helper != nullptr) {
+      const char *name2 =
+        bluetooth_helper->GetNameFromAddress(Java::GetEnv(), name);
+      if (name2 != nullptr)
+        name = name2;
+    }
 #endif
 
-    StringFormat(buffer, max_size, _T("Bluetooth %s"), name);
+    StringFormat(buffer, max_size, "%s: %s",
+                 _("BLE sensor"), name);
+    return buffer;
+    }
+
+  case PortType::BLE_SERIAL: {
+    const char *name = bluetooth_mac.c_str();
+#ifdef ANDROID
+    if (bluetooth_helper != nullptr) {
+      const char *name2 =
+        bluetooth_helper->GetNameFromAddress(Java::GetEnv(), name);
+      if (name2 != nullptr)
+        name = name2;
+    }
+#endif
+
+    StringFormat(buffer, max_size, "%s: %s",
+                 _("BLE port"), name);
+    return buffer;
+    }
+
+  case PortType::RFCOMM: {
+    const char *name = bluetooth_mac.c_str();
+#ifdef ANDROID
+    if (bluetooth_helper != nullptr) {
+      const char *name2 =
+        bluetooth_helper->GetNameFromAddress(Java::GetEnv(), name);
+      if (name2 != nullptr)
+        name = name2;
+    }
+#endif
+
+    StringFormat(buffer, max_size, "Bluetooth %s", name);
     return buffer;
     }
 
@@ -221,42 +255,51 @@ DeviceConfig::GetPortName(TCHAR *buffer, size_t max_size) const
     return _("Bluetooth server");
 
   case PortType::IOIOUART:
-    StringFormat(buffer, max_size, _T("IOIO UART %d"), ioio_uart_id);
+    StringFormat(buffer, max_size, "IOIO UART %d", ioio_uart_id);
     return buffer;
 
   case PortType::DROIDSOAR_V2:
-    return _T("DroidSoar V2");
+    return "DroidSoar V2";
 
   case PortType::NUNCHUCK:
-    return _T("Nunchuck");
+    return "Nunchuck";
 
   case PortType::I2CPRESSURESENSOR:
-    return _T("IOIO i2c pressure sensor");
+    return "IOIO i2c pressure sensor";
 
   case PortType::IOIOVOLTAGE:
-    return _T("IOIO voltage sensor");
-
-  case PortType::AUTO:
-    return _("GPS Intermediate Driver");
+    return "IOIO voltage sensor";
 
   case PortType::INTERNAL:
     return _("Built-in GPS & sensors");
 
+  case PortType::GLIDER_LINK:
+    return _("GliderLink traffic receiver");
+
   case PortType::TCP_CLIENT:
-    StringFormat(buffer, max_size, _T("TCP client %s:%u"),
+    StringFormat(buffer, max_size, "TCP client %s:%u",
                  ip_address.c_str(), tcp_port);
     return buffer;
 
   case PortType::TCP_LISTENER:
-    StringFormat(buffer, max_size, _T("TCP port %d"), tcp_port);
+    StringFormat(buffer, max_size, "TCP port %d", tcp_port);
     return buffer;
 
   case PortType::UDP_LISTENER:
-    StringFormat(buffer, max_size, _T("UDP port %d"), tcp_port);
+    StringFormat(buffer, max_size, "UDP port %d", tcp_port);
     return buffer;
 
   case PortType::PTY:
-    StringFormat(buffer, max_size, _T("Pseudo-terminal %s"), path.c_str());
+    StringFormat(buffer, max_size, "Pseudo-terminal %s", path.c_str());
+    return buffer;
+
+  case PortType::ANDROID_USB_SERIAL:
+    StringFormat(buffer, max_size, "%s: %s",
+                 _("USB serial"), path.c_str());
+    return buffer;
+
+  case PortType::SPECTATE_FILE:
+    StringFormat(buffer, max_size, "%s", path.c_str());
     return buffer;
   }
 

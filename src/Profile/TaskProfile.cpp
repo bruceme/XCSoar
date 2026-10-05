@@ -1,30 +1,10 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskProfile.hpp"
 #include "RouteProfile.hpp"
 #include "Map.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "Task/TaskBehaviour.hpp"
 
 namespace Profile {
@@ -66,6 +46,8 @@ Profile::Load(const ProfileMap &map, StartConstraints &constraints)
   map.GetEnum(ProfileKeys::StartHeightRef, constraints.max_height_ref);
   map.Get(ProfileKeys::StartMaxHeight, constraints.max_height);
   map.Get(ProfileKeys::StartMaxSpeed, constraints.max_speed);
+  map.Get(ProfileKeys::PEVStartWaitTime, constraints.pev_start_wait_time);
+  map.Get(ProfileKeys::PEVStartWindow, constraints.pev_start_window);
 }
 
 void
@@ -80,6 +62,7 @@ Profile::Load(const ProfileMap &map, OrderedTaskSettings &settings)
 {
   Load(map, settings.start_constraints);
   Load(map, settings.finish_constraints);
+  map.Get(ProfileKeys::NavigateNearest, settings.navigate_nearest);
   map.Get(ProfileKeys::AATMinTime, settings.aat_min_time);
 }
 
@@ -107,6 +90,8 @@ Profile::Load(const ProfileMap &map, TaskBehaviour &settings)
   Load(map, settings.ordered_defaults);
 
   map.GetEnum(ProfileKeys::AbortTaskMode, settings.abort_task_mode);
+
+  map.Get(ProfileKeys::TurnBackMarkerEnabled, settings.turn_back_marker_enabled);
 
   Load(map, settings.route_planner);
 }

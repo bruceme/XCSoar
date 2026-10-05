@@ -1,143 +1,137 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
+#include "DataFilePath.hpp"
 #include "WaypointGlue.hpp"
 #include "Factory.hpp"
-#include "WaypointFileType.hpp"
-#include "Profile/Profile.hpp"
-#include "LogFile.hpp"
-#include "Waypoint/Waypoints.hpp"
-#include "WaypointReader.hpp"
 #include "Language/Language.hpp"
-#include "LocalPath.hpp"
+#include "LogFile.hpp"
 #include "Operation/Operation.hpp"
-#include "OS/Path.hpp"
-#include "IO/MapFile.hpp"
-#include "IO/ZipArchive.hpp"
+#include "Profile/Profile.hpp"
+#include "Repository/FileType.hpp"
+#include "Waypoint/Waypoints.hpp"
+#include "WaypointFileType.hpp"
+#include "WaypointReader.hpp"
+#include "io/MapFile.hpp"
+#include "io/ZipArchive.hpp"
+#include "lib/fmt/PathFormatter.hpp"
+#include "system/Path.hpp"
+
+namespace WaypointGlue {
 
 static bool
 LoadWaypointFile(Waypoints &waypoints, Path path,
                  WaypointFileType file_type,
                  WaypointOrigin origin,
-                 const RasterTerrain *terrain, OperationEnvironment &operation)
-{
-  if (!ReadWaypointFile(path, file_type, waypoints,
-                        WaypointFactory(origin, terrain),
-                        operation)) {
-    LogFormat(_T("Failed to read waypoint file: %s"), path.c_str());
-    return false;
-  }
-
+                 uint8_t file_num,
+                 const RasterTerrain *terrain,
+                 ProgressListener &progress) noexcept
+try {
+  ReadWaypointFile(path, file_type, waypoints,
+                   WaypointFactory(origin, file_num, terrain),
+                   progress);
   return true;
+} catch (...) {
+  LogFmt("Failed to read waypoint file: {}", path);
+  LogError(std::current_exception());
+  return false;
 }
 
 static bool
 LoadWaypointFile(Waypoints &waypoints, Path path,
                  WaypointOrigin origin,
-                 const RasterTerrain *terrain, OperationEnvironment &operation)
-{
-  if (!ReadWaypointFile(path, waypoints,
-                        WaypointFactory(origin, terrain),
-                        operation)) {
-    LogFormat(_T("Failed to read waypoint file: %s"), path.c_str());
-    return false;
-  }
-
+                 uint8_t file_num,
+                 const RasterTerrain *terrain,
+                 ProgressListener &progress) noexcept
+try {
+  ReadWaypointFile(path, waypoints,
+                   WaypointFactory(origin, file_num, terrain),
+                   progress);
   return true;
+} catch (...) {
+  LogFmt("Failed to read waypoint file: {}", path);
+  LogError(std::current_exception());
+  return false;
 }
 
 static bool
 LoadWaypointFile(Waypoints &waypoints, struct zzip_dir *dir, const char *path,
                  WaypointFileType file_type,
                  WaypointOrigin origin,
-                 const RasterTerrain *terrain, OperationEnvironment &operation)
-{
-  if (!ReadWaypointFile(dir, path, file_type, waypoints,
-                        WaypointFactory(origin, terrain),
-                        operation)) {
-    LogFormat("Failed to read waypoint file: %s", path);
-    return false;
-  }
-
+                 uint8_t file_num,
+                 const RasterTerrain *terrain,
+                 ProgressListener &progressg) noexcept
+try {
+  ReadWaypointFile(dir, path, file_type, waypoints,
+                   WaypointFactory(origin, file_num, terrain),
+                   progressg);
   return true;
+} catch (...) {
+  LogFmt("Failed to read waypoint file: {}", path);
+  LogError(std::current_exception());
+  return false;
 }
 
 bool
-WaypointGlue::LoadWaypoints(Waypoints &way_points,
-                            const RasterTerrain *terrain,
-                            OperationEnvironment &operation)
+LoadWaypoints(Waypoints &way_points, const RasterTerrain *terrain,
+              ProgressListener &progress)
 {
-  LogFormat("ReadWaypoints");
-  operation.SetText(_("Loading Waypoints..."));
-
   bool found = false;
 
   // Delete old waypoints
   way_points.Clear();
 
-  LoadWaypointFile(way_points, LocalPath(_T("user.cup")),
-                   WaypointFileType::SEEYOU,
-                   WaypointOrigin::USER, terrain, operation);
-
   // ### FIRST FILE ###
-  auto path = Profile::GetPath(ProfileKeys::WaypointFile);
-  if (!path.IsNull())
+  auto paths = Profile::GetMultiplePaths(ProfileKeys::WaypointFileList,
+                                         GetFileTypePatterns(FileType::WAYPOINT));
+  uint8_t file_num = 0;
+  for (const auto &path : paths) {
     found |= LoadWaypointFile(way_points, path, WaypointOrigin::PRIMARY,
-                              terrain, operation);
-
-  // ### SECOND FILE ###
-  path = Profile::GetPath(ProfileKeys::AdditionalWaypointFile);
-  if (!path.IsNull())
-    found |= LoadWaypointFile(way_points, path, WaypointOrigin::ADDITIONAL,
-                              terrain, operation);
+                              file_num++, terrain, progress);
+  }
 
   // ### WATCHED WAYPOINT/THIRD FILE ###
-  path = Profile::GetPath(ProfileKeys::WatchedWaypointFile);
-  if (!path.IsNull())
+  paths = Profile::GetMultiplePaths(ProfileKeys::WatchedWaypointFileList,
+                                    GetFileTypePatterns(FileType::WAYPOINT));
+  file_num = 0;
+  for (const auto &path : paths) {
     found |= LoadWaypointFile(way_points, path, WaypointOrigin::WATCHED,
-                              terrain, operation);
+                              file_num++, terrain, progress);
+  }
 
   // ### MAP/FOURTH FILE ###
 
   // If no waypoint file found yet
   if (!found) {
-    auto archive = OpenMapFile();
-    if (archive) {
-      found |= LoadWaypointFile(way_points, archive->get(), "waypoints.xcw",
-                                WaypointFileType::WINPILOT,
-                                WaypointOrigin::MAP,
-                                terrain, operation);
+    try {
+      if (auto archive = OpenMapFile()) {
+        found |= LoadWaypointFile(way_points, archive->get(), "waypoints.xcw",
+                                  WaypointFileType::WINPILOT,
+                                  WaypointOrigin::MAP,
+                                  0, terrain, progress);
 
-      found |= LoadWaypointFile(way_points, archive->get(), "waypoints.cup",
-                                WaypointFileType::SEEYOU,
-                                WaypointOrigin::MAP,
-                                terrain, operation);
+        found |= LoadWaypointFile(way_points, archive->get(), "waypoints.cup",
+                                  WaypointFileType::SEEYOU,
+                                  WaypointOrigin::MAP,
+                                  0, terrain, progress);
+      }
+    } catch (...) {
+      LogError(std::current_exception(),
+               "Failed to load waypoints from map file");
     }
   }
-
+  //Load user.cup
+  LoadWaypointFile(way_points,
+                   ResolveTypedDataFilePath(FileType::WAYPOINT, "user.cup"),
+                   WaypointFileType::SEEYOU,
+                   WaypointOrigin::USER, 0, terrain, progress);
   // Optimise the waypoint list after attaching new waypoints
   way_points.Optimise();
+
+  LogFmt("LoadWaypoints: loaded {} waypoints", way_points.size());
 
   // Return whether waypoints have been loaded into the waypoint list
   return found;
 }
+
+} // namespace WaypointGlue

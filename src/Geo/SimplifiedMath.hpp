@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /*! @file
  * @brief Library for calculating Earth dimensions
@@ -30,10 +10,7 @@ Copyright_License {
  * be.  Instead of using the WGS84 model, they assume the FAI sphere.
  */
 
-#ifndef XCSOAR_GEO_SIMPLIFIED_MATH_HPP
-#define XCSOAR_GEO_SIMPLIFIED_MATH_HPP
-
-#include "Compiler.h"
+#pragma once
 
 struct GeoPoint;
 class Angle;
@@ -47,25 +24,24 @@ class Angle;
  */
 void
 DistanceBearingS(const GeoPoint &loc1, const GeoPoint &loc2,
-                 Angle *distance, Angle *bearing);
+                 Angle *distance, Angle *bearing) noexcept;
 
 void
 DistanceBearingS(const GeoPoint &loc1, const GeoPoint &loc2,
-                 double *distance, Angle *bearing);
+                 double *distance, Angle *bearing) noexcept;
 
 /**
  * @see FindLatitudeLongitude()
  */
-gcc_pure
+[[gnu::pure]]
 GeoPoint
-FindLatitudeLongitudeS(const GeoPoint &loc, Angle bearing, double distance);
+FindLatitudeLongitudeS(const GeoPoint &loc,
+                       Angle bearing, double distance) noexcept;
 
 /**
  * @see ProjectedDistance()
  */
-gcc_pure
+[[gnu::pure]]
 double
 ProjectedDistanceS(const GeoPoint &loc1, const GeoPoint &loc2,
-                   const GeoPoint &loc3);
-
-#endif
+                   const GeoPoint &loc3) noexcept;

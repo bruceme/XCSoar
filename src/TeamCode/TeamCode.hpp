@@ -1,35 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef	XCSOAR_TEAM_CODE_CALCULATION_HPP
-#define	XCSOAR_TEAM_CODE_CALCULATION_HPP
-
-#include "Util/StaticString.hxx"
-#include "Compiler.h"
+#include "util/StaticString.hxx"
 
 #include <type_traits>
-
-#include <tchar.h>
 
 struct GeoPoint;
 class Angle;
@@ -52,7 +28,7 @@ public:
    * Returns the current team code
    * @return Current team code
    */
-  const TCHAR *GetCode() const {
+  const char *GetCode() const {
     return code;
   }
 
@@ -62,7 +38,7 @@ public:
    * @param ref Reference waypoint
    * @return The team member's position
    */
-  gcc_pure
+  [[gnu::pure]]
   GeoPoint GetLocation(const GeoPoint ref) const;
 
   /**
@@ -88,9 +64,7 @@ public:
    * Updates the team code to the given code
    * @param _code The new team code
    */
-  void Update(const TCHAR* _code);
+  void Update(const char* _code);
 };
 
 static_assert(std::is_trivial<TeamCode>::value, "type is not trivial");
-
-#endif

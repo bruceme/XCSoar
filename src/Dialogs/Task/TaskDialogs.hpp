@@ -1,30 +1,23 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "InfoBoxes/Content/Alternate.hpp"
+#include "Engine/Waypoint/Ptr.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DIALOGS_TASK_HPP
-#define XCSOAR_DIALOGS_TASK_HPP
+#include <memory>
+#include <optional>
 
 class OrderedTask;
+class Waypoints;
+
+/**
+ * @param task if set, load this task into the dialog; if not set,
+ * show the current task
+ */
+void
+dlgTaskManagerShowModal(std::unique_ptr<OrderedTask> task);
 
 void
 dlgTaskManagerShowModal();
@@ -48,7 +41,7 @@ bool
 dlgTaskPointType(OrderedTask &task, unsigned index);
 
 bool
-dlgTaskOptionalStarts(OrderedTask &task);
+dlgTaskOptionalStarts(Waypoints &waypoints, OrderedTask &task);
 
 /**
  * Shows map display zoomed to target point
@@ -60,7 +53,23 @@ dlgTaskOptionalStarts(OrderedTask &task);
 void
 dlgTargetShowModal(int TargetPoint = -1);
 
+/**
+ * Shows the current alternates list.
+ *
+ * @param slot if set, the dialog exposes the manual/auto controls for
+ * the specified alternate InfoBox slot; otherwise it behaves as a
+ * generic alternates list dialog
+ */
 void
-dlgAlternatesListShowModal();
+dlgAlternatesListShowModal(Waypoints *waypoints,
+                           std::optional<AlternateInfoBoxSlot> slot =
+                             std::nullopt) noexcept;
 
-#endif
+/**
+ * Shows the current alternates list and returns the selected waypoint.
+ *
+ * This is the generic selection flow used by the manual alternate
+ * feature and does not expose slot-specific controls.
+ */
+WaypointPtr
+dlgAlternatesListSelectWaypoint() noexcept;

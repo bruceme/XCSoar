@@ -1,60 +1,103 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#ifdef __APPLE__
+#include <TargetConditionals.h>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
+#include <memory>
+#include <mutex>
 
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_APPLE_INTERNAL_SENSORS_HPP
-#define XCSOAR_APPLE_INTERNAL_SENSORS_HPP
-
-#include "Compiler.h"
+class SensorListener;
 
 #import <CoreLocation/CoreLocation.h>
 
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#import <CoreMotion/CoreMotion.h>
+#endif
+
+/**
+ * Objective-C delegate class that handles CoreLocation callbacks.
+ * Bridges between Apple's location services and XCSoar's SensorListener interface.
+ * Manages background execution and data format conversions.
+ */
 @interface LocationDelegate : NSObject <CLLocationManagerDelegate>
 {
-  @private unsigned int index;
+  @private SensorListener *listener;
   @private NSCalendar *gregorian_calendar;
+#if TARGET_OS_IPHONE
+  @private UIBackgroundTaskIdentifier background_task;
+#endif
 }
 
 -(instancetype) init __attribute__((unavailable()));
 
--(instancetype) init: (unsigned int) index_;
+-(instancetype) init: (SensorListener *) _listener;
 @end
 
-// InternalSensors implementation which uses the Apple CoreLocation API
+/**
+ * Cross-platform sensor interface implementation for Apple platforms.
+ * 
+ * Provides access to device sensors including:
+ * - GPS location services via CoreLocation
+ * - Barometric pressure sensing via CoreMotion (iOS only)
+ * 
+ * Handles platform-specific permission models and thread safety requirements.
+ * All sensor data is forwarded to the provided SensorListener interface.
+ * 
+ * @note macOS support is limited to location services only
+ * @note iOS includes additional barometric pressure support when available
+ */
 class InternalSensors {
-private:
-  unsigned int index;
+  SensorListener &listener;
   CLLocationManager *location_manager;
   LocationDelegate *location_delegate;
+#if TARGET_OS_IPHONE
+  /**
+   * CoreMotion may invoke an already queued altimeter handler after
+   * stopRelativeAltitudeUpdates() has returned.  The handler owns this state
+   * instead of capturing InternalSensors, so it can safely outlive this
+   * object.
+   */
+  struct AltimeterCallbackState {
+    std::mutex mutex;
+    InternalSensors *owner;
+    SensorListener *listener;
 
-  InternalSensors(unsigned int index);
+    AltimeterCallbackState(InternalSensors &_owner,
+                           SensorListener &_listener) noexcept
+      : owner(&_owner), listener(&_listener) {}
+  };
+
+  CMAltimeter *altimeter;
+  NSOperationQueue *altimeter_queue;
+  CMMotionActivityManager *motion_activity_manager;
+  NSOperationQueue *motion_activity_queue;
+  std::shared_ptr<AltimeterCallbackState> altimeter_callback_state;
+#endif
 
   void Init();
   void Deinit();
+  
+#if TARGET_OS_IPHONE
+  /**
+   * Initialize and start barometric pressure updates from device altimeter.
+   * Configures CMAltimeter with appropriate handler for pressure readings.
+   */
+  void StartAltimeterUpdates();
+#endif
 
 public:
+  /**
+   * Construct sensor interface with the specified listener.
+   * Automatically initializes all available sensors on the main thread.
+   * 
+   * @param _listener Target for sensor data callbacks
+   */
+  explicit InternalSensors(SensorListener &_listener);
   ~InternalSensors();
-  gcc_malloc
-  static InternalSensors *Create(unsigned int index);
 };
 
-#endif
+#endif // __APPLE__

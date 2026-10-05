@@ -1,14 +1,17 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -u
 
 import os, os.path
 import re
 import sys
 
-if len(sys.argv) != 14:
-    print("Usage: build.py TARGET_OUTPUT_DIR TARGET HOST_TRIPLET ACTUAL_HOST_TRIPLET ARCH_CFLAGS CPPFLAGS ARCH_LDFLAGS CC CXX AR ARFLAGS RANLIB STRIP", file=sys.stderr)
+if len(sys.argv) < 14 or len(sys.argv) > 15:
+    print("Usage: build.py LIB_PATH HOST_TRIPLET TARGET_IS_IOS ARCH_CFLAGS CPPFLAGS ARCH_LDFLAGS CC CXX AR ARFLAGS RANLIB STRIP WINDRES [ENABLE_SDL]", file=sys.stderr)
     sys.exit(1)
 
-target_output_dir, target, toolchain_host_triplet, actual_host_triplet, arch_cflags, cppflags, arch_ldflags, cc, cxx, ar, arflags, ranlib, strip = sys.argv[1:]
+lib_path, host_triplet, target_is_ios, arch_cflags, cppflags, arch_ldflags, cc, cxx, ar, arflags, ranlib, strip, windres = sys.argv[1:14]
+enable_sdl = sys.argv[14] if len(sys.argv) > 14 else ''
+target_is_ios = (target_is_ios == 'y') # convert to boolean
+enable_sdl = (enable_sdl == 'y') # convert to boolean
 
 # the path to the XCSoar sources
 xcsoar_path = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]) or '.', '..'))
@@ -17,96 +20,160 @@ sys.path[0] = os.path.join(xcsoar_path, 'build/python')
 # output directories
 from build.dirs import tarball_path, src_path
 
-target_output_dir = os.path.abspath(target_output_dir)
-
-lib_path = os.path.join(target_output_dir, 'lib')
-arch_path = os.path.join(lib_path, actual_host_triplet)
-build_path = os.path.join(arch_path, 'build')
-install_prefix = os.path.join(arch_path, 'root')
+lib_path = os.path.abspath(lib_path)
+build_path = os.path.join(lib_path, 'build')
+install_prefix = os.path.join(lib_path, host_triplet)
 
 if 'MAKEFLAGS' in os.environ:
     # build/make.mk adds "--no-builtin-rules --no-builtin-variables",
     # which breaks the zlib Makefile (and maybe others)
     del os.environ['MAKEFLAGS']
 
-class Toolchain:
-    def __init__(self, tarball_path, src_path, build_path, install_prefix,
-                 toolchain_arch, actual_arch, arch_cflags, cppflags,
-                 arch_ldflags, cc, cxx, ar, arflags, ranlib, strip):
-        self.tarball_path = tarball_path
-        self.src_path = src_path
-        self.build_path = build_path
-        self.install_prefix = install_prefix
-        self.toolchain_arch = toolchain_arch
-        self.actual_arch = actual_arch
-
-        self.cc = cc
-        self.cxx = cxx
-        self.ar = ar
-        self.arflags = arflags
-        self.ranlib = ranlib
-        self.strip = strip
-
-        common_flags = '-Os -g -ffunction-sections -fdata-sections -fvisibility=hidden ' + arch_cflags
-        self.cflags = common_flags
-        self.cxxflags = common_flags
-        self.cppflags = '-isystem ' + os.path.join(install_prefix, 'include') + ' -DNDEBUG ' + cppflags
-        self.ldflags = '-L' + os.path.join(install_prefix, 'lib') + ' ' + arch_ldflags
-        self.libs = ''
-
-        self.env = dict(os.environ)
-
-        # redirect pkg-config to use our root directory instead of the
-        # default one on the build host
-        self.env['PKG_CONFIG_LIBDIR'] = os.path.join(install_prefix, 'lib/pkgconfig')
-
-        # WORKAROUND: Under some circumstances, if QEMU User Emulation is
-        # installed on the build system, and enabled for binfmt_misc, it can
-        # break detection of cross compiling (at least autoconf's cross
-        # compiling detection), which can lead to undesired behaviour.
-        # Setting the following nonsense environment variable values should
-        # always circumvent QEMU User Emulation.
-        self.env['QEMU_CPU'] = 'Deep Thought'
-        self.env['QEMU_GUEST_BASE'] = '42'
+from build.toolchain import Toolchain, NativeToolchain
+toolchain = Toolchain(xcsoar_path, lib_path,
+                      tarball_path, src_path, build_path, install_prefix,
+                      host_triplet, target_is_ios,
+                      arch_cflags, cppflags, arch_ldflags, cc, cxx, ar, arflags,
+                      ranlib, strip, windres)
 
 # a list of third-party libraries to be used by XCSoar
 from build.libs import *
 
-if 'mingw32' in actual_host_triplet:
+# The pinned SDL2 build defaults to no Cocoa driver for iOS.  Enable the
+# desktop macOS video driver without changing the iOS configuration.
+if toolchain.is_darwin and not toolchain.is_target_ios:
+    sdl2.configure_args.append("-DSDL_COCOA=ON")
+    sdl2.configure_args.append("-DSDL_OPENGL=ON")
+    # SDL's EGL backend loads XCSoar's bundled ANGLE libraries at runtime.
+    sdl2.configure_args.append("-DSDL_LOADSO=ON")
+
+geotiff_enabled = os.environ.get('GEOTIFF', 'n') == 'y'
+use_angle_env = os.environ.get('USE_ANGLE', 'auto')
+if use_angle_env == 'auto':
+    use_angle = toolchain.is_darwin and not toolchain.is_target_ios
+else:
+    use_angle = (use_angle_env == 'y')
+
+thirdparty_projects = {
+    'binutils': binutils,
+    'linux-headers': linux_headers,
+    'gcc-bootstrap': gcc_bootstrap,
+    'musl': musl,
+    'gcc': gcc,
+    'zlib': zlib,
+    'fmt': libfmt,
+    'libsodium': libsodium,
+    'freetype': freetype,
+    'openssl': openssl,
+    'c-ares': cares,
+    'curl': curl,
+    'libpng': libpng,
+    'libjpeg': libjpeg,
+    'lua': lua,
+    'sqlite': sqlite3,
+    'proj': proj,
+    'libtiff': libtiff,
+    'libgeotiff': libgeotiff,
+    'libsalsa': libsalsa,
+    'libusb': libusb,
+    'simple-usbmodeswitch': simple_usbmodeswitch,
+    'sdl2': sdl2,
+    'angle': angle,
+}
+
+if toolchain.is_windows:
     thirdparty_libs = [
         zlib,
+        libfmt,
+        libsodium,
+        cares,
         curl,
         lua,
     ]
-elif re.match('(arm.*|aarch64)-apple-darwin', actual_host_triplet) is not None:
-    thirdparty_libs = [
-        curl,
-        lua,
-        proj,
-        libtiff,
-        libgeotiff,
-        sdl2
-    ]
-elif 'apple-darwin' in actual_host_triplet:
-    thirdparty_libs = [
-        lua,
-        proj,
-        libtiff,
-        libgeotiff,
-        sdl2
-    ]
-elif target == 'ANDROID':
-    thirdparty_libs = [
-        curl,
-        lua,
-        proj,
-        libtiff,
-        libgeotiff,
-    ]
-elif toolchain_host_triplet.endswith('-musleabihf'):
+    if use_angle:
+        thirdparty_libs += [
+            angle,
+        ]
+
+    # Add SDL2 and image/font prerequisites for OpenGL/ANGLE builds.
+    if enable_sdl:
+        thirdparty_libs.extend([
+            sqlite3,
+            freetype,
+            libpng,
+            libjpeg,
+            sdl2,
+        ])
+
+    if geotiff_enabled:
+        thirdparty_libs += [
+            sqlite3,
+            proj,
+            libtiff,
+            libgeotiff,
+            netcdf,
+        ]
+
+    # Some libraries (such as CURL) want to use the min()/max() macros
+    toolchain.cppflags = cppflags.replace('-DNOMINMAX', '')
+
+    # Explicitly disable _FORTIFY_SOURCE because it is broken with
+    # mingw.  This prevents some libraries such as libsodium to enable
+    # it.
+    toolchain.cppflags += ' -D_FORTIFY_SOURCE=0'
+elif toolchain.is_darwin:
     thirdparty_libs = [
         zlib,
+        libfmt,
+        libsodium,
+        cares,
+        curl,
+        lua,
+    ]
+    if use_angle:
+        thirdparty_libs += [
+            angle,
+        ]
+    thirdparty_libs += [
+        sdl2
+    ]
+    if geotiff_enabled:
+        thirdparty_libs += [
+            sqlite3,
+            proj,
+            libtiff,
+            libgeotiff,
+            netcdf,
+        ]
+elif toolchain.is_android:
+    thirdparty_libs = [
+        zlib,
+        libfmt,
+        libsodium,
+        openssl,
+        cares,
+        curl,
+        libpng,
+        lua,
+        sqlite3,
+        proj,
+        libtiff,
+        libgeotiff,
+        netcdf,
+    ]
+elif '-kobo-linux-' in host_triplet:
+    thirdparty_libs = [
+        binutils,
+        linux_headers,
+        gcc_bootstrap,
+        musl,
+        gcc,
+        zlib,
+        libfmt,
+        libsodium,
         freetype,
+        openssl,
+        cares,
         curl,
         libpng,
         libjpeg,
@@ -116,25 +183,41 @@ elif toolchain_host_triplet.endswith('-musleabihf'):
         simple_usbmodeswitch,
     ]
 else:
+    raise RuntimeError('Unrecognized target')
+
+package_selection = os.environ.get('THIRDPARTY_PACKAGES', 'auto')
+if package_selection != 'auto':
+    selected_names = {
+        name.strip()
+        for name in package_selection.split(',')
+        if name.strip()
+    }
+    if use_angle:
+        selected_names.add('angle')
+
+    unknown_names = selected_names - thirdparty_projects.keys()
+    if unknown_names:
+        raise RuntimeError(
+            'Unknown third-party package(s): ' + ', '.join(sorted(unknown_names))
+        )
+
+    available_projects = set(thirdparty_libs)
+    unsupported_names = {
+        name for name in selected_names
+        if thirdparty_projects[name] not in available_projects
+    }
+    if unsupported_names:
+        raise RuntimeError(
+            'Third-party package(s) unavailable for this target: ' +
+            ', '.join(sorted(unsupported_names))
+        )
+
+    selected_projects = {thirdparty_projects[name] for name in selected_names}
     thirdparty_libs = [
-        musl,
-        libstdcxx_musl_headers,
-        zlib,
-        freetype,
-        curl,
-        libpng,
-        libjpeg,
-        lua,
-        libsalsa,
-        libusb,
-        simple_usbmodeswitch,
+        project for project in thirdparty_libs if project in selected_projects
     ]
 
 # build the third-party libraries
-toolchain = Toolchain(tarball_path, src_path, build_path, install_prefix,
-                      toolchain_host_triplet, actual_host_triplet,
-                      arch_cflags, cppflags, arch_ldflags, cc, cxx, ar, arflags,
-                      ranlib, strip)
 for x in thirdparty_libs:
     if not x.is_installed(toolchain):
         x.build(toolchain)

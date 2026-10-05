@@ -1,32 +1,12 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_STATE_CLOCK_HPP
-#define XCSOAR_STATE_CLOCK_HPP
+#include "time/FloatDuration.hxx"
 
 #include <algorithm>
-
-#include <assert.h>
+#include <cassert>
 
 /**
  * Track how much time the aircraft was in a certain state
@@ -40,52 +20,50 @@ Copyright_License {
  */
 template<unsigned max_value, unsigned max_delta>
 class StateClock {
-  double value;
+  FloatDuration value;
 
 public:
   void Clear() {
-    value = 0;
+    value = {};
   }
 
   bool IsDefined() const {
-    assert(value >= 0);
+    assert(value.count() >= 0);
 
-    return value > 0;
+    return value.count() > 0;
   }
 
 private:
-  static double LimitDelta(double delta) {
-    assert(delta >= 0);
+  static constexpr FloatDuration LimitDelta(FloatDuration delta) noexcept {
+    assert(delta.count() >= 0);
 
-    return std::min(delta, double(max_delta));
+    return std::min(delta, FloatDuration{max_delta});
   }
 
 public:
-  void Add(double delta) {
-    assert(value >= 0);
-    assert(value <= double(max_value));
+  void Add(FloatDuration delta) noexcept {
+    assert(value.count() >= 0);
+    assert(value <= FloatDuration{max_value});
 
     value += LimitDelta(delta);
-    if (value > double(max_value))
-      value = double(max_value);
+    if (value > FloatDuration{max_value})
+      value = FloatDuration{max_value};
   }
 
-  void Subtract(double delta) {
-    assert(value >= 0);
-    assert(value <= double(max_value));
+  void Subtract(FloatDuration delta) noexcept {
+    assert(value.count() >= 0);
+    assert(value <= FloatDuration(max_value));
 
     value -= LimitDelta(delta);
-    if (value < 0)
-      value = 0;
+    if (value.count() < 0)
+      value = {};
   }
 
-  bool operator>=(double other) const {
-    assert(other > 0);
-    assert(value >= 0);
-    assert(value <= double(max_value));
+  constexpr bool operator>=(FloatDuration other) const noexcept {
+    assert(other.count() > 0);
+    assert(value.count() >= 0);
+    assert(value <= FloatDuration{max_value});
 
     return value >= other;
   }
 };
-
-#endif

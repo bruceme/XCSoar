@@ -1,67 +1,66 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Server.hpp"
 #include "Assemble.hpp"
 #include "Protocol.hpp"
 #include "Import.hpp"
-#include "OS/ByteOrder.hpp"
-#include "Util/CRC.hpp"
+#include "util/ByteOrder.hxx"
+#include "net/SocketError.hxx"
+#include "net/UniqueSocketDescriptor.hxx"
+#include "util/CRC16CCITT.hpp"
+
+static UniqueSocketDescriptor
+CreateBindUDP(SocketAddress address)
+{
+  UniqueSocketDescriptor s;
+  if (!s.Create(address.GetFamily(), SOCK_DGRAM, 0))
+    throw MakeSocketError("Failed to create socket");
+
+  /* Linux dual-stack: receive IPv4 and IPv6 on one socket. */
+#ifndef _WIN32
+  if (address.GetFamily() == AF_INET6)
+    s.SetV6Only(false);
+#endif
+
+  if (!s.Bind(address))
+    throw MakeSocketError("Failed to connect socket");
+
+  return s;
+}
 
 namespace SkyLinesTracking {
 
-Server::Server(boost::asio::io_service &io_service,
-               boost::asio::ip::udp::endpoint endpoint)
-  :socket(io_service, endpoint)
+Server::Server(EventLoop &event_loop,
+               SocketAddress server_address)
+  :socket(event_loop, BIND_THIS_METHOD(OnSocketReady),
+          CreateBindUDP(server_address).Release())
 {
-  AsyncReceive();
+  socket.ScheduleRead();
 }
 
 Server::~Server()
 {
-  if (socket.is_open()) {
-    socket.cancel();
-    socket.close();
-  }
+  socket.Close();
 }
 
 void
-Server::SendBuffer(const boost::asio::ip::udp::endpoint &endpoint,
-                   boost::asio::const_buffer data)
+Server::SendBuffer(SocketAddress address,
+                   std::span<const std::byte> buffer) noexcept
 {
-  // TODO: use async_send_to()?
-
   try {
-    socket.send_to(boost::asio::const_buffers_1(data), endpoint, 0);
+    ssize_t nbytes = socket.GetSocket().WriteNoWait(buffer, address);
+    if (nbytes < 0)
+      throw MakeSocketError("Failed to send");
   } catch (...) {
-    OnSendError(endpoint, std::current_exception());
+    OnSendError(address, std::current_exception());
   }
 }
 
 void
 Server::OnPing(const Client &client, unsigned id)
 {
-  SendPacket(client.endpoint, MakeAck(client.key, id, 0));
+  SendPacket(client.address, MakeAck(client.key, id, 0));
 }
 
 inline void
@@ -107,7 +106,11 @@ Server::OnDatagramReceived(Client &&client,
           : ::GeoPoint::Invalid(),
           fix.flags & ToBE32(FixPacket::FLAG_ALTITUDE)
           ? (int16_t)FromBE16(fix.altitude)
-          : -1);
+          : -1,
+          fix.flags & ToBE32(FixPacket::FLAG_TRACK)
+          ? unsigned(FromBE16(fix.track))
+          : 0u,
+          (fix.flags & ToBE32(FixPacket::FLAG_TRACK)) != 0);
     break;
 
   case TRAFFIC_REQUEST:
@@ -170,33 +173,27 @@ Server::OnDatagramReceived(Client &&client,
 }
 
 void
-Server::OnReceive(const boost::system::error_code &ec, size_t size)
-{
+Server::OnSocketReady(unsigned) noexcept
+try {
   // TODO: use recvmmsg() on Linux
 
-  if (ec) {
-    if (ec == boost::asio::error::operation_aborted)
-      return;
+  Client client;
+  socklen_t address_size = sizeof(client.address);
+  char buffer[4096];
 
-    socket.close();
+  ssize_t nbytes = recvfrom(socket.GetSocket().Get(), buffer, sizeof(buffer),
+                            MSG_DONTWAIT,
+                            client.address, &address_size);
+  if (nbytes < 0)
+    throw MakeSocketError("Failed to receive");
 
-    OnError(std::make_exception_ptr(boost::system::system_error(ec)));
-    return;
-  }
+  client.address.SetSize(address_size);
+  // TODO: set client.key
 
-  OnDatagramReceived(std::move(client_buffer), buffer, size);
-
-  AsyncReceive();
-}
-
-void
-Server::AsyncReceive()
-{
-  socket.async_receive_from(boost::asio::buffer(buffer, sizeof(buffer)),
-                            client_buffer.endpoint,
-                            std::bind(&Server::OnReceive, this,
-                                      std::placeholders::_1,
-                                      std::placeholders::_2));
+  OnDatagramReceived(std::move(client), buffer, nbytes);
+} catch (...) {
+  socket.Close();
+  OnError(std::current_exception());
 }
 
 }

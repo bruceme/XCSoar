@@ -1,11 +1,9 @@
 # Build rules for the OS specific utility/abstraction library
 
-OS_SRC_DIR = $(SRC)/OS
+OS_SRC_DIR = $(SRC)/system
 
 OS_SOURCES := \
-	$(OS_SRC_DIR)/Clock.cpp \
-	$(OS_SRC_DIR)/FileDescriptor.cxx \
-	$(OS_SRC_DIR)/FileMapping.cpp \
+	$(OS_SRC_DIR)/EventPipe.cxx \
 	$(OS_SRC_DIR)/FileUtil.cpp \
 	$(OS_SRC_DIR)/RunFile.cpp \
 	$(OS_SRC_DIR)/Path.cpp \
@@ -13,13 +11,31 @@ OS_SOURCES := \
 	$(OS_SRC_DIR)/Process.cpp \
 	$(OS_SRC_DIR)/SystemLoad.cpp
 
-ifeq ($(HAVE_POSIX),y)
+ifeq ($(TARGET_IS_LINUX),y)
 OS_SOURCES += \
-	$(OS_SRC_DIR)/EventPipe.cpp
+	$(OS_SRC_DIR)/EpollFD.cxx \
+	$(OS_SRC_DIR)/EventFD.cxx \
+	$(OS_SRC_DIR)/SignalFD.cxx
+endif
+
+ifeq ($(TARGET_IS_KOBO),y)
+OS_SOURCES += \
+	$(SRC)/Kobo/Model.cpp
+endif
+
+OS_DEPENDS = UTIL
+
+ifeq ($(HAVE_POSIX),n)
+# EventPipe.cxx uses SocketDescriptor on Windows
+OS_DEPENDS += LIBNET
+
+OS_SOURCES += \
+	$(OS_SRC_DIR)/UTF8Win32.cpp
 endif
 
 $(eval $(call link-library,libos,OS))
 
 ifeq ($(HAVE_POSIX),n)
 OS_LDLIBS += -lws2_32
+OS_LDLIBS += -lwininet
 endif

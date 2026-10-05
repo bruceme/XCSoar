@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "VegaDialogs.hpp"
 #include "Schemes.hpp"
@@ -45,26 +25,26 @@ Copyright_License {
 #include "Look/DialogLook.hpp"
 #include "Operation/MessageOperationEnvironment.hpp"
 
-static const TCHAR *const captions[] = {
-  _T(" 1 Hardware"),
-  _T(" 2 Calibration"),
-  _T(" 3 Audio Modes"),
-  _T(" 4 Deadband"),
-  _T(" 5 Tones: Cruise Faster"),
-  _T(" 6 Tones: Cruise Slower"),
-  _T(" 7 Tones: Cruise in Lift"),
-  _T(" 8 Tones: Circling, climbing fast"),
-  _T(" 9 Tones: Circling, climbing slow"),
-  _T("10 Tones: Circling, descending"),
-  _T("11 Vario flight logger"),
-  _T("12 Audio mixer"),
-  _T("13 FLARM Alerts"),
-  _T("14 FLARM Identification"),
-  _T("15 FLARM Repeats"),
-  _T("16 Alerts"),
-  _T("17 Airframe Limits"),
-  _T("18 Audio Schemes"),
-  _T("19 Display"),
+static const char *const captions[] = {
+  " 1 Hardware",
+  " 2 Calibration",
+  " 3 Audio Modes",
+  " 4 Deadband",
+  " 5 Tones: Cruise Faster",
+  " 6 Tones: Cruise Slower",
+  " 7 Tones: Cruise in Lift",
+  " 8 Tones: Circling, climbing fast",
+  " 9 Tones: Circling, climbing slow",
+  "10 Tones: Circling, descending",
+  "11 Vario flight logger",
+  "12 Audio mixer",
+  "13 FLARM Alerts",
+  "14 FLARM Identification",
+  "15 FLARM Repeats",
+  "16 Alerts",
+  "17 Airframe Limits",
+  "18 Audio Schemes",
+  "19 Display",
 };
 
 static const char *const audio_pages[] = {
@@ -81,12 +61,7 @@ static VegaDevice *device;
 static bool changed, dirty;
 
 class VegaConfigurationExtraButtons final
-  : public NullWidget, ActionListener {
-  enum Buttons {
-    DEMO,
-    SAVE,
-  };
-
+  : public NullWidget {
   struct Layout {
     PixelRect demo, save;
 
@@ -112,8 +87,8 @@ public:
 
 protected:
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override {
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override {
     Layout layout(rc);
 
     WindowStyle style;
@@ -122,23 +97,25 @@ protected:
 
     const auto &button_look = dialog.GetLook().button;
     demo_button.Create(parent, button_look, _("Demo"),
-                       layout.demo, style, *this, DEMO);
+                       layout.demo, style,
+                       [this](){ OnDemo(); });
     save_button.Create(parent, button_look, _("Save"),
-                       layout.save, style, *this, SAVE);
+                       layout.save, style,
+                       [this](){ OnSave(); });
   }
 
-  virtual void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     Layout layout(rc);
     demo_button.MoveAndShow(layout.demo);
     save_button.MoveAndShow(layout.save);
   }
 
-  virtual void Hide() override {
+  void Hide() noexcept override {
     demo_button.FastHide();
     save_button.FastHide();
   }
 
-  virtual void Move(const PixelRect &rc) override {
+  void Move(const PixelRect &rc) noexcept override {
     Layout layout(rc);
     demo_button.Move(layout.demo);
     save_button.Move(layout.save);
@@ -147,26 +124,13 @@ protected:
 private:
   void OnDemo();
   void OnSave();
-
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override {
-    switch (id) {
-    case DEMO:
-      OnDemo();
-      break;
-
-    case SAVE:
-      OnSave();
-      break;
-    }
-  }
 };
 
 static void
 SetParametersScheme(PagerWidget &pager, int schemetype)
 {
-  if(ShowMessageBox(_("Set new audio scheme?  Old values will be lost."),
-                 _T("Vega"),
+  if(ShowMessageBox(_("Set new audio scheme? Old values will be lost."),
+                 "Vega",
                  MB_YESNO | MB_ICONQUESTION) != IDYES)
     return;
 
@@ -179,6 +143,12 @@ SetParametersScheme(PagerWidget &pager, int schemetype)
     pager.PrepareWidget(4 + i);
     ((VegaAudioParametersWidget &)pager.GetWidget(4 + i)).LoadScheme(scheme.audio[i]);
   }
+}
+
+static auto
+MakeSetParametersScheme(PagerWidget &pager, int schemetype) noexcept
+{
+  return [&pager, schemetype](){ SetParametersScheme(pager, schemetype); };
 }
 
 static void
@@ -199,8 +169,15 @@ VegaConfigurationExtraButtons::OnSave()
 
   // make sure changes are sent to device
   MessageOperationEnvironment env;
-  if (dirty && device->SendSetting("StoreToEeprom", 2, env))
-    dirty = false;
+  if (dirty) {
+    try {
+      device->SendSetting("StoreToEeprom", 2, env);
+      dirty = false;
+    } catch (OperationCancelled) {
+    } catch (...) {
+      env.SetError(std::current_exception());
+    }
+  }
 }
 
 inline void
@@ -213,7 +190,7 @@ VegaConfigurationExtraButtons::OnDemo()
   dlgVegaDemoShowModal();
 }
 
-class VegaSchemeButtonsPage : public RowFormWidget, ActionListener {
+class VegaSchemeButtonsPage : public RowFormWidget {
   PagerWidget &pager;
 
 public:
@@ -221,18 +198,13 @@ public:
     :RowFormWidget(look), pager(_pager) {}
 
   /* methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) {
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override {
     RowFormWidget::Prepare(parent, rc);
 
-    AddButton(_T("Vega"), *this, 0);
-    AddButton(_T("Borgelt"), *this, 1);
-    AddButton(_T("Cambridge"), *this, 2);
-    AddButton(_T("Zander"), *this, 3);
-  }
-
-  /* methods from ActionListener */
-  virtual void OnAction(int id) {
-    SetParametersScheme(pager, id);
+    AddButton("Vega", MakeSetParametersScheme(pager, 0));
+    AddButton("Borgelt", MakeSetParametersScheme(pager, 1));
+    AddButton("Cambridge", MakeSetParametersScheme(pager, 2));
+    AddButton("Zander", MakeSetParametersScheme(pager, 3));
   }
 };
 
@@ -241,31 +213,31 @@ FillPager(PagerWidget &pager)
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  pager.Add(new VegaParametersWidget(look, *device, hardware_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, calibration_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, audio_mode_parameters));
-  pager.Add(new VegaParametersWidget(look, *device,
-                                     audio_deadband_parameters));
-  pager.Add(new VegaAudioParametersWidget(look, *device, "CruiseFaster"));
-  pager.Add(new VegaAudioParametersWidget(look, *device, "CruiseSlower"));
-  pager.Add(new VegaAudioParametersWidget(look, *device, "CruiseLift"));
-  pager.Add(new VegaAudioParametersWidget(look, *device,
-                                          "CirclingClimbingHi"));
-  pager.Add(new VegaAudioParametersWidget(look, *device,
-                                          "CirclingClimbingLow"));
-  pager.Add(new VegaAudioParametersWidget(look, *device,
-                                          "CirclingDescending"));
-  pager.Add(new VegaParametersWidget(look, *device, logger_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, mixer_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, flarm_alert_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, flarm_id_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, flarm_repeat_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, alert_parameters));
-  pager.Add(new VegaParametersWidget(look, *device, limit_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, hardware_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, calibration_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, audio_mode_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device,
+                                                   audio_deadband_parameters));
+  pager.Add(std::make_unique<VegaAudioParametersWidget>(look, *device, "CruiseFaster"));
+  pager.Add(std::make_unique<VegaAudioParametersWidget>(look, *device, "CruiseSlower"));
+  pager.Add(std::make_unique<VegaAudioParametersWidget>(look, *device, "CruiseLift"));
+  pager.Add(std::make_unique<VegaAudioParametersWidget>(look, *device,
+                                                        "CirclingClimbingHi"));
+  pager.Add(std::make_unique<VegaAudioParametersWidget>(look, *device,
+                                                        "CirclingClimbingLow"));
+  pager.Add(std::make_unique<VegaAudioParametersWidget>(look, *device,
+                                                        "CirclingDescending"));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, logger_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, mixer_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, flarm_alert_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, flarm_id_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, flarm_repeat_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, alert_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, limit_parameters));
 
-  pager.Add(new VegaSchemeButtonsPage(pager, look));
+  pager.Add(std::make_unique<VegaSchemeButtonsPage>(pager, look));
 
-  pager.Add(new VegaParametersWidget(look, *device, display_parameters));
+  pager.Add(std::make_unique<VegaParametersWidget>(look, *device, display_parameters));
 }
 
 bool
@@ -276,22 +248,20 @@ dlgConfigurationVarioShowModal(Device &_device)
 
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
+  TWidgetDialog<ArrowPagerWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           look, _("Vario Configuration"));
+  dialog.SetWidget(look.button,
+                   dialog.MakeModalResultCallback(mrOK),
+                   std::make_unique<VegaConfigurationExtraButtons>(dialog));
+  FillPager(dialog.GetWidget());
 
-  ArrowPagerWidget widget(dialog, look.button,
-                          new VegaConfigurationExtraButtons(dialog));
-  FillPager(widget);
-
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Vario Configuration"),
-                    &widget);
-
-  widget.SetPageFlippedCallback([&dialog, &widget](){
-      UpdateCaption(dialog, widget.GetCurrentIndex());
-    });
-  UpdateCaption(dialog, widget.GetCurrentIndex());
+  dialog.GetWidget().SetPageFlippedCallback([&dialog](){
+    UpdateCaption(dialog, dialog.GetWidget().GetCurrentIndex());
+  });
+  UpdateCaption(dialog, dialog.GetWidget().GetCurrentIndex());
 
   dialog.ShowModal();
-  dialog.StealWidget();
 
   return changed || dialog.GetChanged();
 }

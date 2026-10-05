@@ -1,0 +1,17 @@
+---
+version: 2
+
+build:
+  os: ubuntu-24.04
+  apt_packages:
+    - graphviz
+  tools:
+    python: "3.12"
+
+sphinx:
+  # Path to your Sphinx configuration file.
+  configuration: doc/conf.py
+
+python:
+  install:
+    - requirements: doc/requirements.txt

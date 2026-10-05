@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskDialogs.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -30,46 +10,54 @@ Copyright_License {
 #include "Form/Frame.hpp"
 #include "Form/Button.hpp"
 #include "Form/CheckBox.hpp"
-#include "Widget/DockWindow.hpp"
+#include "Form/Edit.hpp"
+#include "Form/DataField/Enum.hpp"
+#include "Form/DataField/Listener.hpp"
+#include "Widget/ManagedWidget.hpp"
 #include "Widget/PanelWidget.hpp"
 #include "Screen/Layout.hpp"
-#include "Screen/Font.hpp"
+#include "ui/canvas/Font.hpp"
 #include "Components.hpp"
 #include "Units/Units.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
+#include "Engine/Task/Ordered/Points/OrderedTaskPoint.hpp"
 #include "Engine/Task/Ordered/Points/ASTPoint.hpp"
 #include "Engine/Task/Factory/AbstractTaskFactory.hpp"
+#include "Task/Factory/TaskPointFactoryType.hpp"
 #include "Task/ObservationZones/LineSectorZone.hpp"
 #include "Task/ObservationZones/CylinderZone.hpp"
 #include "Task/ObservationZones/KeyholeZone.hpp"
 #include "Task/TypeStrings.hpp"
 #include "Gauge/TaskView.hpp"
-#include "Compiler.h"
+#include "util/Compiler.h"
 #include "UIGlobals.hpp"
 #include "Look/MapLook.hpp"
 #include "Look/DialogLook.hpp"
 #include "Interface.hpp"
 #include "Language/Language.hpp"
+#include "ui/event/KeyCode.hpp"
 #include "Widgets/CylinderZoneEditWidget.hpp"
 #include "Widgets/SectorZoneEditWidget.hpp"
 #include "Widgets/LineSectorZoneEditWidget.hpp"
 #include "Widgets/KeyholeZoneEditWidget.hpp"
+#include "DataComponents.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scissor.hpp"
+#include "ui/canvas/opengl/Scissor.hpp"
 #endif
+
+namespace {
+
+/* Window::Move asserts a non-empty rect; ApplyLayout replaces this
+   once the OZ form's minimum height is known. */
+constexpr PixelSize OZ_PREPARE_PLACEHOLDER{1, 1};
+
+} // namespace
 
 class TaskPointWidget final
   : public NullWidget,
-    ObservationZoneEditWidget::Listener,
-    ActionListener {
-  enum Buttons {
-    PREVIOUS, NEXT,
-    DETAILS, REMOVE, RELOCATE,
-    CHANGE_TYPE,
-    OPTIONAL_STARTS,
-    SCORE_EXIT,
-  };
+    DataFieldListener,
+    ObservationZoneEditWidget::Listener {
 
   struct Layout {
     PixelRect waypoint_panel;
@@ -77,29 +65,36 @@ class TaskPointWidget final
     PixelRect waypoint_details, waypoint_remove, waypoint_relocate;
 
     PixelRect tp_panel;
-    PixelRect type_label, change_type;
+    PixelRect type_field;
     PixelRect map, properties;
     PixelRect optional_starts, score_exit;
 
-    explicit Layout(PixelRect rc, const DialogLook &look);
+    /**
+     * @param properties_height portrait-only: height of the active OZ
+     *        form (0 when none); landscape ignores this and uses a
+     *        fixed side column
+     */
+    Layout(PixelRect rc, const DialogLook &look,
+           unsigned properties_height) noexcept;
   };
 
   OrderedTask &ordered_task;
   bool task_modified;
   unsigned active_index;
+  bool loading_type = false;
 
   WidgetDialog &dialog;
   const DialogLook &look;
+  PixelRect position{};
 
   PanelControl waypoint_panel;
   WndFrame waypoint_name;
   Button waypoint_details, waypoint_remove, waypoint_relocate;
 
   PanelControl tp_panel;
-  WndFrame type_label;
-  Button change_type;
+  WndProperty type_field;
   WndOwnerDrawFrame map;
-  DockWindow properties_dock;
+  ManagedWidget properties_widget{nullptr};
 
   Button optional_starts;
   CheckBoxControl score_exit;
@@ -112,33 +107,65 @@ public:
     :ordered_task(_task), task_modified(false), active_index(_index),
      dialog(_dialog), look(dialog.GetLook()),
      waypoint_name(look),
-     type_label(look) {}
+     type_field(look) {}
 
-  bool IsModified() const {
+  bool IsModified() const noexcept {
     return task_modified;
   }
 
   void CreateButtons() {
-    previous_button = dialog.AddSymbolButton(_T("<"), *this, PREVIOUS);
-    next_button = dialog.AddSymbolButton(_T(">"), *this, NEXT);
+    previous_button = dialog.AddSymbolButton("<", [this](){
+      OnPreviousClicked();
+    });
+
+    next_button = dialog.AddSymbolButton(">", [this](){
+      OnNextClicked();
+    });
   }
 
 private:
-  void MoveChildren(const Layout &layout) {
+  [[nodiscard]]
+  unsigned GetPropertiesFormHeight() noexcept {
+    if (!properties_widget.IsPrepared())
+      return 0;
+
+    return properties_widget.Get()->GetMinimumSize().height;
+  }
+
+  Layout MakeLayout(const PixelRect &rc) noexcept {
+    return Layout(rc, look, GetPropertiesFormHeight());
+  }
+
+  void MoveChildren(const Layout &layout) noexcept {
     waypoint_name.Move(layout.waypoint_name);
     waypoint_details.Move(layout.waypoint_details);
     waypoint_remove.Move(layout.waypoint_remove);
     waypoint_relocate.Move(layout.waypoint_relocate);
 
-    type_label.Move(layout.type_label);
-    change_type.Move(layout.change_type);
+    type_field.Move(layout.type_field);
     map.Move(layout.map);
-    properties_dock.Move(layout.properties);
+    if (layout.properties.GetHeight() > 0) {
+      properties_widget.Move(layout.properties);
+      if (!properties_widget.IsVisible())
+        properties_widget.Show();
+    } else if (properties_widget.IsVisible())
+      properties_widget.Hide();
     optional_starts.Move(layout.optional_starts);
     score_exit.Move(layout.score_exit);
   }
 
-  void RefreshView();
+  void ApplyLayout(const PixelRect &rc) noexcept {
+    position = rc;
+    const Layout layout = MakeLayout(rc);
+    waypoint_panel.Move(layout.waypoint_panel);
+    tp_panel.Move(layout.tp_panel);
+    MoveChildren(layout);
+  }
+
+  void RecreateOzForm() noexcept;
+  void RefreshControls() noexcept;
+  void RefreshView() noexcept;
+  void LoadTypeField() noexcept;
   bool ReadValues();
 
   void PaintMap(Canvas &canvas, const PixelRect &rc);
@@ -146,74 +173,69 @@ private:
   void OnDetailsClicked();
   void OnRemoveClicked();
   void OnRelocateClicked();
-  void OnTypeClicked();
   void OnPreviousClicked();
   void OnNextClicked();
   void OnOptionalStartsClicked();
 
 public:
   /* virtual methods from class Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Unprepare() noexcept override;
 
-  void Unprepare() override {
-    properties_dock.DeleteWidget();
-  }
-
-  bool Save(bool &changed) override {
+  bool Save(bool &changed) noexcept override {
     ReadValues();
     changed = task_modified;
     return true;
   }
 
-  void Show(const PixelRect &rc) override {
-    const Layout layout(rc, look);
+  void Show(const PixelRect &rc) noexcept override {
+    position = rc;
+    const Layout layout = MakeLayout(rc);
     waypoint_panel.MoveAndShow(layout.waypoint_panel);
     tp_panel.MoveAndShow(layout.tp_panel);
     MoveChildren(layout);
   }
 
-  void Hide() override {
+  void Hide() noexcept override {
     waypoint_panel.Hide();
     tp_panel.Hide();
   }
 
-  void Move(const PixelRect &rc) override {
-    const Layout layout(rc, look);
-    waypoint_panel.Move(layout.waypoint_panel);
-    tp_panel.Move(layout.tp_panel);
-    MoveChildren(layout);
+  void Move(const PixelRect &rc) noexcept override {
+    ApplyLayout(rc);
   }
 
-private:
-  /* virtual methods from class ObservationZoneEditWidget::Listener */
-  void OnModified(ObservationZoneEditWidget &widget) override;
+  /* Like #TargetWidget: Left/Right flip the active task point (< / >). */
+  bool KeyPress(unsigned key_code) noexcept override;
 
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override;
+private:
+  /* virtual methods from DataFieldListener */
+  void OnModified(DataField &df) noexcept override;
+
+  /* virtual methods from class ObservationZoneEditWidget::Listener */
+  void OnModified(ObservationZoneEditWidget &widget) noexcept override;
 };
 
-TaskPointWidget::Layout::Layout(PixelRect rc, const DialogLook &look)
+TaskPointWidget::Layout::Layout(PixelRect rc, const DialogLook &look,
+                                unsigned properties_height) noexcept
 {
   const unsigned padding = ::Layout::GetTextPadding();
   const unsigned font_height = look.text_font.GetHeight();
   const unsigned button_height = ::Layout::GetMaximumControlHeight();
+  /* Decide before cutting the waypoint header / Type / action
+     buttons: those shrink the map area until it is often wider than
+     tall even on a portrait dialog, which wrongly kept the side form. */
+  const bool landscape = rc.GetWidth() > rc.GetHeight();
 
-  waypoint_panel = rc;
-  waypoint_panel.left += padding;
-  waypoint_panel.right -= padding;
-  waypoint_panel.top += padding;
-  waypoint_panel.bottom = waypoint_panel.top + 3 * padding
-    + font_height + button_height;
+  waypoint_panel = rc.CutTopSafe(font_height + button_height + 5 * padding)
+    .WithPadding(padding);
 
-  const PixelRect waypoint_rc(padding, padding,
-                              waypoint_panel.GetWidth() - padding,
-                              waypoint_panel.GetHeight() - padding);
+  auto waypoint_rc = PixelRect{waypoint_panel.GetSize()}.WithPadding(padding);
 
-  waypoint_name = waypoint_rc;
-  waypoint_name.bottom = waypoint_name.top + font_height + 2 * padding;
+  waypoint_name = waypoint_rc.CutTopSafe(font_height + 2 * padding);
 
-  PixelRect waypoint_buttons(waypoint_rc);
-  waypoint_buttons.top = waypoint_name.bottom + padding;
+  auto waypoint_buttons = waypoint_rc;
+  waypoint_buttons.top += padding;
 
   waypoint_details = waypoint_remove = waypoint_relocate = waypoint_buttons;
   waypoint_details.right = waypoint_remove.left =
@@ -221,39 +243,38 @@ TaskPointWidget::Layout::Layout(PixelRect rc, const DialogLook &look)
   waypoint_remove.right = waypoint_relocate.left =
     (waypoint_buttons.left + 2 * waypoint_buttons.right) / 3;
 
-  tp_panel = rc;
-  tp_panel.left += padding;
-  tp_panel.right -= padding;
-  tp_panel.top = waypoint_panel.bottom + padding;
-  tp_panel.bottom -= padding;
+  tp_panel = rc.WithPadding(padding);
 
-  const PixelRect tp_rc(padding, padding,
-                        tp_panel.GetWidth() - padding,
-                        tp_panel.GetHeight() - padding);
+  auto tp_rc = PixelRect{tp_panel.GetSize()}.WithPadding(padding);
 
-  PixelRect type_rc = tp_rc;
-  type_rc.bottom = type_rc.top + button_height;
+  type_field = tp_rc.CutTopSafe(button_height);
 
-  type_label = change_type = type_rc;
-  type_label.right = change_type.left = type_rc.right
-    - look.button.font->TextSize(_("Change Type")).cx - 3 * padding;
-
-  PixelRect buttons_rc = tp_rc;
-  buttons_rc.top = buttons_rc.bottom - button_height;
+  PixelRect buttons_rc = tp_rc.CutBottomSafe(button_height);
   optional_starts = score_exit = buttons_rc;
 
   map = tp_rc;
-  map.top = type_rc.bottom;
-  map.bottom = buttons_rc.top - padding;
-  properties = map;
-
-  map.right = properties.left = map.left + ::Layout::Scale(90);
+  if (properties_height > 0) {
+    if (landscape) {
+      /* landscape: OZ form beside the map */
+      const unsigned landscape_oz_width = ::Layout::Scale(120);
+      properties = map.CutRightSafe(landscape_oz_width);
+    } else {
+      /* portrait: only as tall as the active OZ fields */
+      properties = map.CutBottomSafe(std::min(properties_height,
+                                              tp_rc.GetHeight() / 2));
+    }
+  } else {
+    /* No OZ form (e.g. fixed FAI sector): map keeps the full area.
+       Leave properties empty; MoveChildren hides the widget. */
+    properties.SetEmpty();
+  }
 }
 
 void
-TaskPointWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+TaskPointWidget::Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept
 {
-  const Layout layout(rc, look);
+  position = rc;
+  const Layout layout = MakeLayout(rc);
 
   WindowStyle panel_style;
   panel_style.Hide();
@@ -263,93 +284,64 @@ TaskPointWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
   WindowStyle button_style;
   button_style.TabStop();
 
-  WindowStyle dock_style;
-  dock_style.ControlParent();
-
-  waypoint_panel.Create(parent, look, layout.waypoint_panel, panel_style);
+  waypoint_panel.Create(parent, layout.waypoint_panel, panel_style);
   waypoint_name.Create(waypoint_panel, layout.waypoint_name);
   waypoint_details.Create(waypoint_panel, look.button, _("Details"),
                           layout.waypoint_details,
-                          button_style, *this, DETAILS);
+                          button_style, [this](){ OnDetailsClicked(); });
   waypoint_remove.Create(waypoint_panel, look.button, _("Remove"),
                          layout.waypoint_remove,
-                         button_style, *this, REMOVE);
+                         button_style, [this](){ OnRemoveClicked(); });
   waypoint_relocate.Create(waypoint_panel, look.button, _("Relocate"),
                            layout.waypoint_relocate,
-                           button_style, *this, RELOCATE);
+                           button_style, [this](){ OnRelocateClicked(); });
 
-  tp_panel.Create(parent, look, layout.tp_panel, panel_style);
+  tp_panel.Create(parent, layout.tp_panel, panel_style);
 
-  type_label.Create(tp_panel, layout.type_label);
-  change_type.Create(tp_panel, look.button, _("Change Type"),
-                     layout.change_type,
-                     button_style, *this, CHANGE_TYPE);
+  /* Same control shape as RowFormWidget::AddEnum in config panels. */
+  type_field.Create(tp_panel, layout.type_field, _("Type"),
+                    0, button_style);
+  type_field.SetCaptionWidth(type_field.GetRecommendedCaptionWidth());
+  type_field.SetDataField(new DataFieldEnum(this));
   map.Create(tp_panel, layout.map, WindowStyle(),
              [this](Canvas &canvas, const PixelRect &rc){
                PaintMap(canvas, rc);
              });
-  properties_dock.Create(tp_panel, layout.properties, dock_style);
+
+  properties_widget.Initialise(tp_panel,
+                               PixelRect{OZ_PREPARE_PLACEHOLDER});
   optional_starts.Create(tp_panel, look.button, _("Enable Alternate Starts"),
                          layout.optional_starts, button_style,
-                         *this, OPTIONAL_STARTS);
+                         [this](){ OnOptionalStartsClicked(); });
   score_exit.Create(tp_panel, look, _("Score exit"),
-                    layout.score_exit, button_style,
-                    *this, SCORE_EXIT);
+                    layout.score_exit, button_style, {});
 
   RefreshView();
 }
 
 void
-TaskPointWidget::OnAction(int id)
+TaskPointWidget::Unprepare() noexcept
 {
-    switch (id) {
-    case PREVIOUS:
-      OnPreviousClicked();
-      break;
-
-    case NEXT:
-      OnNextClicked();
-      break;
-
-    case DETAILS:
-      OnDetailsClicked();
-      break;
-
-    case REMOVE:
-      OnRemoveClicked();
-      break;
-
-    case RELOCATE:
-      OnRelocateClicked();
-      break;
-
-    case CHANGE_TYPE:
-      OnTypeClicked();
-      break;
-
-    case OPTIONAL_STARTS:
-      OnOptionalStartsClicked();
-      break;
-    }
+  properties_widget.Clear();
 }
 
-static ObservationZoneEditWidget *
+static std::unique_ptr<ObservationZoneEditWidget>
 CreateObservationZoneEditWidget(ObservationZonePoint &oz, bool is_fai_general)
 {
   switch (oz.GetShape()) {
   case ObservationZone::Shape::SECTOR:
   case ObservationZone::Shape::ANNULAR_SECTOR:
-  case ObservationZone::Shape::SYMMETRIC_QUADRANT:
-    return new SectorZoneEditWidget((SectorZone &)oz);
+  case ObservationZone::Shape::SYMMETRIC_SECTOR:
+    return std::make_unique<SectorZoneEditWidget>((SectorZone &)oz);
 
   case ObservationZone::Shape::LINE:
-    return new LineSectorZoneEditWidget((LineSectorZone &)oz, !is_fai_general);
+    return std::make_unique<LineSectorZoneEditWidget>((LineSectorZone &)oz, !is_fai_general);
 
   case ObservationZone::Shape::CYLINDER:
-    return new CylinderZoneEditWidget((CylinderZone &)oz, !is_fai_general);
+    return std::make_unique<CylinderZoneEditWidget>((CylinderZone &)oz, !is_fai_general);
 
   case ObservationZone::Shape::CUSTOM_KEYHOLE:
-    return new KeyholeZoneEditWidget((KeyholeZone &)oz);
+    return std::make_unique<KeyholeZoneEditWidget>((KeyholeZone &)oz);
 
   case ObservationZone::Shape::FAI_SECTOR:
   case ObservationZone::Shape::DAEC_KEYHOLE:
@@ -364,25 +356,43 @@ CreateObservationZoneEditWidget(ObservationZonePoint &oz, bool is_fai_general)
 }
 
 void
-TaskPointWidget::RefreshView()
+TaskPointWidget::RecreateOzForm() noexcept
 {
-  map.Invalidate();
-
   OrderedTaskPoint &tp = ordered_task.GetPoint(active_index);
 
-  properties_dock.DeleteWidget();
+  properties_widget.Clear();
 
   ObservationZonePoint &oz = tp.GetObservationZone();
   const bool is_fai_general =
     ordered_task.GetFactoryType() == TaskFactoryType::FAI_GENERAL;
-  auto *properties_widget = CreateObservationZoneEditWidget(oz, is_fai_general);
-  if (properties_widget != nullptr) {
-    properties_widget->SetListener(this);
-    properties_dock.SetWidget(properties_widget);
+  auto new_oz = CreateObservationZoneEditWidget(oz, is_fai_general);
+  if (new_oz != nullptr) {
+    new_oz->SetListener(this);
+    properties_widget.Set(std::move(new_oz));
   } else
-    properties_dock.SetWidget(new PanelWidget());
+    properties_widget.Set(std::make_unique<PanelWidget>());
 
-  type_label.SetCaption(OrderedTaskPointName(ordered_task.GetFactory().GetType(tp)));
+  /* Prepare at a placeholder size so GetMinimumSize() works for
+     portrait layout; ApplyLayout assigns the real rect (or hides). */
+  properties_widget.Move(PixelRect{OZ_PREPARE_PLACEHOLDER});
+  properties_widget.Show();
+
+  /* OZ editors are created after Alternates / Score exit, so keep
+     those actions last in TabStop order (Up/Down reach Radius). */
+  optional_starts.BringToBottom();
+  score_exit.BringToBottom();
+
+  ApplyLayout(position);
+}
+
+void
+TaskPointWidget::RefreshControls() noexcept
+{
+  map.Invalidate();
+
+  const OrderedTaskPoint &tp = ordered_task.GetPoint(active_index);
+
+  LoadTypeField();
 
   previous_button->SetEnabled(active_index > 0);
   next_button->SetEnabled(active_index < (ordered_task.TaskSize() - 1));
@@ -392,7 +402,7 @@ TaskPointWidget::RefreshView()
     optional_starts.SetCaption(_("Enable Alternate Starts"));
   else {
     StaticString<50> tmp;
-    tmp.Format(_T("%s (%d)"), _("Edit Alternates"),
+    tmp.Format("%s (%d)", _("Edit Alternates"),
                ordered_task.GetOptionalStartPointCount());
     optional_starts.SetCaption(tmp);
   }
@@ -409,22 +419,22 @@ TaskPointWidget::RefreshView()
   switch (tp.GetType()) {
   case TaskPointType::START:
     type_buffer = _("Start point");
-    name_prefix_buffer = _T("Start: ");
+    name_prefix_buffer = "Start: ";
     break;
 
   case TaskPointType::AST:
     type_buffer = _("Task point");
-    name_prefix_buffer.Format(_T("%d: "), active_index);
+    name_prefix_buffer.Format("%d: ", active_index);
     break;
 
   case TaskPointType::AAT:
     type_buffer = _("Assigned area point");
-    name_prefix_buffer.Format(_T("%d: "), active_index);
+    name_prefix_buffer.Format("%d: ", active_index);
     break;
 
   case TaskPointType::FINISH:
     type_buffer = _("Finish point");
-    name_prefix_buffer = _T("Finish: ");
+    name_prefix_buffer = "Finish: ";
     break;
 
   default:
@@ -433,12 +443,17 @@ TaskPointWidget::RefreshView()
 
   dialog.SetCaption(type_buffer);
 
-  {
-    StaticString<100> buffer;
-    buffer.Format(_T("%s %s"), name_prefix_buffer.c_str(),
-                  tp.GetWaypoint().name.c_str());
-    waypoint_name.SetCaption(buffer);
-  }
+  StaticString<100> buffer;
+  buffer.Format("%s %s", name_prefix_buffer.c_str(),
+                tp.GetWaypoint().name.c_str());
+  waypoint_name.SetText(buffer);
+}
+
+void
+TaskPointWidget::RefreshView() noexcept
+{
+  RecreateOzForm();
+  RefreshControls();
 }
 
 bool
@@ -458,7 +473,7 @@ TaskPointWidget::ReadValues()
     }
   }
 
-  return properties_dock.SaveWidget(task_modified);
+  return properties_widget.Save(task_modified);
 }
 
 void
@@ -474,11 +489,11 @@ TaskPointWidget::PaintMap(Canvas &canvas, const PixelRect &rc)
   const MapLook &look = UIGlobals::GetMapLook();
   const NMEAInfo &basic = CommonInterface::Basic();
   PaintTaskPoint(canvas, rc, ordered_task, tp,
-                 basic.location_available
-                 ? basic.location : GeoPoint::Invalid(),
+                 basic.GetLocationOrInvalid(),
                  CommonInterface::GetMapSettings(),
                  look.task, look.airspace, look.overlay,
-                 terrain, &airspace_database);
+                 data_components->terrain.get(),
+                 data_components->airspaces.get());
 }
 
 inline void
@@ -501,7 +516,8 @@ inline void
 TaskPointWidget::OnDetailsClicked()
 {
   const OrderedTaskPoint &task_point = ordered_task.GetPoint(active_index);
-  dlgWaypointDetailsShowModal(task_point.GetWaypointPtr(), false);
+  dlgWaypointDetailsShowModal(data_components->waypoints.get(),
+                              task_point.GetWaypointPtr(), false);
 }
 
 inline void
@@ -511,7 +527,8 @@ TaskPointWidget::OnRelocateClicked()
     ? ordered_task.GetPoint(active_index - 1).GetLocation()
     : CommonInterface::Basic().location;
 
-  auto wp = ShowWaypointListDialog(gpBearing, &ordered_task, active_index);
+  auto wp = ShowWaypointListDialog(*data_components->waypoints, gpBearing,
+                                   &ordered_task, active_index);
   if (wp == nullptr)
     return;
 
@@ -522,15 +539,55 @@ TaskPointWidget::OnRelocateClicked()
   RefreshView();
 }
 
-inline void
-TaskPointWidget::OnTypeClicked()
+void
+TaskPointWidget::LoadTypeField() noexcept
 {
-  if (dlgTaskPointType(ordered_task, active_index)) {
-    ordered_task.ClearName();
-    ordered_task.UpdateGeometry();
-    task_modified = true;
-    RefreshView();
+  loading_type = true;
+
+  DataFieldEnum &df = *(DataFieldEnum *)type_field.GetDataField();
+  df.ClearChoices();
+  df.EnableItemHelp(true);
+
+  AbstractTaskFactory &factory = ordered_task.GetFactory();
+  const LegalPointSet valid = factory.GetValidTypes(active_index);
+  for (unsigned i = 0; i < LegalPointSet::N; ++i) {
+    const auto type = TaskPointFactoryType(i);
+    if (!valid.Contains(type))
+      continue;
+
+    df.addEnumText(OrderedTaskPointName(type), (unsigned)type,
+                   OrderedTaskPointDescription(type));
   }
+
+  df.SetValue(factory.GetType(ordered_task.GetPoint(active_index)));
+  type_field.RefreshDisplay();
+
+  loading_type = false;
+}
+
+void
+TaskPointWidget::OnModified(DataField &df) noexcept
+{
+  if (loading_type || &df != type_field.GetDataField())
+    return;
+
+  AbstractTaskFactory &factory = ordered_task.GetFactory();
+  const auto &old_point = ordered_task.GetPoint(active_index);
+  const auto type =
+    TaskPointFactoryType(((DataFieldEnum &)df).GetValue());
+  if (type == factory.GetType(old_point))
+    return;
+
+  auto point = factory.CreateMutatedPoint(old_point, type);
+  if (point == nullptr || !factory.Replace(*point, active_index, true)) {
+    LoadTypeField();
+    return;
+  }
+
+  ordered_task.ClearName();
+  ordered_task.UpdateGeometry();
+  task_modified = true;
+  RefreshView();
 }
 
 inline void
@@ -560,7 +617,7 @@ TaskPointWidget::OnNextClicked()
 inline void
 TaskPointWidget::OnOptionalStartsClicked()
 {
-  if (dlgTaskOptionalStarts(ordered_task)) {
+  if (dlgTaskOptionalStarts(*data_components->waypoints, ordered_task)) {
     ordered_task.ClearName();
     ordered_task.UpdateGeometry();
     task_modified = true;
@@ -569,10 +626,30 @@ TaskPointWidget::OnOptionalStartsClicked()
 }
 
 void
-TaskPointWidget::OnModified(ObservationZoneEditWidget &widget)
+TaskPointWidget::OnModified([[maybe_unused]] ObservationZoneEditWidget &widget) noexcept
 {
   ReadValues();
   map.Invalidate();
+}
+
+bool
+TaskPointWidget::KeyPress(unsigned key_code) noexcept
+{
+  switch (key_code) {
+  case KEY_LEFT:
+    if (active_index == 0)
+      return false;
+    OnPreviousClicked();
+    return true;
+
+  case KEY_RIGHT:
+    if (active_index >= ordered_task.TaskSize() - 1)
+      return false;
+    OnNextClicked();
+    return true;
+  }
+
+  return false;
 }
 
 bool
@@ -581,15 +658,14 @@ dlgTaskPointShowModal(OrderedTask &task,
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
+  TWidgetDialog<TaskPointWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           look, _("Waypoint"));
 
-  TaskPointWidget widget(dialog, task, index);
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Waypoint"), &widget);
+  dialog.SetWidget(dialog, task, index);
+  dialog.GetWidget().CreateButtons();
   dialog.AddButton(_("Close"), mrOK);
-  widget.CreateButtons();
   dialog.ShowModal();
-  dialog.StealWidget();
 
-  bool task_modified = widget.IsModified();
-  return task_modified;
+  return dialog.GetWidget().IsModified();
 }

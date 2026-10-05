@@ -19,9 +19,14 @@
 #
 #   ENABLE_SDL  If set to "y", the UI is drawn with libSDL.
 #
+#   ENABLE_MESA_KMS If set to "y", the program uses KMS to switch to graphics mode.
+#               Use this option when the program runs on a text-mode system
+#               without graphics and window system like X11 or Wayland.
+#               Default for Raspberry Pi 4, optional for Cubieboard.
+#
 #   OPENGL      "y" means render with OpenGL.
 #
-#   GLES        "y" means render with OpenGL/ES.
+#   GLES2       "y" means render with OpenGL/ES 2.0.
 #
 #   GREYSCALE   "y" means render 8-bit greyscale internally
 #
@@ -42,6 +47,8 @@
 #   LTO         "y" enables gcc's link-time optimization flag (experimental,
 #               requires gcc 4.5)
 #
+#   THIN_LTO    "y" enables ThinLTO (https://clang.llvm.org/docs/ThinLTO.html)
+#
 #   CLANG       "y" to use clang instead of gcc
 #
 #   ANALYZER    "y" to support the clang analyzer
@@ -53,6 +60,17 @@
 #
 #   IWYU        "y" to run "include-what-you-use" on all sources
 #
+#   USE_CCACHE  "y" to build with ccache
+#
+#   TARGET_DIR  "<path>" to build into output/<path> instead of output/<target>
+#
+#   TARGET_OUTPUT_DIR "<path>" to build into arbitrary directory
+#
+#   THIRDPARTY_PACKAGES
+#               "auto" for the target's default third-party package set,
+#               or a comma-separated list of packages to provision through
+#               the third-party build pipeline.
+#               Omitted packages are discovered on the system.
 
 .DEFAULT_GOAL := all
 
@@ -85,14 +103,19 @@ include $(topdir)/build/vfb.mk
 include $(topdir)/build/fb.mk
 include $(topdir)/build/wayland.mk
 include $(topdir)/build/egl.mk
-include $(topdir)/build/glx.mk
 include $(topdir)/build/opengl.mk
 endif
 
+# this line should be in build/resource.mk but that file depends on
+# link.mk and compile-depends must be set before including compile.mk
+compile-depends += $(TARGET_OUTPUT_DIR)/include/MakeResource.hpp
+
+include $(topdir)/build/compile.mk
+include $(topdir)/build/host.mk
 include $(topdir)/build/flags.mk
 include $(topdir)/build/charset.mk
 include $(topdir)/build/warnings.mk
-include $(topdir)/build/compile.mk
+include $(topdir)/build/depends.mk
 include $(topdir)/build/link.mk
 include $(topdir)/build/resource.mk
 include $(topdir)/build/libdata.mk
@@ -107,34 +130,52 @@ include $(topdir)/build/osx.mk
 include $(topdir)/build/generate.mk
 include $(topdir)/build/doxygen.mk
 include $(topdir)/build/manual.mk
+include $(topdir)/build/sphinx.mk
 
 include $(topdir)/build/libboost.mk
 INCLUDES += $(BOOST_CPPFLAGS)
 
+include $(topdir)/build/libjson.mk
+
+ifeq ($(FAT_BINARY),n)
 # Create libraries for zzip, jasper and compatibility stuff
+include $(topdir)/build/libfmt.mk
+include $(topdir)/build/libdbus.mk
 include $(topdir)/build/libresource.mk
 include $(topdir)/build/liblook.mk
 include $(topdir)/build/libstdcxx.mk
 include $(topdir)/build/libutil.mk
 include $(topdir)/build/libmath.mk
 include $(topdir)/build/libgeo.mk
+include $(topdir)/build/libunits.mk
+include $(topdir)/build/libnmea.mk
+include $(topdir)/build/libcomputer.mk
 include $(topdir)/build/libos.mk
 include $(topdir)/build/libtime.mk
 include $(topdir)/build/libprofile.mk
+include $(topdir)/build/liboperation.mk
 include $(topdir)/build/libnet.mk
+include $(topdir)/build/libhttp.mk
+include $(topdir)/build/libcoroutines.mk
+include $(topdir)/build/libclient.mk
 include $(topdir)/build/sdl.mk
 include $(topdir)/build/alsa.mk
 include $(topdir)/build/zlib.mk
 include $(topdir)/build/zzip.mk
+include $(topdir)/build/libcrypto.mk
 include $(topdir)/build/jasper.mk
 include $(topdir)/build/libport.mk
 include $(topdir)/build/driver.mk
 include $(topdir)/build/libio.mk
-include $(topdir)/build/libasync.mk
 include $(topdir)/build/shapelib.mk
 include $(topdir)/build/libwaypoint.mk
 include $(topdir)/build/libairspace.mk
+include $(topdir)/build/libnotam.mk
 include $(topdir)/build/libtask.mk
+include $(topdir)/build/libxml.mk
+include $(topdir)/build/libcupfile.mk
+include $(topdir)/build/libwaypointfile.mk
+include $(topdir)/build/libtaskfile.mk
 include $(topdir)/build/libroute.mk
 include $(topdir)/build/libcontest.mk
 include $(topdir)/build/libglide.mk
@@ -143,29 +184,55 @@ include $(topdir)/build/libevent_options.mk
 include $(topdir)/build/udev.mk
 include $(topdir)/build/libevent.mk
 include $(topdir)/build/freetype.mk
+include $(topdir)/build/fonts.mk
+include $(topdir)/build/nsis.mk
 include $(topdir)/build/libpng.mk
 include $(topdir)/build/libjpeg.mk
+include $(topdir)/build/libsqlite.mk
 include $(topdir)/build/libtiff.mk
+include $(topdir)/build/netcdf.mk
 include $(topdir)/build/coregraphics.mk
 include $(topdir)/build/appkit.mk
 include $(topdir)/build/uikit.mk
 include $(topdir)/build/screen.mk
 include $(topdir)/build/libthread.mk
+include $(topdir)/build/libasync.mk
 include $(topdir)/build/form.mk
 include $(topdir)/build/libwidget.mk
 include $(topdir)/build/libaudio.mk
+include $(topdir)/build/libtopo.mk
 include $(topdir)/build/libterrain.mk
 include $(topdir)/build/lua.mk
 include $(topdir)/build/harness.mk
+include $(topdir)/build/flarm.mk
+endif # FAT_BINARY=n
 
+ifeq ($(FUZZER),y)
+include $(topdir)/build/fuzzer.mk
+else ifeq ($(FAT_BINARY),y)
+  # No native code in TARGET=ANDROIDFAT
+else
 include $(topdir)/build/vali.mk
+include $(topdir)/build/infobox.mk
+include $(topdir)/build/mapwindow.mk
 include $(topdir)/build/main.mk
+include $(topdir)/build/test.mk
+endif
+
+ifeq ($(TARGET_IS_LINUX),y)
 include $(topdir)/build/cloud.mk
 include $(topdir)/build/kobo.mk
-include $(topdir)/build/test.mk
-include $(topdir)/build/hot.mk
+ifeq ($(USE_POLL_EVENT)$(TARGET_IS_KOBO),yn)
+include $(topdir)/build/ov.mk
+endif
+endif
 
+include $(topdir)/build/hot.mk
+include $(topdir)/build/nolto.mk
+
+ifeq ($(FUZZER),n)
 include $(topdir)/build/python.mk
+endif
 
 # Load local-config a second time
 # to set (override) choices for GXX and friends.
@@ -173,8 +240,10 @@ include $(topdir)/build/python.mk
 
 ######## output files
 
+ifeq ($(FUZZER),n)
 include $(topdir)/build/dist.mk
 include $(topdir)/build/install.mk
+endif
 
 ######## compiler flags
 
@@ -184,24 +253,46 @@ INCLUDES += -I$(SRC) -I$(ENGINE_SRC_DIR)
 
 include $(topdir)/build/gettext.mk
 
+ifeq ($(FUZZER),n)
+
 ifeq ($(FAT_BINARY),n)
 OUTPUTS := $(XCSOAR_BIN) $(VALI_XCS_BIN)
 endif
 
 ifeq ($(TARGET),ANDROID)
 OUTPUTS += $(ANDROID_BIN)/XCSoar-debug.apk
+OUTPUTS += $(ANDROID_BIN)/XCSoar-debug.aab
 endif
 
 ifeq ($(TARGET_IS_KOBO),y)
-OUTPUTS += $(KOBO_MENU_BIN)
+OUTPUTS += $(KOBO_MENU_BIN) $(KOBO_POWER_OFF_BIN)
 endif
 
 ifeq ($(HAVE_WIN32),y)
 OUTPUTS += $(LAUNCH_XCSOAR_BIN)
+# Package with ANGLE DLLs if using ANGLE on Windows
+ifeq ($(USE_ANGLE),y)
+ANGLE_ZIP = $(TARGET_BIN_DIR)/$(PROGRAM_NAME).zip
+OUTPUTS += $(ANGLE_ZIP)
+
+$(ANGLE_ZIP): $(XCSOAR_BIN) $(ANGLE_BIN_DLLS) $(FONT_TARGETS)
+	@$(NQ)echo "  ZIP     $(@F)"
+	$(Q)cd $(TARGET_BIN_DIR) && $(ZIP) -r $(@F) $(notdir $(XCSOAR_BIN) $(ANGLE_BIN_DLLS)) $(if $(FONT_TARGETS),fonts/*.ttf)
+endif
+ifeq ($(FREETYPE),y)
+OUTPUTS += $(FONT_TARGETS)
+endif
+endif
+
 endif
 
 all: $(OUTPUTS)
+
+ifeq ($(FAT_BINARY),n)
 everything: $(OUTPUTS) $(OPTIONAL_OUTPUTS) debug build-check build-harness
+else
+everything: all
+endif
 
 clean:
 	@$(NQ)echo "cleaning all"

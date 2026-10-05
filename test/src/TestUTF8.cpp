@@ -1,30 +1,13 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Util/UTF8.hpp"
-#include "Util/Macros.hpp"
+#include "util/UTF8.hpp"
+#include "util/StringUtil.hpp"
+#include "util/StaticString.hxx"
+#include "util/Macros.hpp"
 #include "TestUtil.hpp"
 
-#include <assert.h>
+#include <cassert>
 #include <string.h>
 
 static const char *const valid[] = {
@@ -96,7 +79,7 @@ MyLengthUTF8(const char *p)
 static bool
 MyValidateUTF8(const char *p)
 {
-  for (size_t length = 0;; ++length) {
+  while (true) {
     if (*p == 0)
       return true;
 
@@ -107,8 +90,6 @@ MyValidateUTF8(const char *p)
     p += s;
   }
 }
-
-#ifndef _UNICODE
 
 static constexpr struct {
   const char *src;
@@ -139,24 +120,148 @@ TestTruncateString()
 {
   for (const auto &t : truncate_string_tests) {
     char buffer[1024];
-    CopyTruncateStringUTF8(buffer, t.dest_size, t.src, t.truncate);
+    CopyTruncateStringUTF8({buffer, t.dest_size}, t.src, t.truncate);
     ok1(strcmp(buffer, t.expected_result) == 0);
   }
 }
 
-#endif
+/**
+ * Test that CopyString() never produces invalid UTF-8 when
+ * truncating.  Each test case specifies a source string, a
+ * destination buffer size, and the expected result after
+ * UTF-8-safe truncation.
+ */
+static constexpr struct {
+  const char *src;
+  size_t dest_size;
+  const char *expected_result;
+} copy_string_tests[] = {
+  /* no truncation needed */
+  { "", 10, "" },
+  { "abc", 10, "abc" },
+  { "abc", 4, "abc" },
+  { "\xc3\xbc", 3, "\xc3\xbc" },
 
-int main(int argc, char **argv)
+  /* ASCII truncation (no UTF-8 issue) */
+  { "abcd", 4, "abc" },
+  { "abcd", 2, "a" },
+  { "abcd", 1, "" },
+
+  /* 2-byte sequence: ü = \xc3\xbc */
+  { "foo\xc3\xbc", 6, "foo\xc3\xbc" }, /* fits exactly */
+  { "foo\xc3\xbc", 5, "foo" },          /* would cut after \xc3 → crop */
+  { "foo\xc3\xbc", 4, "foo" },          /* only room for "foo" */
+
+  /* 3-byte sequence: 目 = \xe7\x9b\xae */
+  { "foo\xe7\x9b\xae", 7, "foo\xe7\x9b\xae" }, /* fits exactly */
+  { "foo\xe7\x9b\xae", 6, "foo" },               /* cut after 2 of 3 → crop */
+  { "foo\xe7\x9b\xae", 5, "foo" },               /* cut after 1 of 3 → crop */
+  { "foo\xe7\x9b\xae", 4, "foo" },               /* only room for "foo" */
+
+  /* 4-byte emoji: 😀 = \xf0\x9f\x98\x80 */
+  { "a\xf0\x9f\x98\x80", 6, "a\xf0\x9f\x98\x80" }, /* fits */
+  { "a\xf0\x9f\x98\x80", 5, "a" },                   /* cut after 3 of 4 */
+  { "a\xf0\x9f\x98\x80", 4, "a" },                   /* cut after 2 of 4 */
+  { "a\xf0\x9f\x98\x80", 3, "a" },                   /* cut after 1 of 4 */
+
+  /* multiple multi-byte characters */
+  { "\xc3\xa4\xc3\xb6\xc3\xbc", 7, "\xc3\xa4\xc3\xb6\xc3\xbc" },
+  { "\xc3\xa4\xc3\xb6\xc3\xbc", 6, "\xc3\xa4\xc3\xb6" },  /* cut in 3rd ü */
+  { "\xc3\xa4\xc3\xb6\xc3\xbc", 4, "\xc3\xa4" },            /* cut in 2nd ö */
+};
+
+static void
+TestCopyString()
+{
+  for (const auto &t : copy_string_tests) {
+    char buffer[64];
+    CopyString(buffer, t.dest_size, t.src);
+    if (!ok1(strcmp(buffer, t.expected_result) == 0))
+      diag("CopyString(\"%s\", %zu) = \"%s\", expected \"%s\"",
+           t.src, t.dest_size, buffer, t.expected_result);
+    /* result must always be valid UTF-8 */
+    ok1(ValidateUTF8(buffer));
+  }
+}
+
+/**
+ * Test that StaticString::Format / AppendFormat never leave an
+ * incomplete UTF-8 sequence after snprintf truncation.  This is the
+ * map-item list crash path (WaypointListRenderer packs long CUP
+ * comments into StaticString<256>).
+ */
+static void
+TestStaticStringFormat()
+{
+  /* ü = \xc3\xbc — capacity 5 fits "foo" + leading \xc3 only */
+  {
+    StaticString<5> s;
+    s.Format("foo%s", "\xc3\xbc");
+    ok1(strcmp(s.c_str(), "foo") == 0);
+    ok1(ValidateUTF8(s.c_str()));
+  }
+
+  /* AppendFormat: "xx" + "fooü" into capacity 7 → append avail 5
+     truncates after \xc3, then crop */
+  {
+    StaticString<7> s;
+    s.Format("%s", "xx");
+    s.AppendFormat("%s", "foo\xc3\xbc");
+    ok1(strcmp(s.c_str(), "xxfoo") == 0);
+    ok1(ValidateUTF8(s.c_str()));
+  }
+
+  /* 3-byte 目 truncated mid-sequence */
+  {
+    StaticString<6> s;
+    s.Format("foo%s", "\xe7\x9b\xae");
+    ok1(strcmp(s.c_str(), "foo") == 0);
+    ok1(ValidateUTF8(s.c_str()));
+  }
+}
+
+static void
+TestSuffixUTF8()
+{
+  struct {
+    const char *src;
+    std::size_t tail_chars;
+    const char *expected;
+  } cases[] = {
+    { "", 2, "" },
+    { "A", 2, "A" },
+    { "AB", 2, "AB" },
+    { "ABC", 2, "BC" },
+    { "\xc3\x84\x42", 2, "\xc3\x84\x42" },
+    { "\x41\xc3\x84\x42", 2, "\xc3\x84\x42" },
+    { "\x41\xc3\x84\xc3\x96", 2, "\xc3\x84\xc3\x96" },
+  };
+
+  for (const auto &c : cases) {
+    const std::string_view suffix = SuffixUTF8(c.src, c.tail_chars);
+    ok1(suffix == c.expected);
+    ok1(ValidateUTF8(suffix));
+  }
+
+  const std::string_view bounded = std::string_view("XABCY").substr(1, 3);
+  const std::string_view bounded_suffix = SuffixUTF8(bounded, 2);
+  ok1(bounded_suffix == "BC");
+  ok1(bounded_suffix.size() == 2);
+  ok1(ValidateUTF8(bounded_suffix));
+}
+
+int main()
 {
   plan_tests(2 * ARRAY_SIZE(valid) +
              2 * ARRAY_SIZE(invalid) +
              2 * ARRAY_SIZE(length) +
-             4 * ARRAY_SIZE(crop) +
              ARRAY_SIZE(latin1_chars) +
-#ifndef _UNICODE
+             4 * ARRAY_SIZE(crop) +
              ARRAY_SIZE(truncate_string_tests) +
-#endif
-             9 + 27);
+             2 * ARRAY_SIZE(copy_string_tests) +
+             2 * 7 + 3 +
+             10 + 27 +
+             6);
 
   for (auto i : valid) {
     ok1(ValidateUTF8(i));
@@ -189,10 +294,12 @@ int main(int argc, char **argv)
     ok1(end == buffer + strlen(buffer));
   }
 
-#ifndef _UNICODE
   TestTruncateString();
-#endif
+  TestCopyString();
+  TestStaticStringFormat();
+  TestSuffixUTF8();
 
+  /* test NextUTF8() */
   {
     const char *p = "foo\xe7\x9b\xae";
     auto n = NextUTF8(p);
@@ -213,45 +320,47 @@ int main(int argc, char **argv)
 
     n = NextUTF8(p + 6);
     ok1(n.first == 0);
+    ok1(n.second == nullptr);
   }
 
   /* test UnicodeToUTF8() */
+  {
+    buffer[0] = 1;
+    ok1(UnicodeToUTF8(0, buffer) == buffer + 1);
+    ok1(buffer[0] == 0);
 
-  buffer[0] = 1;
-  ok1(UnicodeToUTF8(0, buffer) == buffer + 1);
-  ok1(buffer[0] == 0);
+    ok1(UnicodeToUTF8(' ', buffer) == buffer + 1);
+    ok1(buffer[0] == ' ');
 
-  ok1(UnicodeToUTF8(' ', buffer) == buffer + 1);
-  ok1(buffer[0] == ' ');
+    ok1(UnicodeToUTF8(0x7f, buffer) == buffer + 1);
+    ok1(buffer[0] == 0x7f);
 
-  ok1(UnicodeToUTF8(0x7f, buffer) == buffer + 1);
-  ok1(buffer[0] == 0x7f);
+    ok1(UnicodeToUTF8(0xa2, buffer) == buffer + 2);
+    ok1(buffer[0] == char(0xc2));
+    ok1(buffer[1] == char(0xa2));
 
-  ok1(UnicodeToUTF8(0xa2, buffer) == buffer + 2);
-  ok1(buffer[0] == char(0xc2));
-  ok1(buffer[1] == char(0xa2));
+    ok1(UnicodeToUTF8(0x6fb3, buffer) == buffer + 3);
+    ok1(buffer[0] == char(0xe6));
+    ok1(buffer[1] == char(0xbe));
+    ok1(buffer[2] == char(0xb3));
 
-  ok1(UnicodeToUTF8(0x6fb3, buffer) == buffer + 3);
-  ok1(buffer[0] == char(0xe6));
-  ok1(buffer[1] == char(0xbe));
-  ok1(buffer[2] == char(0xb3));
+    ok1(UnicodeToUTF8(0xffff, buffer) == buffer + 3);
+    ok1(buffer[0] == char(0xef));
+    ok1(buffer[1] == char(0xbf));
+    ok1(buffer[2] == char(0xbf));
 
-  ok1(UnicodeToUTF8(0xffff, buffer) == buffer + 3);
-  ok1(buffer[0] == char(0xef));
-  ok1(buffer[1] == char(0xbf));
-  ok1(buffer[2] == char(0xbf));
+    ok1(UnicodeToUTF8(0x10000, buffer) == buffer + 4);
+    ok1(buffer[0] == char(0xf0));
+    ok1(buffer[1] == char(0x90));
+    ok1(buffer[2] == char(0x80));
+    ok1(buffer[3] == char(0x80));
 
-  ok1(UnicodeToUTF8(0x10000, buffer) == buffer + 4);
-  ok1(buffer[0] == char(0xf0));
-  ok1(buffer[1] == char(0x90));
-  ok1(buffer[2] == char(0x80));
-  ok1(buffer[3] == char(0x80));
-
-  ok1(UnicodeToUTF8(0x10ffff, buffer) == buffer + 4);
-  ok1(buffer[0] == char(0xf4));
-  ok1(buffer[1] == char(0x8f));
-  ok1(buffer[2] == char(0xbf));
-  ok1(buffer[3] == char(0xbf));
+    ok1(UnicodeToUTF8(0x10ffff, buffer) == buffer + 4);
+    ok1(buffer[0] == char(0xf4));
+    ok1(buffer[1] == char(0x8f));
+    ok1(buffer[2] == char(0xbf));
+    ok1(buffer[3] == char(0xbf));
+  }
 
   return exit_status();
 }

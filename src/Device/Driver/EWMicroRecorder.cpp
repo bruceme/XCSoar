@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 
 // ToDo
@@ -35,12 +15,14 @@ Copyright_License {
 #include "NMEA/Checksum.hpp"
 #include "Waypoint/Waypoint.hpp"
 #include "Units/System.hpp"
-#include "Time/TimeoutClock.hpp"
+#include "time/TimeoutClock.hpp"
 #include "Operation/Operation.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
 
-#include <assert.h>
+#include <cassert>
 #include <stdio.h>
+
+using std::string_view_literals::operator""sv;
 
 // Additional sentance for EW support
 
@@ -54,10 +36,18 @@ public:
 
 public:
   /* virtual methods from class Device */
+  bool EnableNMEA(OperationEnvironment &env) override;
   bool ParseNMEA(const char *line, struct NMEAInfo &info) override;
   bool Declare(const Declaration &declaration, const Waypoint *home,
                OperationEnvironment &env) override;
 };
+
+bool
+EWMicroRecorderDevice::EnableNMEA(OperationEnvironment &env)
+{
+  port.FullWrite("!!\r\n", env, std::chrono::milliseconds(500));
+  return true;
+}
 
 static bool
 ReadAltitude(NMEAInputLine &line, double &value_r)
@@ -68,7 +58,7 @@ ReadAltitude(NMEAInputLine &line, double &value_r)
   if (!available)
     return false;
 
-  if (unit == _T('f') || unit == _T('F'))
+  if (unit == 'f' || unit == 'F')
     value = Units::ToSysUnit(value, Unit::FEET);
 
   value_r = value;
@@ -82,10 +72,9 @@ EWMicroRecorderDevice::ParseNMEA(const char *String, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(String);
-  char type[16];
-  line.Read(type, 16);
 
-  if (StringIsEqual(type, "$PGRMZ")) {
+  const auto type = line.ReadView();
+  if (type == "$PGRMZ"sv) {
     double value;
 
     /* The normal Garmin $PGRMZ line contains the "true" barometric
@@ -111,11 +100,10 @@ TryConnect(Port &port, char *user_data, size_t max_user_data,
 
   unsigned user_size = 0;
 
-  TimeoutClock timeout(8000);
+  TimeoutClock timeout(std::chrono::seconds(8));
 
   while (true) {
-    const size_t nbytes = port.WaitAndRead(user_data + user_size,
-                                           max_user_data - user_size,
+    const size_t nbytes = port.WaitAndRead(std::as_writable_bytes(std::span{user_data + user_size, max_user_data - user_size}),
                                            env, timeout);
     if (nbytes == 0)
       return false;
@@ -190,50 +178,51 @@ CleanString(char *p)
 /**
  * Clean a string and write it to the Port.
  */
-static bool
-WriteCleanString(Port &port, const TCHAR *p,
-                 OperationEnvironment &env, unsigned timeout_ms)
+static void
+WriteCleanString(Port &port, const char *p,
+                 OperationEnvironment &env,
+                 std::chrono::steady_clock::duration timeout)
 {
-  NarrowString<256> buffer;
+  StaticString<256> buffer;
   buffer.SetASCII(p);
 
   CleanString(buffer.buffer());
 
-  return port.FullWriteString(buffer, env, timeout_ms);
+  port.FullWrite(buffer, env, timeout);
 }
 
-static bool
+static void
 WriteLabel(Port &port, const char *name, OperationEnvironment &env)
 {
-  return port.FullWriteString(name, env, 1000) &&
-    port.FullWrite(": ", 2, env, 500);
+  port.FullWrite(name, env, std::chrono::seconds(1));
+  port.FullWrite(": ", env, std::chrono::milliseconds(500));
 }
 
 /**
  * Write a name/value pair to the EW microRecorder.
  */
-static bool
-WritePair(Port &port, const char *name, const TCHAR *value,
+static void
+WritePair(Port &port, const char *name, const char *value,
           OperationEnvironment &env)
 {
-  return WriteLabel(port, name, env) &&
-    WriteCleanString(port, value, env, 1000) &&
-    port.FullWrite("\r\n", 2, env, 500);
+  WriteLabel(port, name, env);
+  WriteCleanString(port, value, env, std::chrono::seconds(1));
+  port.FullWrite("\r\n", env, std::chrono::milliseconds(500));
 }
 
-static bool
+static void
 WriteGeoPoint(Port &port, const GeoPoint &value, OperationEnvironment &env)
 {
   int DegLat, DegLon;
   double tmp, MinLat, MinLon;
-  TCHAR NoS, EoW;
+  char NoS, EoW;
 
   // prepare latitude
   tmp = (double)value.latitude.Degrees();
-  NoS = _T('N');
+  NoS = 'N';
   if (tmp < 0)
     {
-      NoS = _T('S');
+      NoS = 'S';
       tmp = -tmp;
     }
 
@@ -242,10 +231,10 @@ WriteGeoPoint(Port &port, const GeoPoint &value, OperationEnvironment &env)
 
   // prepare long
   tmp = (double)value.longitude.Degrees();
-  EoW = _T('E');
+  EoW = 'E';
   if (tmp < 0)
     {
-      EoW = _T('W');
+      EoW = 'W';
       tmp = -tmp;
     }
 
@@ -257,19 +246,20 @@ WriteGeoPoint(Port &port, const GeoPoint &value, OperationEnvironment &env)
           DegLat, (int)MinLat, NoS,
           DegLon, (int)MinLon, EoW);
 
-  return port.FullWriteString(buffer, env, 1000);
+  port.FullWrite(buffer, env, std::chrono::seconds(1));
 }
 
-static bool
+static void
 EWMicroRecorderWriteWaypoint(Port &port, const char *type,
                              const Waypoint &way_point,
                              OperationEnvironment &env)
 {
-  return WriteLabel(port, type, env) &&
-    WriteGeoPoint(port, way_point.location, env) &&
-    port.Write(' ') &&
-    WriteCleanString(port, way_point.name.c_str(), env, 1000) &&
-    port.FullWrite("\r\n", 2, env, 500);
+  WriteLabel(port, type, env);
+  WriteGeoPoint(port, way_point.location, env);
+  port.Write(' ');
+  WriteCleanString(port, way_point.name.c_str(),
+                   env, std::chrono::seconds(1));
+  port.FullWrite("\r\n", env, std::chrono::milliseconds(500));
 }
 
 static bool
@@ -290,10 +280,9 @@ DeclareInner(Port &port, const Declaration &declaration,
 
   port.Write('\x18');         // start to upload file
 
-  if (!port.FullWriteString(user_data, env, 5000) ||
-      !port.FullWriteString("USER DETAILS\r\n--------------\r\n\r\n",
-                            env, 1000))
-    return false;
+  port.FullWrite(user_data, env, std::chrono::seconds(5));
+  port.FullWrite("USER DETAILS\r\n--------------\r\n\r\n",
+                 env, std::chrono::seconds(1));
 
   WritePair(port, "Pilot Name", declaration.pilot_name.c_str(), env);
   WritePair(port, "Competition ID", declaration.competition_id.c_str(), env);
@@ -301,46 +290,40 @@ DeclareInner(Port &port, const Declaration &declaration,
   WritePair(port,  "Aircraft ID",
             declaration.aircraft_registration.c_str(), env);
 
-  if (!port.FullWriteString("\r\nFLIGHT DECLARATION\r\n-------------------\r\n\r\n",
-                            env, 1000))
-    return false;
+  port.FullWrite("\r\nFLIGHT DECLARATION\r\n-------------------\r\n\r\n",
+                 env, std::chrono::seconds(1));
 
-  WritePair(port, "Description", _T("XCSoar task declaration"), env);
+  WritePair(port, "Description", "XCSoar task declaration", env);
 
   for (unsigned i = 0; i < 11; i++) {
-    if (env.IsCancelled())
-      return false;
-
     if (i+1>= declaration.Size()) {
-      port.FullWriteString("TP LatLon: 0000000N00000000E TURN POINT\r\n",
-                           env, 1000);
+      port.FullWrite("TP LatLon: 0000000N00000000E TURN POINT\r\n",
+                     env, std::chrono::seconds(1));
     } else {
       const Waypoint &wp = declaration.GetWaypoint(i);
       if (i == 0) {
-        if (!EWMicroRecorderWriteWaypoint(port, "Take Off LatLong", wp, env) ||
-            !EWMicroRecorderWriteWaypoint(port, "Start LatLon", wp, env))
-          return false;
+        EWMicroRecorderWriteWaypoint(port, "Take Off LatLong", wp, env);
+        EWMicroRecorderWriteWaypoint(port, "Start LatLon", wp, env);
       } else if (i + 1 < declaration.Size()) {
-        if (!EWMicroRecorderWriteWaypoint(port, "TP LatLon", wp, env))
-          return false;
+        EWMicroRecorderWriteWaypoint(port, "TP LatLon", wp, env);
       }
     }
   }
 
   const Waypoint &wp = declaration.GetLastWaypoint();
-  if (!EWMicroRecorderWriteWaypoint(port, "Finish LatLon", wp, env) ||
-      !EWMicroRecorderWriteWaypoint(port, "Land LatLon", wp, env) ||
-      env.IsCancelled())
-      return false;
+  EWMicroRecorderWriteWaypoint(port, "Finish LatLon", wp, env);
+  EWMicroRecorderWriteWaypoint(port, "Land LatLon", wp, env);
 
   port.Write('\x03');         // finish sending user file
 
-  return port.ExpectString("uploaded successfully", env, 5000);
+  port.ExpectString("uploaded successfully",
+                    env, std::chrono::seconds(5));
+  return true;
 }
 
 bool
 EWMicroRecorderDevice::Declare(const Declaration &declaration,
-                               const Waypoint *home,
+                               [[maybe_unused]] const Waypoint *home,
                                OperationEnvironment &env)
 {
   // Must have at least two, max 12 waypoints
@@ -349,24 +332,19 @@ EWMicroRecorderDevice::Declare(const Declaration &declaration,
 
   port.StopRxThread();
 
-  bool success = DeclareInner(port, declaration, env);
-
-  // go back to NMEA mode
-  port.FullWrite("!!\r\n", 4, env, 500);
-
-  return success;
+  return DeclareInner(port, declaration, env);
 }
 
 
 static Device *
-EWMicroRecorderCreateOnPort(const DeviceConfig &config, Port &com_port)
+EWMicroRecorderCreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &com_port)
 {
   return new EWMicroRecorderDevice(com_port);
 }
 
 const struct DeviceRegister ew_microrecorder_driver = {
-  _T("EW MicroRecorder"),
-  _T("EW microRecorder"),
+  "EW MicroRecorder",
+  "EW microRecorder",
   DeviceRegister::DECLARE,
   EWMicroRecorderCreateOnPort,
 };

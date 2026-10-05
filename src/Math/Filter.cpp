@@ -1,33 +1,14 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Filter.hpp"
 #include "Angle.hpp"
 #include "Util.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 bool
-Filter::Design(const double cutoff_wavelength, const bool bessel)
+Filter::Design(const double cutoff_wavelength, const bool bessel) noexcept
 {
   static constexpr unsigned sample_freq = 1;
   static constexpr unsigned n = 1;
@@ -48,7 +29,9 @@ Filter::Design(const double cutoff_wavelength, const bool bessel)
   auto f_star = c / (sample_freq * cutoff_wavelength);
 
   if (f_star <= 0 || f_star >= 1. / 8.) {
+#ifndef NDEBUG
     ok = false;
+#endif
     return false;
   }
 
@@ -63,13 +46,15 @@ Filter::Design(const double cutoff_wavelength, const bool bessel)
   b[1] = 1. - (a[0] + a[1] + a[2] + b[0]);
 
   Reset(0);
-  ok = true;
 
+#ifndef NDEBUG
+  ok = true;
+#endif
   return true;
 }
 
 double
-Filter::Reset(const double _x)
+Filter::Reset(const double _x) noexcept
 {
   x[0] = _x;
   y[0] = _x;
@@ -81,7 +66,7 @@ Filter::Reset(const double _x)
 }
 
 double
-Filter::Update(const double _x)
+Filter::Update(const double _x) noexcept
 {
   assert(ok);
 

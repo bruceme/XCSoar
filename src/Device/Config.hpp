@@ -1,34 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "util/StaticString.hxx"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_CONFIG_HPP
-#define XCSOAR_DEVICE_CONFIG_HPP
-
-#include "Util/StaticString.hxx"
-
-#include <stdint.h>
-#include <tchar.h>
-
+#include <cstdint>
 /**
  * Configuration structure for serial devices
  */
@@ -68,14 +45,6 @@ struct DeviceConfig {
     IOIOVOLTAGE,
 
     /**
-     * Attempt to auto-discover the GPS source.
-     *
-     * On Windows CE, this opens the GPS Intermediate Driver Multiplexer.
-     * @see http://msdn.microsoft.com/en-us/library/bb202042.aspx
-     */
-    AUTO,
-
-    /**
      * The built-in GPS receiver.
      */
     INTERNAL,
@@ -101,6 +70,37 @@ struct DeviceConfig {
      * for debugging.
      */
     PTY,
+
+    /**
+     * Bluetooth Low Energy sensor.
+     */
+    BLE_SENSOR,
+
+    /**
+     * Bluetooth Low Energy serial bridge to a paired device (HM-10,
+     * Nordic UART Service, or Microchip/ISSC transparent UART).
+     * Unlike #BLE_SENSOR, this provides a bidirectional data stream
+     * and XCSoar accesses it through the #Port interface.
+     *
+     * @note The profile stores this mode under the legacy port type string
+     * @c ble_hm10 (see Profile/DeviceConfig.cpp).
+     */
+    BLE_SERIAL,
+
+    /**
+     * A GliderLink broadcast receiver. Available on Android only
+     */
+    GLIDER_LINK,
+
+    /**
+     * USB serial port on Android.
+     */
+    ANDROID_USB_SERIAL,
+
+    /**
+     * Poll a Condor 3 Spectate.json file for multiplayer traffic.
+     */
+    SPECTATE_FILE,
   };
 
   /**
@@ -126,6 +126,11 @@ struct DeviceConfig {
    * The path name of the serial port, e.g. "COM4:" or "/dev/ttyUSB0".
    */
   StaticString<64> path;
+
+  /**
+   * The path name of the bluetooth port, e.g. "COM15 (Larus1234)".
+   */
+  StaticString<128> port_name;
 
   /**
    * The Bluetooth MAC address of the peer.
@@ -160,8 +165,6 @@ struct DeviceConfig {
     TEK_PRESSURE,
     /** ProvideIndicatedAirspeedWithAltitude() */
     PITOT,
-    /** Determine and then save the offset between static and pitot sensor */
-    PITOT_ZERO,
   } press_use;
 
   /**
@@ -169,6 +172,81 @@ struct DeviceConfig {
    */
   double sensor_offset;
   double sensor_factor;
+
+  /**
+   * For Acceleration & Rotation sensors of the built-in sensor set.
+   * It is important to know the orientation of the sensor axis.
+   *
+   * Is the instrument housing of these sensors permanently mounted in the
+   * aircraft, and do the sensors' three axes correspond to the aircraft's
+   * three axes (FIXED_AND_ALIGNED)? Or is the instrument mounted flexibly in the cockpit,
+   * for example using a gooseneck (NOT_ALIGNED)?
+   * If in doubt, this should be set to NOT_ALIGNED, as incorrect measurements
+   * can lead to misinterpretations.
+   */
+  enum class InstrumentAlignment : uint8_t {
+    NONE = 0,
+    /** The instrument is fixed and the axis are aligned to the aircraft */
+    FIXED_AND_ALIGNED,
+    /** Not aligned to the aircraft's axis, e.g. flexible mount */
+    NOT_ALIGNED,
+
+    /**
+     * A dummy entry that is used for validating profile values.
+     */
+    MAX
+  } instrument_alignment;
+
+  /**
+   * User choices of engine types supported.
+   * Depending on the engine used (2-stroke, 4-stroke etc.),
+   * ignitions per second have to be scaled to revolutions per second.
+   */
+  enum class EngineType : uint_least8_t{
+    NONE = 0,
+    TWO_STROKE_1_IGN,
+    TWO_STROKE_2_IGN,
+    FOUR_STROKE_1_IGN,
+
+    /**
+     * A dummy entry that is used for validating profile values.
+     */
+    MAX
+  } engine_type;
+
+  /**
+   *  Based on user choice of engine type, the measured ignitions of the
+   *  engine used, get scaled to revolutions per second. engine_type[0]
+   *  maps to ignitions_to_revolutions_factors[0] etc.
+   */
+  static constexpr float ignitions_to_revolutions_factors[] = {
+    0.0f,
+    1.0f,
+    0.5f,
+    2.0f,
+  };
+
+  static_assert(std::size(ignitions_to_revolutions_factors) == (std::size_t)EngineType::MAX);
+
+  /**
+   * Whether to synchronize the glide polar between XCSoar and the
+   * device.
+   */
+  enum class PolarSync : uint8_t {
+    /** No polar synchronization. */
+    OFF = 0,
+
+    /** Adopt the polar from the device. */
+    RECEIVE,
+
+    /** Push XCSoar's polar to the device. */
+    SEND,
+
+    /**
+     * A dummy entry that is used for validating profile values.
+     */
+    COUNT
+  };
 
   /**
    * Name of the driver.
@@ -225,99 +303,174 @@ struct DeviceConfig {
   bool sync_from_device;
 
   /**
+   * Should XCSoar send its current GPS position to the device as
+   * $GPGGA / $GPRMC sentences?  Only honored by drivers that advertise
+   * #DeviceRegister::SEND_POSITION (e.g. LX160).  When this is false the
+   * driver still emits navigation context such as $GPRMB.  Defaults to
+   * true; turn off when an upstream GPS source already feeds the device.
+   */
+  bool send_position;
+
+  /**
+   * Polar synchronization direction (off, receive, or send).
+   */
+  PolarSync polar_sync;
+
+  /**
    * Does this port type use a baud rate?
    */
-  static bool UsesSpeed(PortType port_type) {
-    return port_type == PortType::SERIAL || port_type == PortType::AUTO ||
+  static constexpr bool UsesSpeed(PortType port_type) noexcept {
+    return port_type == PortType::SERIAL ||
+      port_type == PortType::ANDROID_USB_SERIAL ||
       port_type == PortType::IOIOUART;
   }
 
-  bool IsDisabled() const {
+  static constexpr bool UsesBluetoothMac(PortType port_type) noexcept {
+    return port_type == PortType::RFCOMM ||
+      port_type == PortType::BLE_SENSOR ||
+      port_type == PortType::BLE_SERIAL;
+  }
+
+  constexpr bool IsDisabled() const noexcept {
     return !enabled || port_type == PortType::DISABLED;
   }
 
   /**
    * Checks if the specified DeviceConfig is available on this platform.
    */
-  gcc_pure
-  bool IsAvailable() const;
+  [[gnu::pure]]
+  bool IsAvailable() const noexcept;
 
   /**
    * Should this device be reopened when no data has been received for
    * a certain amount of time?  Some ports need this to recover from
    * errors.
    */
-  gcc_pure
-  bool ShouldReopenOnTimeout() const;
+  [[gnu::pure]]
+  bool ShouldReopenOnTimeout() const noexcept;
 
-  gcc_pure
-  static bool MaybeBluetooth(PortType port_type, const TCHAR *path);
+  constexpr bool IsAndroidBluetooth() const noexcept {
+    switch (port_type) {
+    case PortType::BLE_SENSOR:
+    case PortType::BLE_SERIAL:
+    case PortType::RFCOMM:
+    case PortType::RFCOMM_SERVER:
+      return true;
 
-  gcc_pure
-  bool MaybeBluetooth() const;
+    case PortType::DISABLED:
+    case PortType::GLIDER_LINK:
+    case PortType::DROIDSOAR_V2:
+    case PortType::NUNCHUCK:
+    case PortType::I2CPRESSURESENSOR:
+    case PortType::IOIOVOLTAGE:
+    case PortType::INTERNAL:
+    case PortType::SERIAL:
+    case PortType::TCP_LISTENER:
+    case PortType::TCP_CLIENT:
+    case PortType::IOIOUART:
+    case PortType::PTY:
+    case PortType::UDP_LISTENER:
+    case PortType::ANDROID_USB_SERIAL:
+    case PortType::SPECTATE_FILE:
+      break;
+    }
+
+    return false;
+  }
+
+  [[gnu::pure]]
+  static bool MaybeBluetooth(PortType port_type, const char *path) noexcept;
+
+  [[gnu::pure]]
+  bool MaybeBluetooth() const noexcept;
 
   /**
    * Check whether the Bluetooth device name starts with the specified
    * prefix.  Returns false on mismatch or if the name could not be
    * determined or if this is not a Bluetooth device.
    */
-  gcc_pure
-  bool BluetoothNameStartsWith(const char *prefix) const;
+  [[gnu::pure]]
+  bool BluetoothNameStartsWith(const char *prefix) const noexcept;
 
-  bool UsesSpeed() const {
+  bool UsesSpeed() const noexcept {
     return UsesSpeed(port_type) ||
       (MaybeBluetooth() && k6bt);
+  }
+
+  bool UsesBluetoothMac() const noexcept {
+    return UsesBluetoothMac(port_type);
   }
 
   /**
    * Does this port type use a driver?
    */
-  static bool UsesDriver(PortType port_type) {
-    return port_type == PortType::SERIAL || port_type == PortType::RFCOMM ||
-      port_type == PortType::RFCOMM_SERVER ||
-      port_type == PortType::AUTO || port_type == PortType::TCP_LISTENER ||
-      port_type == PortType::TCP_CLIENT ||
-      port_type == PortType::IOIOUART || port_type == PortType::PTY ||
-      port_type == PortType::UDP_LISTENER;
+  static constexpr bool UsesDriver(PortType port_type) noexcept {
+    switch (port_type) {
+    case PortType::DISABLED:
+    case PortType::BLE_SENSOR:
+    case PortType::GLIDER_LINK:
+    case PortType::DROIDSOAR_V2:
+    case PortType::NUNCHUCK:
+    case PortType::I2CPRESSURESENSOR:
+    case PortType::IOIOVOLTAGE:
+    case PortType::INTERNAL:
+      return false;
+
+    case PortType::SERIAL:
+    case PortType::BLE_SERIAL:
+    case PortType::RFCOMM:
+    case PortType::RFCOMM_SERVER:
+    case PortType::TCP_LISTENER:
+    case PortType::TCP_CLIENT:
+    case PortType::IOIOUART:
+    case PortType::PTY:
+    case PortType::UDP_LISTENER:
+    case PortType::ANDROID_USB_SERIAL:
+    case PortType::SPECTATE_FILE:
+      return true;
+    }
+
+    /* unreachable */
+    return false;
   }
 
-  bool UsesDriver() const {
+  constexpr bool UsesDriver() const noexcept {
     return UsesDriver(port_type);
   }
 
   /**
    * Does this port type use a tcp host?
    */
-  static bool UsesIPAddress(PortType port_type) {
+  static constexpr bool UsesIPAddress(PortType port_type) noexcept {
     return port_type == PortType::TCP_CLIENT;
   }
 
-  bool UsesIPAddress() const {
+  constexpr bool UsesIPAddress() const noexcept {
     return UsesIPAddress(port_type);
   }
 
   /**
    * Does this port type use a tcp port?
    */
-  static bool UsesTCPPort(PortType port_type) {
+  static constexpr bool UsesTCPPort(PortType port_type) noexcept {
     return port_type == PortType::TCP_LISTENER ||
       port_type == PortType::TCP_CLIENT ||
       port_type == PortType::UDP_LISTENER;
   }
 
-  bool UsesTCPPort() const {
+  constexpr bool UsesTCPPort() const noexcept {
     return UsesTCPPort(port_type);
   }
 
-  bool IsDriver(const TCHAR *name) const {
+  constexpr bool IsDriver(const char *name) const noexcept {
     return UsesDriver() && driver_name.equals(name);
   }
 
-  bool IsVega() const {
-    return IsDriver(_T("Vega"));
+  bool IsVega() const noexcept {
+    return IsDriver("Vega");
   }
 
-  bool IsAndroidInternalGPS() const {
+  constexpr bool IsAndroidInternalGPS() const noexcept {
 #ifdef ANDROID
     return port_type == PortType::INTERNAL;
 #else
@@ -325,47 +478,56 @@ struct DeviceConfig {
 #endif
   }
 
-  static bool UsesPort(PortType port_type) {
+  static constexpr bool UsesPort(PortType port_type) noexcept {
     return UsesDriver(port_type);
   }
 
-  bool UsesPort() const {
+  constexpr bool UsesPort() const noexcept {
     return UsesPort(port_type);
   }
 
-  static bool IsPressureSensor(PortType port_type) {
+  static constexpr bool IsPressureSensor(PortType port_type) noexcept {
     return port_type == PortType::I2CPRESSURESENSOR;
   }
 
-  bool IsPressureSensor() const {
+  constexpr bool IsPressureSensor() const noexcept {
     return IsPressureSensor(port_type);
   }
 
-  static bool UsesI2C(PortType port_type) {
+  static constexpr bool UsesI2C(PortType port_type) noexcept {
     return port_type == PortType::NUNCHUCK ||
            port_type == PortType::I2CPRESSURESENSOR;
   }
 
-  bool UsesI2C() const {
+  constexpr bool UsesI2C() const noexcept {
     return UsesI2C(port_type);
   }
 
-  static bool UsesCalibration(PortType port_type) {
+  static constexpr bool UsesCalibration(PortType port_type) noexcept {
     return port_type == PortType::I2CPRESSURESENSOR ||
            port_type == PortType::DROIDSOAR_V2;
   }
 
-  bool UsesCalibration() const {
+  constexpr bool UsesCalibration() const noexcept {
     return UsesCalibration(port_type);
   }
 
-  void Clear();
+  /**
+   * Default Condor 3 Spectate.json location on Windows.
+   */
+  static constexpr const char *DEFAULT_SPECTATE_PATH =
+    "c:\\condor3\\logs\\spectate.json";
+
+  /**
+   * Apply default Spectate file path when none is configured.
+   */
+  void ApplySpectateDefaults() noexcept;
+
+  void Clear() noexcept;
 
   /**
    * Generates a human-readable (localised) port name.
    */
-  gcc_pure
-  const TCHAR *GetPortName(TCHAR *buffer, size_t max_size) const;
+  [[gnu::pure]]
+  const char *GetPortName(char *buffer, size_t max_size) const noexcept;
 };
-
-#endif

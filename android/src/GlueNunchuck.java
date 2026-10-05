@@ -1,25 +1,5 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 package org.xcsoar;
 
@@ -29,16 +9,17 @@ import ioio.lib.api.exception.ConnectionLostException;
 /**
  * A driver for the Nintendo Nunchuck, connected via IOIO.
  */
-final class GlueNunchuck implements IOIOConnectionListener {
+final class GlueNunchuck implements AndroidSensor, IOIOConnectionListener {
   private IOIOConnectionHolder holder;
   private final int twiNum, sample_rate;
-  private final Nunchuck.Listener listener;
+  private final SensorListener listener;
 
   private Nunchuck instance;
+  private int state = STATE_LIMBO;
 
   GlueNunchuck(IOIOConnectionHolder _holder,
-              int _twiNum, int _sample_rate,
-             Nunchuck.Listener _listener) {
+               int _twiNum, int _sample_rate,
+               SensorListener _listener) {
     twiNum = _twiNum;
     sample_rate = _sample_rate;
     listener = _listener;
@@ -47,6 +28,7 @@ final class GlueNunchuck implements IOIOConnectionListener {
     _holder.addListener(this);
   }
 
+  @Override
   public void close() {
     IOIOConnectionHolder holder;
     synchronized(this) {
@@ -58,9 +40,21 @@ final class GlueNunchuck implements IOIOConnectionListener {
       holder.removeListener(this);
   }
 
+  @Override
+  public int getState() {
+    return state;
+  }
+
   @Override public void onIOIOConnect(IOIO ioio)
     throws ConnectionLostException, InterruptedException {
-    instance = new Nunchuck(ioio, twiNum, sample_rate, listener);
+    try {
+      instance = new Nunchuck(ioio, twiNum, sample_rate, listener);
+      state = STATE_READY;
+      listener.onSensorStateChanged();
+    } catch (Exception e) {
+      state = STATE_FAILED;
+      listener.onSensorError(e.getMessage());
+    }
   }
 
   @Override public void onIOIODisconnect(IOIO ioio) {
@@ -69,5 +63,8 @@ final class GlueNunchuck implements IOIOConnectionListener {
 
     instance.close();
     instance = null;
+
+    state = STATE_LIMBO;
+    listener.onSensorStateChanged();
   }
 }

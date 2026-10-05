@@ -67,8 +67,7 @@
  * $Id$
  */
 
-#ifndef JPC_MQCOD_H
-#define JPC_MQCOD_H
+#pragma once
 
 /******************************************************************************\
 * Includes.
@@ -87,10 +86,10 @@
 typedef struct {
 
 	/* The most probable symbol (MPS). */
-	int mps;
+	bool mps;
 
 	/* The state index. */
-	int_fast16_t ind;
+	int_least8_t ind;
 
 } jpc_mqctx_t;
 
@@ -101,16 +100,16 @@ typedef struct {
 typedef struct jpc_mqstate_s {
 
 	/* The Qe value. */
-	uint_fast16_t qeval;
+	uint_least16_t qeval;
 
 	/* The MPS. */
-	int mps;
+	bool mps;
 
 	/* The NMPS state. */
-	struct jpc_mqstate_s *nmps;
+	const struct jpc_mqstate_s *nmps;
 
 	/* The NLPS state. */
-	struct jpc_mqstate_s *nlps;
+	const struct jpc_mqstate_s *nlps;
 
 } jpc_mqstate_t;
 
@@ -119,6 +118,4 @@ typedef struct jpc_mqstate_s {
 \******************************************************************************/
 
 /* The state table for the MQ coder. */
-extern jpc_mqstate_t jpc_mqstates[];
-
-#endif
+extern const jpc_mqstate_t jpc_mqstates[];

@@ -1,34 +1,14 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MAP_OVERLAY_BITMAP_HPP
-#define XCSOAR_MAP_OVERLAY_BITMAP_HPP
+#pragma once
 
 #include "Overlay.hpp"
-#include "Screen/Bitmap.hpp"
+#include "ui/canvas/Bitmap.hpp"
 #include "Geo/Quadrilateral.hpp"
 #include "Geo/GeoBounds.hpp"
-#include "Util/tstring.hpp"
+
+#include <string>
 
 class Canvas;
 class WindowProjection;
@@ -56,11 +36,11 @@ class MapOverlayBitmap final : public MapOverlay {
 
   float alpha = 1;
 
-  tstring label;
+  std::string label;
 
 public:
   /**
-   * Load a GeoTIFF file.
+  * Load a georeferenced image file.
    *
    * Throws on error.
    */
@@ -70,13 +50,13 @@ public:
    * Move an existing #Bitmap with a geo reference.
    */
   MapOverlayBitmap(Bitmap &&_bitmap, GeoQuadrilateral _bounds,
-                   tstring::const_pointer _label) noexcept
+                   std::string::const_pointer _label) noexcept
     :bitmap(std::move(_bitmap)), bounds(_bounds),
      simple_bounds(bounds.GetBounds()),
      label(_label) {}
 
   template<typename T>
-  void SetLabel(T &&_label) {
+  void SetLabel(T &&_label) noexcept {
     label = std::forward<T>(_label);
   }
 
@@ -84,25 +64,23 @@ public:
    * By default, this class uses the bitmap's alpha channel.  This
    * method disables the alpha channel.
    */
-  void IgnoreBitmapAlpha() {
+  void IgnoreBitmapAlpha() noexcept {
     use_bitmap_alpha = false;
   }
 
   /**
    * Apply a constant alpha value.
    */
-  void SetAlpha(float _alpha) {
+  void SetAlpha(float _alpha) noexcept {
     alpha = _alpha;
   }
 
   /* virtual methods from class MapOverlay */
-  const TCHAR *GetLabel() const override {
+  const char *GetLabel() const noexcept override {
     return label.c_str();
   }
 
-  bool IsInside(GeoPoint p) const override;
+  bool IsInside(GeoPoint p) const noexcept override;
   void Draw(Canvas &canvas,
             const WindowProjection &projection) noexcept override;
 };
-
-#endif

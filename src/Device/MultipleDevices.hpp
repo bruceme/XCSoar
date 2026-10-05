@@ -1,51 +1,34 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /** \file
  *
  * This library manages the list of configured devices.
  */
 
-#ifndef XCSOAR_DEVICE_LIST_HPP
-#define XCSOAR_DEVICE_LIST_HPP
+#pragma once
 
 #include "Features.hpp"
 #include "Device/Port/Listener.hpp"
-#include "Thread/Mutex.hpp"
+#include "thread/Mutex.hxx"
+#include "Blackboard/DeviceBlackboard.hpp"
+
+#include <optional>
 
 #include <array>
 #include <list>
-
-#include <tchar.h>
-
-namespace boost { namespace asio { class io_service; }}
-
+class DeviceBlackboard;
+class NMEALogger;
+class DeviceFactory;
 class DeviceDescriptor;
 class DeviceDispatcher;
 struct MoreData;
 struct DerivedInfo;
+class GlidePolar;
+struct GeoPoint;
 class AtmosphericPressure;
 class RadioFrequency;
+class TransponderCode;
 class OperationEnvironment;
 
 /**
@@ -55,53 +38,75 @@ class MultipleDevices final : PortListener {
   std::array<DeviceDescriptor *, NUMDEV> devices;
   std::array<DeviceDispatcher *, NUMDEV> dispatchers;
 
+  DeviceBlackboard &blackboard;
+
   Mutex listeners_mutex;
   std::list<PortListener *> listeners;
 
 public:
-  MultipleDevices(boost::asio::io_service &io_service);
-  ~MultipleDevices();
+  MultipleDevices(DeviceBlackboard &blackboard,
+                  NMEALogger *nmea_logger,
+                  DeviceFactory &factory) noexcept;
+  ~MultipleDevices() noexcept;
 
-  DeviceDescriptor &operator[](unsigned i) const {
+  DeviceDescriptor &operator[](unsigned i) const noexcept {
     return *devices[i];
   }
 
   typedef typename std::array<DeviceDescriptor *, NUMDEV>::const_iterator const_iterator;
 
-  const_iterator begin() {
+  const_iterator begin() noexcept {
     return devices.begin();
   }
 
-  const_iterator end() {
+  const_iterator end() noexcept {
     return devices.end();
   }
 
   /**
    * Invoke Device::OnSysTicker() on all devices.
    */
-  void Tick();
+  void Tick() noexcept;
 
-  void AutoReopen(OperationEnvironment &env);
-  void PutMacCready(double mac_cready, OperationEnvironment &env);
-  void PutBugs(double bugs, OperationEnvironment &env);
-  void PutBallast(double fraction, double overload, OperationEnvironment &env);
-  void PutVolume(unsigned volume, OperationEnvironment &env);
-  void PutActiveFrequency(RadioFrequency frequency, const TCHAR *name,
-                          OperationEnvironment &env);
-  void PutStandbyFrequency(RadioFrequency frequency, const TCHAR *name,
-                           OperationEnvironment &env);
-  void PutQNH(const AtmosphericPressure &pres, OperationEnvironment &env);
-  void NotifySensorUpdate(const MoreData &basic);
+  void Open(OperationEnvironment &env) noexcept;
+  void Close() noexcept;
+  void AutoReopen(OperationEnvironment &env) noexcept;
+
+  [[gnu::pure]]
+  bool HasVega() const noexcept;
+
+  void VegaWriteNMEA(const char *text, OperationEnvironment &env) noexcept;
+
+  void PutMacCready(double mac_cready, OperationEnvironment &env) noexcept;
+  void PutBugs(double bugs, OperationEnvironment &env) noexcept;
+  void PutBallast(double fraction, double overload,
+                  OperationEnvironment &env) noexcept;
+  void PutCrewMass(double crew_mass, OperationEnvironment &env) noexcept;
+  void PutEmptyMass(double empty_mass, OperationEnvironment &env) noexcept;
+  void PutPolar(const GlidePolar &polar, OperationEnvironment &env) noexcept;
+  void PutTarget(const GeoPoint &location, const char *name,
+                 std::optional<double> elevation,
+                 OperationEnvironment &env) noexcept;
+  void PutVolume(unsigned volume, OperationEnvironment &env) noexcept;
+  void PutPilotEvent(OperationEnvironment &env) noexcept;
+  void PutActiveFrequency(RadioFrequency frequency, const char *name,
+                          OperationEnvironment &env) noexcept;
+  void PutStandbyFrequency(RadioFrequency frequency, const char *name,
+                           OperationEnvironment &env) noexcept;
+  void ExchangeRadioFrequencies(OperationEnvironment &env) noexcept;
+  void PutTransponderCode(TransponderCode code, OperationEnvironment &env) noexcept;
+  void PutQNH(AtmosphericPressure pres, OperationEnvironment &env) noexcept;
+  void PutElevation(int elevation, OperationEnvironment &env) noexcept;
+  void RequestElevation(OperationEnvironment &env) noexcept;
+  void NotifySensorUpdate(const MoreData &basic) noexcept;
   void NotifyCalculatedUpdate(const MoreData &basic,
-                              const DerivedInfo &calculated);
+                              const DerivedInfo &calculated) noexcept;
 
-  void AddPortListener(PortListener &listener);
-  void RemovePortListener(PortListener &listener);
+  void AddPortListener(PortListener &listener) noexcept;
+  void RemovePortListener(PortListener &listener) noexcept;
 
 private:
   /* virtual methods from class PortListener */
-  void PortStateChanged() override;
-  void PortError(const char *msg) override;
+  void PortStateChanged() noexcept override;
+  void PortError(const char *msg) noexcept override;
 };
-
-#endif

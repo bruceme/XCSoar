@@ -1,33 +1,11 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef TASKOPTTARGET_HPP
-#define TASKOPTTARGET_HPP
+#pragma once
 
 #include "TaskMacCreadyRemaining.hpp"
 #include "Task/Ordered/AATIsolineSegment.hpp"
 #include "Math/ZeroFinder.hpp"
-
-#include <vector>
 
 class StartPoint;
 
@@ -41,6 +19,8 @@ class StartPoint;
  */
 class TaskOptTarget final : public ZeroFinder
 {
+  static constexpr double TOLERANCE = 0.01;
+
   /** Object to calculate remaining task statistics */
   TaskMacCreadyRemaining tm;
   /** Glide solution used in search */
@@ -48,7 +28,7 @@ class TaskOptTarget final : public ZeroFinder
   /** Observer */
   const AircraftState &aircraft;
   /** Start of task */
-  StartPoint *tp_start;
+  StartPoint &tp_start;
   /** Active AATPoint */
   AATPoint &tp_current;
   /** Isoline for active AATPoint target */
@@ -65,15 +45,26 @@ public:
    * @param _tp_current Active AATPoint
    * @param _ts StartPoint of task (to initiate scans)
    */
-  TaskOptTarget(const std::vector<OrderedTaskPoint*>& tps,
+  template<typename T>
+  TaskOptTarget(T &tps,
                 const unsigned activeTaskPoint,
                 const AircraftState &_aircraft,
                 const GlideSettings &settings, const GlidePolar &_gp,
                 AATPoint& _tp_current,
                 const FlatProjection &projection,
-                StartPoint *_ts);
+                StartPoint &_ts) noexcept
+    :ZeroFinder(0.02, 0.98, TOLERANCE),
+     tm(tps.begin(), tps.end(), activeTaskPoint, settings, _gp,
+        /* ignore the travel to the start point */
+        false),
+     aircraft(_aircraft),
+     tp_start(_ts),
+     tp_current(_tp_current),
+     iso(_tp_current, projection)
+  {
+  }
 
-  virtual double f(double p);
+  double f(double p) noexcept override;
 
   /**
    * Test validity of a solution given search parameter
@@ -82,7 +73,7 @@ public:
    *
    * @return True if solution is valid
    */
-  virtual bool valid(double p);
+  bool valid(double p) noexcept;
 
   /**
    * Search for active task point's target isoline to minimise elapsed time
@@ -94,12 +85,9 @@ public:
    *
    * @return Isoline value for solution
    */
-  virtual double search(double p);
+  double search(double p) noexcept;
 
 private:
   /** Sets target location along isoline */
-  void SetTarget(double p);
+  void SetTarget(double p) noexcept;
 };
-
-
-#endif

@@ -1,56 +1,44 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Logger/MD5.hpp"
-#include "OS/Args.hpp"
+#include "io/FileReader.hxx"
+#include "system/Args.hpp"
+#include "util/MD5.hpp"
+#include "util/PrintException.hxx"
 
 #include <stdio.h>
 
+static void
+Feed(Reader &r, MD5 &state)
+{
+  while (true) {
+    std::byte buffer[65536];
+    size_t nbytes = r.Read(buffer);
+    if (nbytes == 0)
+      break;
+
+    state.Append(std::span{buffer}.first(nbytes));
+  }
+}
+
+static void
+Feed(Path path, MD5 &state)
+{
+  FileReader r(path);
+  Feed(r, state);
+}
+
 int
 main(int argc, char **argv)
-{
+try {
   Args args(argc, argv, "PATH");
-  const char *path = args.ExpectNext();
+  const auto path = args.ExpectNextPath();
   args.ExpectEnd();
-
-  FILE *file = fopen(path, "rb");
-  if (file == NULL) {
-    fprintf(stderr, "Failed to open file\n");
-    return EXIT_FAILURE;
-  }
 
   MD5 md5;
   md5.Initialise();
 
-  while (!feof(file)) {
-    int ch = fgetc(file);
-    if (ch == EOF)
-      break;
-
-    md5.Append((uint8_t)ch);
-  }
-
-  fclose(file);
+  Feed(path, md5);
 
   md5.Finalize();
 
@@ -59,4 +47,7 @@ main(int argc, char **argv)
 
   puts(digest);
   return EXIT_SUCCESS;
+} catch (...) {
+  PrintException(std::current_exception());
+  return EXIT_FAILURE;
 }

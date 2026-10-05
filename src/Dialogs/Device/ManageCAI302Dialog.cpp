@@ -1,52 +1,27 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ManageCAI302Dialog.hpp"
 #include "Dialogs/WidgetDialog.hpp"
 #include "Dialogs/Message.hpp"
 #include "Dialogs/FilePicker.hpp"
 #include "Dialogs/JobDialog.hpp"
+#include "Dialogs/Error.hpp"
 #include "UIGlobals.hpp"
 #include "CAI302/UnitsEditor.hpp"
 #include "CAI302/WaypointUploader.hpp"
 #include "Widget/RowFormWidget.hpp"
 #include "Language/Language.hpp"
+#include "Operation/Cancelled.hpp"
 #include "Operation/MessageOperationEnvironment.hpp"
 #include "Device/Driver/CAI302/Internal.hpp"
 #include "Device/Driver/CAI302/Protocol.hpp"
-#include "Waypoint/Patterns.hpp"
+#include "Repository/FileType.hpp"
+
+using namespace UI;
 
 class ManageCAI302Widget final
-  : public RowFormWidget, private ActionListener {
-  enum Controls {
-    Units,
-    Waypoints,
-    StartLogger,
-    StopLogger,
-    DeleteAllFlights,
-    Reboot,
-  };
-
+  : public RowFormWidget {
   CAI302Device &device;
 
 public:
@@ -54,23 +29,8 @@ public:
     :RowFormWidget(look), device(_device) {}
 
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-
-private:
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
 };
-
-void
-ManageCAI302Widget::Prepare(ContainerWindow &parent, const PixelRect &rc)
-{
-  AddButton(_("Units"), *this, Units);
-  AddButton(_("Waypoints"), *this, Waypoints);
-  AddButton(_("Start Logger"), *this, StartLogger);
-  AddButton(_("Stop Logger"), *this, StopLogger);
-  AddButton(_("Delete all flights"), *this, DeleteAllFlights);
-  AddButton(_("Reboot"), *this, Reboot);
-}
 
 static void
 EditUnits(const DialogLook &look, CAI302Device &device)
@@ -93,7 +53,8 @@ EditUnits(const DialogLook &look, CAI302Device &device)
 static void
 UploadWaypoints(const DialogLook &look, CAI302Device &device)
 {
-  const auto path = FilePicker(_("Waypoints"), WAYPOINT_FILE_PATTERNS);
+  const auto path = FilePicker(_("Waypoints"),
+                               GetFileTypePatterns(FileType::WAYPOINT));
   if (path == nullptr)
     return;
 
@@ -102,58 +63,80 @@ UploadWaypoints(const DialogLook &look, CAI302Device &device)
 }
 
 void
-ManageCAI302Widget::OnAction(int id)
+ManageCAI302Widget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                            [[maybe_unused]] const PixelRect &rc) noexcept
 {
-  switch (id) {
-  case Units:
-    EditUnits(GetLook(), device);
-    break;
+  AddButton(_("Units"), [this](){
+    try {
+      EditUnits(GetLook(), device);
+    } catch (OperationCancelled) {
+    } catch (...) {
+      ShowError(std::current_exception(), _("Units"));
+    }
+  });
 
-  case Waypoints:
-    UploadWaypoints(GetLook(), device);
-    break;
+  AddButton(_("Waypoints"), [this](){
+    try {
+      UploadWaypoints(GetLook(), device);
+    } catch (OperationCancelled) {
+    } catch (...) {
+      ShowError(std::current_exception(), _("Waypoints"));
+    }
+  });
 
-  case StartLogger:
-    {
-      MessageOperationEnvironment env;
+  AddButton(_("Start Logger"), [this](){
+    MessageOperationEnvironment env;
+    try {
       device.StartLogging(env);
+    } catch (OperationCancelled) {
+    } catch (...) {
+      env.SetError(std::current_exception());
     }
-    break;
+  });
 
-  case StopLogger:
-    {
-      MessageOperationEnvironment env;
+  AddButton(_("Stop Logger"), [this](){
+    MessageOperationEnvironment env;
+    try {
       device.StopLogging(env);
+    } catch (OperationCancelled) {
+    } catch (...) {
+      env.SetError(std::current_exception());
     }
-    break;
+  });
 
-  case DeleteAllFlights:
-    {
-      if (ShowMessageBox(_("Do you really want to delete all flights from the device?"),
-                      _T("CAI 302"), MB_YESNO) != IDYES)
-        return;
+  AddButton(_("Delete all flights"), [this](){
+    if (ShowMessageBox(_("Do you really want to delete all flights from the device?"),
+                       "CAI 302", MB_YESNO) != IDYES)
+      return;
 
-      MessageOperationEnvironment env;
+    MessageOperationEnvironment env;
+    try {
       device.ClearLog(env);
+    } catch (OperationCancelled) {
+    } catch (...) {
+      env.SetError(std::current_exception());
     }
-    break;
+  });
 
-  case Reboot:
-    {
-      MessageOperationEnvironment env;
+  AddButton(_("Reboot"), [this](){
+    MessageOperationEnvironment env;
+    try {
       device.Reboot(env);
+    } catch (OperationCancelled) {
+    } catch (...) {
+      env.SetError(std::current_exception());
     }
-    break;
-  }
+  });
 }
 
 void
-ManageCAI302Dialog(SingleWindow &parent, const DialogLook &look,
+ManageCAI302Dialog([[maybe_unused]] SingleWindow &parent, const DialogLook &look,
                    Device &device)
 {
-  WidgetDialog dialog(UIGlobals::GetDialogLook());
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _T("CAI 302"),
-                    new ManageCAI302Widget(look, (CAI302Device &)device));
+  WidgetDialog dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+                      UIGlobals::GetDialogLook(),
+                      "CAI 302",
+                      new ManageCAI302Widget(look, (CAI302Device &)device));
   dialog.AddButton(_("Close"), mrCancel);
   dialog.ShowModal();
 }

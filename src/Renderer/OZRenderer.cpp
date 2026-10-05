@@ -1,69 +1,38 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "OZRenderer.hpp"
 #include "Task/ObservationZones/KeyholeZone.hpp"
 #include "Task/ObservationZones/CylinderZone.hpp"
 #include "Task/ObservationZones/AnnularSectorZone.hpp"
+#include "Task/ObservationZones/Boundary.hpp"
 #include "Projection/Projection.hpp"
-#include "Screen/Canvas.hpp"
+#include "Geo/GeoBounds.hpp"
+#include "Geo/SimplifiedMath.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Look/TaskLook.hpp"
 #include "Look/AirspaceLook.hpp"
 
-#ifdef USE_GDI
-#include "AirspaceRendererSettings.hpp"
-#endif
-
 OZRenderer::OZRenderer(const TaskLook &_task_look,
                        const AirspaceLook &_airspace_look,
-                       const AirspaceRendererSettings &_settings)
+                       const AirspaceRendererSettings &_settings) noexcept
   :task_look(_task_look), airspace_look(_airspace_look), settings(_settings)
 {
 }
 
 void
-OZRenderer::Prepare(Canvas &canvas, Layer layer, int offset) const
+OZRenderer::Prepare(Canvas &canvas, Layer layer, int offset) const noexcept
 {
   if (layer == LAYER_SHADE) {
     Color color = airspace_look.classes[AATASK].fill_color;
 #ifdef ENABLE_OPENGL
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+#endif
 
     canvas.Select(Brush(color.WithAlpha(64)));
-#elif defined(USE_GDI)
-    canvas.SetMixMask();
-
-    // this color is used as the black bit
-    canvas.SetTextColor(color);
-    // get brush, can be solid or a 1bpp bitmap
-    canvas.Select(airspace_look.brushes[settings.classes[AATASK].brush]);
-#else /* !GDI */
-    canvas.Select(Brush(color.WithAlpha(64)));
-#endif /* !GDI */
 
     canvas.SelectNullPen();
-    
     return;
   }
 
@@ -79,20 +48,18 @@ OZRenderer::Prepare(Canvas &canvas, Layer layer, int offset) const
 }
 
 void
-OZRenderer::Finish(Canvas &canvas, Layer layer) const
+OZRenderer::Finish([[maybe_unused]] Canvas &canvas, Layer layer) const noexcept
 {
   if (layer == LAYER_SHADE) {
 #ifdef ENABLE_OPENGL
     glDisable(GL_BLEND);
-#elif defined(USE_GDI)
-    canvas.SetMixCopy();
-#endif /* GDI */
+#endif
   }
 }
 
 void
 OZRenderer::Draw(Canvas &canvas, Layer layer, const Projection &projection,
-                 const ObservationZonePoint &_oz, int offset)
+                 const ObservationZonePoint &_oz, int offset) noexcept
 {
   if (layer == LAYER_SHADE && offset < 0)
     return;
@@ -126,7 +93,7 @@ OZRenderer::Draw(Canvas &canvas, Layer layer, const Projection &projection,
 
     if (layer != LAYER_INACTIVE) {
       auto p_center = projection.GeoToScreen(oz.GetReference());
-      canvas.DrawCircle(p_center.x, p_center.y,
+      canvas.DrawCircle(p_center,
                     projection.GeoToScreenDistance(oz.GetRadius()));
     }
 
@@ -134,7 +101,7 @@ OZRenderer::Draw(Canvas &canvas, Layer layer, const Projection &projection,
   }
 
   case ObservationZone::Shape::BGA_START:
-  case ObservationZone::Shape::SYMMETRIC_QUADRANT:
+  case ObservationZone::Shape::SYMMETRIC_SECTOR:
   case ObservationZone::Shape::SECTOR: {
     const SectorZone &oz = (const SectorZone &)_oz;
 
@@ -182,4 +149,51 @@ OZRenderer::Draw(Canvas &canvas, Layer layer, const Projection &projection,
   }
 
   Finish(canvas, layer);
+}
+
+static void
+AddSegment(GeoBounds &bounds, GeoPoint center, double radius,
+           AngleRange range) noexcept
+{
+  /* for what we're doing, only the for extreme points of the segment
+     are relevant; if those angles are inside the segment, we may need
+     to add them to avoid clipping */
+  for (Angle a : {Angle::Zero(), Angle::QuarterCircle(), Angle::HalfCircle(), Angle::QuarterCircle() + Angle::HalfCircle()})
+    if (range.IsInside(a))
+      bounds.Extend(FindLatitudeLongitudeS(center, a, radius));
+}
+
+GeoBounds
+OZRenderer::GetGeoBounds(const ObservationZonePoint &oz) noexcept
+{
+  auto bounds = GeoBounds::Invalid();
+  for (const auto &i : oz.GetBoundary())
+    bounds.Extend(i);
+
+  switch (oz.GetShape()) {
+  case ObservationZone::Shape::LINE:
+  case ObservationZone::Shape::FAI_SECTOR:
+    {
+      /* for these, the segment is not part of the boundary, but it is
+         rendered */
+      const SectorZone &sector = (const SectorZone &)oz;
+      AddSegment(bounds, sector.GetReference(), sector.GetRadius(),
+                 {sector.GetStartRadial(), sector.GetEndRadial()});
+    }
+    break;
+
+  case ObservationZone::Shape::MAT_CYLINDER:
+  case ObservationZone::Shape::CYLINDER:
+  case ObservationZone::Shape::BGA_START:
+  case ObservationZone::Shape::SYMMETRIC_SECTOR:
+  case ObservationZone::Shape::SECTOR:
+  case ObservationZone::Shape::CUSTOM_KEYHOLE:
+  case ObservationZone::Shape::DAEC_KEYHOLE:
+  case ObservationZone::Shape::BGAFIXEDCOURSE:
+  case ObservationZone::Shape::BGAENHANCEDOPTION:
+  case ObservationZone::Shape::ANNULAR_SECTOR:
+    break;
+  }
+
+  return bounds;
 }

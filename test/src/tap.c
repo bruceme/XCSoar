@@ -36,6 +36,11 @@
 
 #include "tap.h"
 
+#ifdef __GNUC__
+/* no, we're really not interested in the vasprintf() return value */
+#pragma GCC diagnostic ignored "-Wunused-result"
+#endif
+
 int verbose;
 
 static int no_plan = 0;
@@ -162,7 +167,7 @@ _gen_result(int ok, const char *func, const char *file, unsigned int line,
 	printf("\n");
 
 	if(!ok) {
-#ifndef WIN32
+#ifndef _WIN32
 		if(getenv("HARNESS_ACTIVE") != NULL)
 			fputs("\n", stderr);
 #endif
@@ -176,7 +181,7 @@ _gen_result(int ok, const char *func, const char *file, unsigned int line,
 	}
 	free(local_test_name);
 
-#ifdef WIN32
+#ifdef _WIN32
 	// Flush the pipe content after each test
 	// to prevent a flooded pipe that freezes the application
 	fflush(stdout);
@@ -201,7 +206,7 @@ _tap_init(void)
 	if(!run_once) {
 		atexit(_cleanup);
 
-#ifndef WIN32
+#ifndef _WIN32
 		/* stdout needs to be unbuffered so that the output appears
 		   in the same place relative to stderr output as it does 
 		   with Test::Harness */

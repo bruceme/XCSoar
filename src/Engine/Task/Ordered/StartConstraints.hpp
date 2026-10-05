@@ -1,29 +1,9 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef XCSOAR_START_CONSTRAINTS_HPP
-#define XCSOAR_START_CONSTRAINTS_HPP
-
-#include "Time/RoughTime.hpp"
+#include "time/RoughTime.hpp"
 #include "Geo/AltitudeReference.hpp"
 
 struct AircraftState;
@@ -31,9 +11,10 @@ struct TaskStartMargins;
 
 struct StartConstraints {
   /**
-   * The time span during which the start gate is open.
+   * The time span during which a hard start gate is open.
+   * If defined, a valid start can only be made within this window.
    */
-  RoughTimeSpan open_time_span;
+  TimeSpan open_time_span;
 
   /** Maximum ground speed (m/s) allowed in start sector */
   double max_speed;
@@ -52,10 +33,27 @@ struct StartConstraints {
   bool require_arm;
 
   /**
+   * If this is true, then exiting the observation zone is the goal,
+   * not entering it.
+   */
+  bool score_exit;
+
+  /**
    * This is a copy of FinishConstraints::fai_finish.  If true, then
    * the constraints defined in this class will be ignored.
    */
   bool fai_finish;
+
+  /**
+   * Wait duration after Pilot Event (PEV) and start gate open time.
+   */
+  std::chrono::duration<unsigned> pev_start_wait_time;
+
+  /**
+   * Duration the start gate remains open after Pilot Event and
+   * #pev_start_wait_time.
+   */
+  std::chrono::duration<unsigned> pev_start_window;
 
   void SetDefaults();
 
@@ -68,7 +66,7 @@ struct StartConstraints {
    *
    * @return True if within limits
    */
-  gcc_pure
+  [[gnu::pure]]
   bool CheckSpeed(double ground_speed,
                   const TaskStartMargins *margins=nullptr) const;
 
@@ -82,10 +80,8 @@ struct StartConstraints {
    *
    * @return True if within limits
    */
-  gcc_pure
+  [[gnu::pure]]
   bool CheckHeight(const AircraftState &state,
                    double start_elevation,
                    const TaskStartMargins *margins=nullptr) const;
 };
-
-#endif

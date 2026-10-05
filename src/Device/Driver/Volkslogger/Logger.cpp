@@ -1,31 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Protocol.hpp"
 #include "Device/RecordedFlight.hpp"
 #include "Device/Port/Port.hpp"
-#include "OS/Path.hpp"
+#include "system/OpenPathFile.hpp"
+#include "system/Path.hpp"
 #include "Operation/Operation.hpp"
 #include "vlconv.h"
 #include "grecord.h"
@@ -70,8 +51,7 @@ ReadFlightListInner(Port &port,
                     OperationEnvironment &env)
 {
   env.SetProgressRange(10);
-  if (!Volkslogger::ConnectAndFlush(port, env, 20000))
-    return false;
+  Volkslogger::ConnectAndFlush(port, env, std::chrono::seconds(20));
   env.SetProgressPosition(3);
 
   uint8_t dirbuffer[VLAPI_LOG_MEMSIZE];
@@ -101,8 +81,7 @@ DownloadFlightInner(Port &port, unsigned bulkrate,
                     Path path,
                     OperationEnvironment &env)
 {
-  if (!Volkslogger::ConnectAndFlush(port, env, 20000))
-    return false;
+  Volkslogger::ConnectAndFlush(port, env, std::chrono::seconds(20));
 
   uint8_t logbuffer[VLAPI_LOG_MEMSIZE];
   const size_t length = Volkslogger::ReadFlight(port, bulkrate, env,
@@ -112,7 +91,7 @@ DownloadFlightInner(Port &port, unsigned bulkrate,
   if (length == 0)
     return false;
 
-  FILE *outfile = _tfopen(path.c_str(), _T("wt"));
+  FILE *outfile = OpenPathFile(path, "wt");
   if (outfile == nullptr)
     return false;
 
@@ -140,8 +119,8 @@ VolksloggerDevice::ReadFlightList(RecordedFlightList &flight_list,
   unsigned old_baud_rate = port.GetBaudrate();
   if (old_baud_rate == 9600)
     old_baud_rate = 0;
-  else if (old_baud_rate != 0 && !port.SetBaudrate(9600))
-    return false;
+  else if (old_baud_rate != 0)
+    port.SetBaudrate(9600);
 
   bool success = ReadFlightListInner(port, flight_list, env);
 
@@ -163,8 +142,8 @@ VolksloggerDevice::DownloadFlight(const RecordedFlightInfo &flight,
   unsigned old_baud_rate = port.GetBaudrate();
   if (old_baud_rate == 9600)
     old_baud_rate = 0;
-  else if (old_baud_rate != 0 && !port.SetBaudrate(9600))
-    return false;
+  else if (old_baud_rate != 0)
+    port.SetBaudrate(9600);
 
   bool success = DownloadFlightInner(port, bulkrate,
                                      flight, path, env);

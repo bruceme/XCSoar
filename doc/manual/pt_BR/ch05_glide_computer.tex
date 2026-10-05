@@ -118,7 +118,7 @@ A temperatura máxima prevista no chão é usada pelo algoritmo de previsão de 
 
 \tip É possível configurar o XCSoar para mostrar as janelas básicas quando se inicia o software.
 
-No início do sistema, após encontrado sinal de GPS, se um dispositivo barométrico externo está conectado (ex. Vega, AltairPro, FLARM), o valor de QNH é ajustado automaticamente.  Este ajuste corrige QNH, bem como todas as altitudes barométricas e a altitude do terreno (solo).
+No início do sistema, após encontrado sinal de GPS, se um dispositivo barométrico está conectado (ex. Vega, AltairPro, FLARM, ou o barômetro interno no Android e iOS), o valor de QNH é ajustado automaticamente.  Este ajuste corrige QNH, bem como todas as altitudes barométricas e a altitude do terreno (solo).
 
 O valor de QNH é atualizado somente se a aeronave está no chão por mais de 10 segundos.  Se o XCSoar for reiniciado durante o vôo, QNH são será ajustada.   A atualização só ocorre se a base de dados do terreno é válida na posição atual da aeronave.
 
@@ -157,7 +157,7 @@ A opção de configuração “travar velocidade” (veja seção~\ref{sec:final
 
 Muitos pilotos normalmente reduzem o MacCready quando estão baixos – esta característica é desempenhada automaticamente.  A teoria principal de como isto é implementado no XCSoar é baseada somente no texto de John Cochrane, “MacCready Theory with Uncertain Lift and Limited Al- titude” Technical Soaring 23 (3) (July 1999) 88-96.
 
-\url{http://download.xcsoar.org/papers/john.cochrane/safety_glides.pdf}
+\url{https://www.johnhcochrane.com/s/safety_glides.pdf}
 
 O parâmetro de configuração $\gamma$ (‘STF fator de risco’, nas configurações, sob o menu “Computador de Planeio”) controla como o valor de risco de MacCready é calculado.  O fator $\gamma$ determina a fração do valor atual de MacCready em função da fração de altura.  A fração de altura usada neste cálculo é a média da altura acima do terreno (h) com a altura da subida máxima (normalmente a altura da base da nuvem) acima do térreo  ($h_{top}$).  O ajuste $\gamma$ também representa a fração da subida total disponível (base da nuvem menos o solo) na qual você deseja abandonar a prova e iniciar a preparação para pousar.  Porém, um baixo valor de $\gamma$ indica uma tolerância alta para risco de pouso e um valor alto indica baixo risco.
 

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "LoggerConfigPanel.hpp"
 #include "Profile/Profile.hpp"
@@ -30,9 +10,18 @@ Copyright_License {
 #include "Form/DataField/Enum.hpp"
 #include "Logger/NMEALogger.hpp"
 #include "UtilsSettings.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
+#include "Units/Group.hpp"
+#include "Units/Units.hpp"
+
+using namespace std::chrono;
 
 enum ControlIndex {
   PilotName,
+  CoPilotName,
+  CrewWeightTemplate,
+  SPACER_LOG,
   LoggerTimeStepCruise,
   LoggerTimeStepCircling,
   DisableAutoLogger,
@@ -47,34 +36,51 @@ public:
     :RowFormWidget(UIGlobals::GetDialogLook()) {}
 
 public:
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 };
 
 static constexpr StaticEnumChoice auto_logger_list[] = {
-  { (unsigned)LoggerSettings::AutoLogger::ON, N_("On"), nullptr },
-  { (unsigned)LoggerSettings::AutoLogger::START_ONLY, N_("Start only"), nullptr },
-  { (unsigned)LoggerSettings::AutoLogger::OFF, N_("Off"), nullptr },
-  { 0 }
+  { LoggerSettings::AutoLogger::ON, N_("On") },
+  { LoggerSettings::AutoLogger::START_ONLY, N_("Start only") },
+  { LoggerSettings::AutoLogger::OFF, N_("Off") },
+  nullptr
 };
 
 void
-LoggerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+LoggerConfigPanel::Prepare(ContainerWindow &parent,
+                           const PixelRect &rc) noexcept
 {
   const ComputerSettings &settings_computer = CommonInterface::GetComputerSettings();
   const LoggerSettings &logger = settings_computer.logger;
 
   RowFormWidget::Prepare(parent, rc);
-  AddText(_("Pilot name"), nullptr, logger.pilot_name);
+  AddText(_("Pilot name"),
+          _("Name of the pilot in command, recorded in the IGC flight log."),
+          logger.pilot_name);
 
-  AddTime(_("Time step cruise"),
-          _("This is the time interval between logged points when not circling."),
-          1, 30, 1, logger.time_step_cruise);
+  AddText(_("CoPilot name"),
+          _("The co-pilot name recorded in the IGC flight log."),
+          logger.copilot_name);
+
+  AddFloat(_("Crew weight default"),
+            _("Default for all weight loaded to the glider beyond the empty weight and besides "
+                "the water ballast."),
+            "%.0f %s", "%.0f",
+            0, Units::ToUserMass(300), 5, false, UnitGroup::MASS,
+            logger.crew_mass_template);
+
+  AddSpacer();
+  SetExpertRow(SPACER_LOG);
+
+  AddDuration(_("Time step cruise"),
+              _("This is the time interval between logged points when not circling."),
+              seconds{1}, seconds{30}, seconds{1}, logger.time_step_cruise);
   SetExpertRow(LoggerTimeStepCruise);
 
-  AddTime(_("Time step circling"),
-          _("This is the time interval between logged points when circling."),
-          1, 30, 1, logger.time_step_circling);
+  AddDuration(_("Time step circling"),
+              _("This is the time interval between logged points when circling."),
+              seconds{1}, seconds{30}, seconds{1}, logger.time_step_circling);
   SetExpertRow(LoggerTimeStepCircling);
 
   AddEnum(_("Auto. logger"),
@@ -83,7 +89,7 @@ LoggerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
           auto_logger_list, (unsigned)logger.auto_logger);
   SetExpertRow(DisableAutoLogger);
 
-  AddBoolean(_("NMEA logger"),
+  AddBoolean(_("NMEA Logger"),
              _("Enable the NMEA logger on startup? If this option is disabled, "
                  "the NMEA logger can still be started manually."),
              logger.enable_nmea_logger);
@@ -93,18 +99,26 @@ LoggerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
              logger.enable_flight_logger);
   SetExpertRow(EnableFlightLogger);
 
-  AddText(_("Logger ID"), nullptr, logger.logger_id);
+  AddText(_("Logger ID"),
+          _("The three-letter logger ID used in the IGC filename."),
+          logger.logger_id);
   SetExpertRow(LoggerID);
 }
 
 bool
-LoggerConfigPanel::Save(bool &changed)
+LoggerConfigPanel::Save(bool &changed) noexcept
 {
   ComputerSettings &settings_computer = CommonInterface::SetComputerSettings();
   LoggerSettings &logger = settings_computer.logger;
 
   changed |= SaveValue(PilotName, ProfileKeys::PilotName,
                        logger.pilot_name);
+
+  changed |= SaveValue(CoPilotName, ProfileKeys::CoPilotName,
+                       logger.copilot_name);
+
+  changed |= SaveValue(CrewWeightTemplate, UnitGroup::MASS, ProfileKeys::CrewWeightTemplate,
+                       logger.crew_mass_template);
 
   changed |= SaveValue(LoggerTimeStepCruise, ProfileKeys::LoggerTimeStepCruise,
                        logger.time_step_cruise);
@@ -119,8 +133,8 @@ LoggerConfigPanel::Save(bool &changed)
   changed |= SaveValue(EnableNMEALogger, ProfileKeys::EnableNMEALogger,
                        logger.enable_nmea_logger);
 
-  if (logger.enable_nmea_logger)
-    NMEALogger::enabled = true;
+  if (logger.enable_nmea_logger && backend_components->nmea_logger != nullptr)
+    backend_components->nmea_logger->Enable();
 
   if (SaveValue(EnableFlightLogger, ProfileKeys::EnableFlightLogger,
                 logger.enable_flight_logger)) {
@@ -137,8 +151,8 @@ LoggerConfigPanel::Save(bool &changed)
   return true;
 }
 
-Widget *
+std::unique_ptr<Widget>
 CreateLoggerConfigPanel()
 {
-  return new LoggerConfigPanel();
+  return std::make_unique<LoggerConfigPanel>();
 }

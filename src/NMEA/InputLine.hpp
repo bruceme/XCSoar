@@ -1,37 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "io/CSVLine.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_NMEA_INPUT_LINE_HPP
-#define XCSOAR_NMEA_INPUT_LINE_HPP
-
-#include "IO/CSVLine.hpp"
+struct SpeedVector;
+class Angle;
 
 /**
  * A helper class which can dissect a NMEA input line.
  */
 class NMEAInputLine: public CSVLine {
 public:
-  NMEAInputLine(const char* line);
-};
+  explicit NMEAInputLine(const char* line) noexcept;
 
-#endif
+  /**
+   * Parses non-negative floating-point angle value in degrees.
+   */
+  bool ReadBearing(Angle &value_r) noexcept;
+
+  /**
+   * Read a #SpeedVector: first an angle [degrees], then the norm [kph
+   * == km/h].
+   */
+  bool ReadSpeedVectorKPH(SpeedVector &value_r) noexcept;
+
+  /**
+   * Like ReadSpeedVectorKPH(), but the first column is the norm and
+   * the bearing comes after that.  (A weird ordering only used by the
+   * Leonardo driver.)
+   */
+  bool ReadSwappedSpeedVectorKPH(SpeedVector &value_r) noexcept;
+};

@@ -1,14 +1,14 @@
 ANT = ant
 JAVAC = javac
-JARSIGNER = jarsigner
 KEYTOOL = keytool
+JARSIGNER = jarsigner
 
 ifneq ($(V),2)
 ANT += -quiet
 else
-JARSIGNER += -verbose
 JAVAC += -verbose
 KEYTOOL += -v
+JARSIGNER += -verbose
 endif
 
 ifeq ($(DEBUG),y)

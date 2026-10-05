@@ -1,29 +1,9 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AirspaceXSRenderer.hpp"
 #include "Renderer/ChartRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
 #include "Look/AirspaceLook.hpp"
 #include "Airspace/AirspaceIntersectionVisitor.hpp"
@@ -33,7 +13,7 @@
 #include "Engine/Airspace/Airspaces.hpp"
 #include "Navigation/Aircraft.hpp"
 #include "Geo/GeoVector.hpp"
-#include "Util/StringCompare.hxx"
+#include "util/StringCompare.hxx"
 
 /**
  * Local visitor class used for rendering airspaces in the CrossSectionRenderer
@@ -89,8 +69,8 @@ public:
    */
   void Render(const AbstractAirspace &as) const;
 
-  virtual void Visit(const AbstractAirspace &as) override {
-    Render(as);
+  void Visit(ConstAirspacePtr as) noexcept override {
+    Render(*as);
   }
 };
 
@@ -98,6 +78,7 @@ inline void
 AirspaceIntersectionVisitorSlice::RenderBox(const PixelRect rc,
                                             AirspaceClass type) const
 {
+  const Color text_color = canvas.GetTextColor();
   if (AirspacePreviewRenderer::PrepareFill(canvas, type, airspace_look,
                                            settings)) {
     const auto &class_settings = settings.classes[type];
@@ -115,40 +96,40 @@ AirspaceIntersectionVisitorSlice::RenderBox(const PixelRect rc,
       border.Grow(-(int)border_width);
 
       // Left border
-      canvas.Rectangle(rc.left, rc.top, border.left, rc.bottom);
+      canvas.DrawRectangle({rc.left, rc.top, border.left, rc.bottom});
 
       // Right border
-      canvas.Rectangle(border.right, rc.top, rc.right, rc.bottom);
+      canvas.DrawRectangle({border.right, rc.top, rc.right, rc.bottom});
 
       // Bottom border
-      canvas.Rectangle(border.left, border.bottom, border.right, rc.bottom);
+      canvas.DrawRectangle({border.left, border.bottom, border.right, rc.bottom});
 
       // Top border
-      canvas.Rectangle(border.left, rc.top, border.right, border.top);
+      canvas.DrawRectangle({border.left, rc.top, border.right, border.top});
     } else {
       // .. or fill the entire rect if the outlines would overlap
-      canvas.Rectangle(rc.left, rc.top, rc.right, rc.bottom);
+      canvas.DrawRectangle(rc);
     }
 
-    AirspacePreviewRenderer::UnprepareFill(canvas);
+    AirspacePreviewRenderer::UnprepareFill(canvas, text_color);
   }
 
   // Use transparent brush and type-dependent pen for the outlines
   if (AirspacePreviewRenderer::PrepareOutline(canvas, type, airspace_look,
                                               settings))
-    canvas.Rectangle(rc.left, rc.top, rc.right, rc.bottom);
+    canvas.DrawRectangle(rc);
 }
 
 inline void
 AirspaceIntersectionVisitorSlice::Render(const AbstractAirspace &as) const
 {
-  AirspaceClass type = as.GetType();
+  AirspaceClass asclass = as.GetTypeOrClass();
 
   // No intersections for this airspace
   if (intersections.empty())
     return;
 
-  if (!IsAirspaceTypeVisible(as, settings))
+  if (!IsAirspaceTypeOrClassVisible(as, settings))
     return;
 
   PixelRect rcd;
@@ -159,7 +140,7 @@ AirspaceIntersectionVisitorSlice::Render(const AbstractAirspace &as) const
   else
     rcd.bottom = chart.ScreenY(as.GetBaseAltitude(state));
 
-  int min_x = 1024, max_x = 0;
+  int min_x = canvas.GetWidth(), max_x = 0;
 
   // Iterate through the intersections
   for (const auto &i : intersections) {
@@ -181,14 +162,14 @@ AirspaceIntersectionVisitorSlice::Render(const AbstractAirspace &as) const
       max_x = rcd.right;
 
     // Draw the airspace
-    RenderBox(rcd, type);
+    RenderBox(rcd, asclass);
   }
 
   min_x += Layout::GetTextPadding();
   max_x -= Layout::GetTextPadding();
 
   /* draw the airspace name */
-  const TCHAR *name = as.GetName();
+  const char *name = as.GetName();
   if (name != nullptr && !StringIsEmpty(name) && min_x < max_x) {
     canvas.SetBackgroundTransparent();
     canvas.SetTextColor(COLOR_BLACK);
@@ -196,12 +177,12 @@ AirspaceIntersectionVisitorSlice::Render(const AbstractAirspace &as) const
     const unsigned max_width = max_x - min_x;
 
     const PixelSize name_size = canvas.CalcTextSize(name);
-    const int x = unsigned(name_size.cx) >= max_width
+    const int x = name_size.width >= max_width
       ? min_x
-      : (min_x + max_x - name_size.cx) / 2;
-    const int y = (rcd.top + rcd.bottom - name_size.cy) / 2;
+      : (min_x + max_x - (int)name_size.width) / 2;
+    const int y = (rcd.top + rcd.bottom - (int)name_size.height) / 2;
 
-    canvas.DrawClippedText(x, y, max_x - x, name);
+    canvas.DrawClippedText({x, y}, max_x - x, name);
   }
 }
 

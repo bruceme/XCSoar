@@ -1,27 +1,7 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef ONLINE_CONTEST_HPP
-#define ONLINE_CONTEST_HPP
+#pragma once
 
 #include "Settings.hpp"
 #include "Solvers/OLCSprint.hpp"
@@ -30,10 +10,18 @@
 #include "Solvers/OLCLeague.hpp"
 #include "Solvers/OLCPlus.hpp"
 #include "Solvers/DMStQuad.hpp"
+#include "Solvers/DMStTriangle.hpp"
+#include "Solvers/DMStOR.hpp"
+#include "Solvers/DMStFree.hpp"
 #include "Solvers/XContestFree.hpp"
 #include "Solvers/XContestTriangle.hpp"
 #include "Solvers/OLCSISAT.hpp"
 #include "Solvers/NetCoupe.hpp"
+#include "Solvers/WeglideFree.hpp"
+#include "Solvers/WeglideDistance.hpp"
+#include "Solvers/WeglideFAI.hpp"
+#include "Solvers/WeglideOR.hpp"
+#include "Solvers/Charron.hpp"
 #include "ContestStatistics.hpp"
 
 class Trace;
@@ -55,12 +43,21 @@ class ContestManager
   OLCLeague olc_league;
   OLCPlus olc_plus;
   DMStQuad dmst_quad;
+  DMStTriangle dmst_triangle;
+  DMStOR dmst_or;
+  DMStFree dmst_free;
   XContestFree xcontest_free;
   XContestTriangle xcontest_triangle;
   XContestFree dhv_xc_free;
   XContestTriangle dhv_xc_triangle;
   OLCSISAT sis_at;
   NetCoupe net_coupe;
+  WeglideFree weglide_free;
+  WeglideDistance weglide_distance;
+  WeglideFAI weglide_fai;
+  WeglideOR weglide_or;
+  Charron charron_small;
+  Charron charron_large;
 
 public:
   /**
@@ -81,20 +78,20 @@ public:
                  const Trace &trace_full,
                  const Trace &trace_triangle,
                  const Trace &trace_sprint,
-                 bool predict_triangle=false);
+                 bool predict_triangle=false) noexcept;
 
-  void SetIncremental(bool incremental);
+  void SetIncremental(bool incremental) noexcept;
 
   /**
    * @see ContestDijkstra::SetPredicted()
    */
-  void SetPredicted(const TracePoint &predicted);
+  void SetPredicted(const TracePoint &predicted) noexcept;
 
-  void SetContest(Contest _contest) {
+  void SetContest(Contest _contest) noexcept {
     contest = _contest;
   }
 
-  void SetHandicap(unsigned handicap);
+  void SetHandicap(unsigned handicap) noexcept;
 
   /**
    * Update internal states (non-essential) for housework,
@@ -104,20 +101,25 @@ public:
    * after a number of iterations (incremental search)
    * @return True if internal state changed
    */
-  bool UpdateIdle(bool exhaustive = false);
+  bool UpdateIdle(bool exhaustive = false) noexcept;
 
-  bool SolveExhaustive() {
+  bool SolveExhaustive() noexcept {
     return UpdateIdle(true);
   }
 
   /**
    * Solve exhaustive with custom computational limits for the triangle solver.
    */
-  bool SolveExhaustive(unsigned max_iterations, unsigned max_tree_size) {
+  bool SolveExhaustive(unsigned max_iterations,
+                       unsigned max_tree_size) noexcept {
     olc_fai.SetMaxIterations(max_iterations);
     olc_fai.SetMaxTreeSize(max_tree_size);
     dhv_xc_triangle.SetMaxIterations(max_iterations);
     dhv_xc_triangle.SetMaxTreeSize(max_tree_size);
+    weglide_fai.SetMaxIterations(max_iterations);
+    weglide_fai.SetMaxTreeSize(max_tree_size);
+    dmst_triangle.SetMaxIterations(max_iterations);
+    dmst_triangle.SetMaxTreeSize(max_tree_size);
 
     return SolveExhaustive();
   }
@@ -125,11 +127,9 @@ public:
   /**
    * Reset the task (as if never flown)
    */
-  void Reset();
+  void Reset() noexcept;
 
-  const ContestStatistics &GetStats() const {
+  const ContestStatistics &GetStats() const noexcept {
     return stats;
   }
 };
-
-#endif

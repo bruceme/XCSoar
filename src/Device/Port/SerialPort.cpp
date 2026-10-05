@@ -1,37 +1,20 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "SerialPort.hpp"
-#include "Asset.hpp"
-#include "OS/LogError.hpp"
-#include "OS/Sleep.h"
-#include "OS/OverlappedEvent.hpp"
+#include "Device/Error.hpp"
+#include "Operation/Cancelled.hpp"
+#include "system/Error.hxx"
+#include "system/Sleep.h"
+#include "system/OverlappedEvent.hpp"
+#include "system/UTF8Win32.hpp"
 
-#include <windows.h>
+#include <fileapi.h>
+#include "system/Win32UTF8PathGuard.hpp"
 
 #include <algorithm>
-#include <assert.h>
-#include <tchar.h>
+#include <cassert>
+#include <stdexcept>
 #include <stdio.h>
 
 SerialPort::SerialPort(PortListener *_listener, DataHandler &_handler)
@@ -39,44 +22,42 @@ SerialPort::SerialPort(PortListener *_listener, DataHandler &_handler)
 {
 }
 
-SerialPort::~SerialPort()
+SerialPort::~SerialPort() noexcept
 {
-  BufferedPort::BeginClose();
-
   // Close the communication port.
   if (hPort != INVALID_HANDLE_VALUE) {
     StoppableThread::BeginStop();
 
-    if (CloseHandle(hPort) && !IsEmbedded())
+    if (CloseHandle(hPort))
       Sleep(2000); // needed for windows bug
 
-    Thread::Join();
+    if (Thread::IsDefined())
+      Thread::Join();
   }
-
-  BufferedPort::EndClose();
 }
 
-bool
-SerialPort::Open(const TCHAR *path, unsigned _baud_rate)
+void
+SerialPort::Open(const char *path, unsigned _baud_rate)
 {
   assert(!Thread::IsInside());
 
+  if (path == nullptr || *path == '\0')
+    throw std::runtime_error("Invalid serial port path");
+
   DCB PortDCB;
 
-  // Open the serial port.
-  hPort = CreateFile(path,
-                     GENERIC_READ | GENERIC_WRITE, // Access (read-write) mode
-                     0,            // Share mode
-                     nullptr, // Pointer to the security attribute
-                     OPEN_EXISTING,// How to open the serial port
-                     FILE_FLAG_OVERLAPPED, // Overlapped I/O
-                     nullptr); // Handle to port with attribute to copy
+  // Open the serial port (wide API; path is UTF-8, usually "COMn").
+  hPort = CreateFileW(UTF8ToWide(path).c_str(),
+                      GENERIC_READ | GENERIC_WRITE, // Access (read-write) mode
+                      0,            // Share mode
+                      nullptr, // Pointer to the security attribute
+                      OPEN_EXISTING,// How to open the serial port
+                      FILE_FLAG_OVERLAPPED, // Overlapped I/O
+                      nullptr); // Handle to port with attribute to copy
 
   // If it fails to open the port, return false.
-  if (hPort == INVALID_HANDLE_VALUE) {
-    LogLastError(_T("Failed to open port '%s'"), path);
-    return false;
-  }
+  if (hPort == INVALID_HANDLE_VALUE)
+    throw MakeLastError("Failed to open serial port");
 
   baud_rate = _baud_rate;
 
@@ -106,12 +87,8 @@ SerialPort::Open(const TCHAR *path, unsigned _baud_rate)
   PortDCB.EvtChar = '\n';               // wait for end of line
 
   // Configure the port according to the specifications of the DCB structure.
-  if (!SetCommState(hPort, &PortDCB)) {
-    LogLastError(_T("Failed to configure port '%s'"), path);
-    CloseHandle(hPort);
-    hPort = INVALID_HANDLE_VALUE;
-    return false;
-  }
+  if (!SetCommState(hPort, &PortDCB))
+    throw MakeLastError("Failed to configure serial port");
 
   SetupComm(hPort, 1024, 1024);
 
@@ -124,12 +101,10 @@ SerialPort::Open(const TCHAR *path, unsigned _baud_rate)
   StoppableThread::Start();
 
   StateChanged();
-
-  return true;
 }
 
 PortState
-SerialPort::GetState() const
+SerialPort::GetState() const noexcept
 {
   return hPort != INVALID_HANDLE_VALUE
     ? PortState::READY
@@ -159,7 +134,7 @@ SerialPort::Flush()
 }
 
 int
-SerialPort::GetDataQueued() const
+SerialPort::GetDataQueued() const noexcept
 {
   if (hPort == INVALID_HANDLE_VALUE)
     return -1;
@@ -172,7 +147,7 @@ SerialPort::GetDataQueued() const
 }
 
 int
-SerialPort::GetDataPending() const
+SerialPort::GetDataPending() const noexcept
 {
   if (hPort == INVALID_HANDLE_VALUE)
     return -1;
@@ -184,22 +159,22 @@ SerialPort::GetDataPending() const
     : -1;
 }
 
-Port::WaitResult
+void
 SerialPort::WaitDataPending(OverlappedEvent &overlapped,
                             unsigned timeout_ms) const
 {
   int nbytes = GetDataPending();
   if (nbytes > 0)
-    return WaitResult::READY;
+    return;
   else if (nbytes < 0)
-    return WaitResult::FAILED;
+    throw MakeLastError("ClearCommError() failed");
 
   ::SetCommMask(hPort, EV_RXCHAR);
 
   DWORD dwCommModemStatus;
   if (!::WaitCommEvent(hPort, &dwCommModemStatus, overlapped.GetPointer())) {
-    if (::GetLastError() != ERROR_IO_PENDING)
-      return WaitResult::FAILED;
+    if (const auto error = ::GetLastError(); error != ERROR_IO_PENDING)
+      throw MakeLastError(error, "WaitCommEvent() failed");
 
     switch (overlapped.Wait(timeout_ms)) {
     case OverlappedEvent::FINISHED:
@@ -210,36 +185,38 @@ SerialPort::WaitDataPending(OverlappedEvent &overlapped,
       ::CancelIo(hPort);
       ::SetCommMask(hPort, 0);
       overlapped.Wait();
-      return WaitResult::TIMEOUT;
+      throw DeviceTimeout("WaitCommEvent() timed out");
 
     case OverlappedEvent::CANCELED:
       /* the operation may still be running, we have to cancel it */
       ::CancelIo(hPort);
       ::SetCommMask(hPort, 0);
       overlapped.Wait();
-      return WaitResult::CANCELLED;
+      throw OperationCancelled{};
     }
 
     DWORD result;
     if (!::GetOverlappedResult(hPort, overlapped.GetPointer(), &result, FALSE))
-      return WaitResult::FAILED;
+      throw MakeLastError("GetOverlappedResult() failed");
   }
 
   if ((dwCommModemStatus & EV_RXCHAR) == 0)
-      return WaitResult::FAILED;
+    throw std::runtime_error{"No EV_RXCHAR"};
 
-  return GetDataPending() > 0
-    ? WaitResult::READY
-    : WaitResult::FAILED;
+  nbytes = GetDataPending();
+  if (nbytes < 0)
+    throw MakeLastError("ClearCommError() failed");
+  else if (nbytes == 0)
+    throw std::runtime_error{"No data"};
 }
 
 void
-SerialPort::Run()
+SerialPort::Run() noexcept
 {
   assert(Thread::IsInside());
 
   DWORD dwBytesTransferred;
-  BYTE inbuf[1024];
+  std::byte inbuf[1024];
 
   // JMW added purging of port on open to prevent overflow
   Flush();
@@ -255,16 +232,11 @@ SerialPort::Run()
 
   while (!CheckStopped()) {
 
-    WaitResult result = WaitDataPending(osStatus, INFINITE);
-    switch (result) {
-    case WaitResult::READY:
-      break;
-
-    case WaitResult::TIMEOUT:
+    try {
+      WaitDataPending(osStatus, INFINITE);
+    } catch (const DeviceTimeout &) {
       continue;
-
-    case WaitResult::FAILED:
-    case WaitResult::CANCELLED:
+    } catch (...) {
       ::Sleep(100);
       continue;
     }
@@ -277,7 +249,7 @@ SerialPort::Run()
 
     // Start reading data
 
-    if ((size_t)nbytes > sizeof(inbuf))
+    if ((std::size_t)nbytes > sizeof(inbuf))
       nbytes = sizeof(inbuf);
 
     if (!::ReadFile(hPort, inbuf, nbytes, &dwBytesTransferred,
@@ -300,31 +272,32 @@ SerialPort::Run()
         continue;
     }
 
-    DataReceived(inbuf, dwBytesTransferred);
+    DataReceived({inbuf, dwBytesTransferred});
   }
 
   Flush();
 }
 
-size_t
-SerialPort::Write(const void *data, size_t length)
+std::size_t
+SerialPort::Write(std::span<const std::byte> src)
 {
   DWORD NumberOfBytesWritten;
 
   if (hPort == INVALID_HANDLE_VALUE)
-    return 0;
+    throw std::runtime_error("Port is closed");
 
   OverlappedEvent osWriter;
 
   // Start reading data
-  if (::WriteFile(hPort, data, length, &NumberOfBytesWritten, osWriter.GetPointer()))
+  if (::WriteFile(hPort, src.data(), src.size(),
+                  &NumberOfBytesWritten, osWriter.GetPointer()))
     return NumberOfBytesWritten;
 
-  if (::GetLastError() != ERROR_IO_PENDING)
-    return 0;
+  if (auto error = ::GetLastError(); error != ERROR_IO_PENDING)
+    throw MakeLastError(error, "Port write failed");
 
   // Let's wait for ReadFile() to finish
-  unsigned timeout_ms = 1000 + length * 10;
+  unsigned timeout_ms = 1000 + src.size() * 10;
   switch (osWriter.Wait(timeout_ms)) {
   case OverlappedEvent::FINISHED:
     // Get results
@@ -335,7 +308,7 @@ SerialPort::Write(const void *data, size_t length)
     ::CancelIo(hPort);
     ::SetCommMask(hPort, 0);
     osWriter.Wait();
-    return 0;
+    throw DeviceTimeout{"Port write timeout"};
   }
 }
 
@@ -369,7 +342,7 @@ SerialPort::SetRxTimeout(unsigned Timeout)
 }
 
 unsigned
-SerialPort::GetBaudrate() const
+SerialPort::GetBaudrate() const noexcept
 {
   if (hPort == INVALID_HANDLE_VALUE)
     return 0;
@@ -380,7 +353,7 @@ SerialPort::GetBaudrate() const
   return PortDCB.BaudRate;
 }
 
-bool
+void
 SerialPort::SetBaudrate(unsigned BaudRate)
 {
   COMSTAT ComStat;
@@ -388,7 +361,7 @@ SerialPort::SetBaudrate(unsigned BaudRate)
   DWORD dwErrors;
 
   if (hPort == INVALID_HANDLE_VALUE)
-    return false;
+    throw std::runtime_error("Port is closed");
 
   do {
     ClearCommError(hPort, &dwErrors, &ComStat);
@@ -400,5 +373,6 @@ SerialPort::SetBaudrate(unsigned BaudRate)
 
   PortDCB.BaudRate = BaudRate;
 
-  return SetCommState(hPort, &PortDCB);
+  if (!SetCommState(hPort, &PortDCB))
+    throw MakeLastError("Failed to set baud rate");
 }

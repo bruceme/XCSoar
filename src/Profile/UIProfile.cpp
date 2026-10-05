@@ -1,28 +1,8 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "UIProfile.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "Map.hpp"
 #include "MapProfile.hpp"
 #include "InfoBoxConfig.hpp"
@@ -44,6 +24,13 @@ void
 Profile::Load(const ProfileMap &map, DisplaySettings &settings)
 {
   map.GetEnum(ProfileKeys::MapOrientation, settings.orientation);
+  map.Get(ProfileKeys::CursorSize, settings.cursor_size);
+  map.Get(ProfileKeys::CursorColorsInverted, settings.invert_cursor_colors);
+  map.Get(ProfileKeys::FullScreen, settings.full_screen);
+  map.Get(ProfileKeys::InfoBoxAreaStretch, settings.infobox_area_stretch);
+  settings.infobox_area_stretch &= DisplaySettings::INFOBOX_AREA_STRETCH_ALL;
+  map.GetEnum(ProfileKeys::StatusBar, settings.status_bar);
+  map.GetEnum(ProfileKeys::DisplayType, settings.display_type);
 }
 
 void
@@ -63,6 +50,7 @@ Profile::Load(const ProfileMap &map, VarioSettings &settings)
   map.Get(ProfileKeys::AppGaugeVarioBallast, settings.show_ballast);
   map.Get(ProfileKeys::AppGaugeVarioGross, settings.show_gross);
   map.Get(ProfileKeys::AppAveNeedle, settings.show_average_needle);
+  map.Get(ProfileKeys::AppAveThermalNeedle, settings.show_thermal_average_needle);
 }
 
 void
@@ -73,6 +61,8 @@ Profile::Load(const ProfileMap &map, TrafficSettings &settings)
   map.Get(ProfileKeys::FlarmAutoZoom, settings.auto_zoom);
   map.Get(ProfileKeys::FlarmNorthUp, settings.north_up);
   map.GetEnum(ProfileKeys::FlarmLocation, settings.gauge_location);
+  map.Get(ProfileKeys::FlarmRadarZoom, settings.radar_zoom);
+  map.Get(ProfileKeys::NoPositionTargetDistanceRing, settings.no_position_target_distance_ring);
 }
 
 void
@@ -88,6 +78,7 @@ Profile::Load(const ProfileMap &map, VarioSoundSettings &settings)
 {
   map.Get(ProfileKeys::SoundAudioVario, settings.enabled);
   map.Get(ProfileKeys::SoundVolume, settings.volume);
+  map.GetEnum(ProfileKeys::VarioSoundSwitchingMode, settings.switching_mode);
   map.Get(ProfileKeys::VarioDeadBandEnabled, settings.dead_band_enabled);
 
   map.Get(ProfileKeys::VarioMinFrequency, settings.min_frequency);
@@ -128,8 +119,17 @@ Profile::Load(const ProfileMap &map, UISettings &settings)
   if (settings.custom_dpi < 120 || settings.custom_dpi > 520)
     settings.custom_dpi = 0;
 
-  map.Get(ProfileKeys::EnableTAGauge, settings.enable_thermal_assistant_gauge);
-
+  /* Migrate old data if TA enabled */
+  if (!map.GetEnum(ProfileKeys::TAPosition, settings.thermal_assistant_position)) {
+    bool enable_thermal_assistant_gauge_obsolete;
+    if (map.Get(ProfileKeys::EnableTAGauge,
+                enable_thermal_assistant_gauge_obsolete)) {
+      settings.thermal_assistant_position =
+        enable_thermal_assistant_gauge_obsolete
+        ? UISettings::ThermalAssistantPosition::BOTTOM_LEFT
+        : UISettings::ThermalAssistantPosition::OFF;
+    }
+  }
   map.Get(ProfileKeys::AirspaceWarningDialog, settings.enable_airspace_warning_dialog);
 
   map.GetEnum(ProfileKeys::AppStatusMessageAlignment, settings.popup_message_position);
@@ -137,6 +137,22 @@ Profile::Load(const ProfileMap &map, UISettings &settings)
   map.GetEnum(ProfileKeys::HapticFeedback, settings.haptic_feedback);
 
   map.Get(ProfileKeys::ShowMenuButton, settings.show_menu_button);
+  map.Get(ProfileKeys::ShowZoomButton, settings.show_zoom_button);
+  map.Get(ProfileKeys::ShowQuickMenuButton, settings.show_quickmenu_button);
+
+  if (!map.GetEnum(ProfileKeys::DarkMode, settings.dark_mode)) {
+    /* migrate the old AppInverseInfoBox setting */
+    bool inverse;
+    if (map.Get(ProfileKeys::AppInverseInfoBox, inverse))
+      settings.dark_mode = inverse
+        ? UISettings::DarkMode::ON
+        : UISettings::DarkMode::OFF;
+  }
+
+#ifdef KOBO
+  /* Dark mode is not supported on e-paper displays. */
+  settings.dark_mode = UISettings::DarkMode::OFF;
+#endif
 
   Load(map, settings.format);
   Load(map, settings.map);

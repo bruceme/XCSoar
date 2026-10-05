@@ -1,67 +1,75 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlarmTrafficWindow.hpp"
 #include "FLARM/Traffic.hpp"
 #include "FLARM/Friends.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
 #include "Formatter/UserUnits.hpp"
 #include "Units/Units.hpp"
 #include "Math/Screen.hpp"
 #include "Language/Language.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 #include "Look/FlarmTrafficLook.hpp"
+#include "Interface.hpp"
 
 #include <algorithm>
 
-#include <assert.h>
+#include <cassert>
 #include <stdio.h>
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scope.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
 #endif
 
+/** Big-radar arrow template spans 18 units vertically (-10 to +8). */
+static constexpr unsigned RADAR_ARROW_SPAN = 18;
+static constexpr unsigned RADAR_ARROW_SMALL_SPAN = 9;
+
+unsigned
+FlarmTrafficWindow::ScaleRadarPermille(unsigned radar_radius,
+                                       unsigned permille) noexcept
+{
+  return std::max(radar_radius * permille / 1000u, 1u);
+}
+
+unsigned
+FlarmTrafficWindow::RadarTargetRingRadius(unsigned index,
+                                          unsigned radar_radius) noexcept
+{
+  const unsigned permille = index == 0
+    ? TARGET_RING_PERMILLE
+    : TARGET_RING_OUTER_PERMILLE;
+  return ScaleRadarPermille(radar_radius, permille);
+}
+
+int
+FlarmTrafficWindow::RadarArrowScale(bool small_radar,
+                                    unsigned radar_radius) noexcept
+{
+  const unsigned arrow_span = small_radar
+    ? RADAR_ARROW_SMALL_SPAN
+    : RADAR_ARROW_SPAN;
+  const unsigned icon_size =
+    ScaleRadarPermille(radar_radius, ARROW_ICON_PERMILLE);
+
+  return std::max(int(icon_size) * 50 / int(arrow_span), 1);
+}
 
 FlarmTrafficWindow::FlarmTrafficWindow(const FlarmTrafficLook &_look,
                                        unsigned _h_padding,
                                        unsigned _v_padding,
-                                       bool _small)
+                                       bool _small) noexcept
   :look(_look),
-   distance(2000),
-   selection(-1), warning(-1),
-   h_padding(_h_padding), v_padding(_v_padding),
-   small(_small),
-   enable_north_up(false),
-   heading(Angle::Zero()),
-   side_display_type(SIDE_INFO_VARIO)
+   radar_renderer(_h_padding, _v_padding),
+   small(_small)
 {
   data.Clear();
-  data_modified.Clear();
 }
 
 bool
-FlarmTrafficWindow::WarningMode() const
+FlarmTrafficWindow::WarningMode() const noexcept
 {
   assert(warning < (int)data.list.size());
   assert(warning < 0 || data.list[warning].IsDefined());
@@ -71,21 +79,15 @@ FlarmTrafficWindow::WarningMode() const
 }
 
 void
-FlarmTrafficWindow::OnResize(PixelSize new_size)
+FlarmTrafficWindow::OnResize(PixelSize new_size) noexcept
 {
   PaintWindow::OnResize(new_size);
 
-  const unsigned half_width = new_size.cx / 2;
-  const unsigned half_height = new_size.cy / 2;
-
-  // Calculate Radar size
-  radius = std::min(half_width - h_padding, half_height - v_padding);
-  radar_mid.x = half_width;
-  radar_mid.y = half_height;
+  radar_renderer.UpdateLayout(PixelRect{new_size});
 }
 
 void
-FlarmTrafficWindow::SetTarget(int i)
+FlarmTrafficWindow::SetTarget(int i) noexcept
 {
   assert(i < (int)data.list.size());
   assert(i < 0 || data.list[i].IsDefined());
@@ -101,7 +103,7 @@ FlarmTrafficWindow::SetTarget(int i)
  * Tries to select the next target, if impossible selection = -1
  */
 void
-FlarmTrafficWindow::NextTarget()
+FlarmTrafficWindow::NextTarget() noexcept
 {
   // If warning is displayed -> prevent selector movement
   if (WarningMode())
@@ -125,7 +127,7 @@ FlarmTrafficWindow::NextTarget()
  * Tries to select the previous target, if impossible selection = -1
  */
 void
-FlarmTrafficWindow::PrevTarget()
+FlarmTrafficWindow::PrevTarget() noexcept
 {
   // If warning is displayed -> prevent selector movement
   if (WarningMode())
@@ -150,7 +152,8 @@ FlarmTrafficWindow::PrevTarget()
  * to select the next one
  */
 void
-FlarmTrafficWindow::UpdateSelector(const FlarmId id, const PixelPoint pt)
+FlarmTrafficWindow::UpdateSelector(const FlarmId id,
+                                   const PixelPoint pt) noexcept
 {
   // Update #selection
   if (!id.IsDefined())
@@ -163,7 +166,7 @@ FlarmTrafficWindow::UpdateSelector(const FlarmId id, const PixelPoint pt)
   // on the internal list
   if (selection < 0 && (
       pt.x < 0 || pt.y < 0 ||
-      !SelectNearTarget(pt, radius * 2)) )
+      !SelectNearTarget(pt, radar_renderer.GetRadius() * 2)) )
     NextTarget();
 }
 
@@ -172,7 +175,7 @@ FlarmTrafficWindow::UpdateSelector(const FlarmId id, const PixelPoint pt)
  * alarm level and saves it to "warning".
  */
 void
-FlarmTrafficWindow::UpdateWarnings()
+FlarmTrafficWindow::UpdateWarnings() noexcept
 {
   const FlarmTraffic *alert = data.FindMaximumAlert();
   warning = alert != NULL
@@ -185,10 +188,10 @@ FlarmTrafficWindow::UpdateWarnings()
  */
 void
 FlarmTrafficWindow::Update(Angle new_direction, const TrafficList &new_data,
-                           const TeamCodeSettings &new_settings)
+                           const TeamCodeSettings &new_settings) noexcept
 {
   static constexpr Angle min_heading_delta = Angle::Degrees(2);
-  if (new_data.modified == data_modified &&
+  if (new_data.modified == data.modified &&
       (heading - new_direction).Absolute() < min_heading_delta)
     /* no change - don't redraw */
     return;
@@ -204,10 +207,9 @@ FlarmTrafficWindow::Update(Angle new_direction, const TrafficList &new_data,
     pt.y = -100;
   }
 
-  data_modified = new_data.modified;
   heading = new_direction;
-  fr.SetAngle(-heading);
-  fir.SetAngle(heading);
+  fr = -heading;
+  fir = heading;
   data = new_data;
   settings = new_settings;
 
@@ -222,10 +224,10 @@ FlarmTrafficWindow::Update(Angle new_direction, const TrafficList &new_data,
  * @param d Distance in meters to the own plane
  */
 double
-FlarmTrafficWindow::RangeScale(double d) const
+FlarmTrafficWindow::RangeScale(double d) const noexcept
 {
   d /= distance;
-  return std::min(d, 1.) * radius;
+  return std::min(d, 1.) * radar_renderer.GetRadius();
 }
 
 /**
@@ -233,21 +235,25 @@ FlarmTrafficWindow::RangeScale(double d) const
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::PaintRadarNoTraffic(Canvas &canvas) const
+FlarmTrafficWindow::PaintRadarNoTraffic(Canvas &canvas) const noexcept
 {
   if (small)
     return;
 
-  const TCHAR* str = _("No Traffic");
+  const char* str = _("No Traffic");
   canvas.Select(look.no_traffic_font);
   PixelSize ts = canvas.CalcTextSize(str);
   canvas.SetTextColor(look.default_color);
-  canvas.DrawText(radar_mid.x - (ts.cx / 2), radar_mid.y - (radius / 2), str);
+  canvas.DrawText(
+      radar_renderer.GetCenter() -
+          PixelSize{ts.width / 2, radar_renderer.GetRadius() -
+                                      radar_renderer.GetRadius() / 4},
+      str);
 }
 
-gcc_const
+[[gnu::const]]
 static const Pen *
-FlarmColorPen(const FlarmTrafficLook &look, FlarmColor color)
+FlarmColorPen(const FlarmTrafficLook &look, FlarmColor color) noexcept
 {
   switch (color) {
   case FlarmColor::NONE:
@@ -273,6 +279,46 @@ FlarmColorPen(const FlarmTrafficLook &look, FlarmColor color)
   return nullptr;
 }
 
+void
+FlarmTrafficWindow::PaintNoPositionTarget(Canvas &canvas,
+                                        const PixelPoint &target_point,
+                                        const PixelPoint &radar_center,
+                                        double scale,
+                                        bool small,
+                                        const Pen *target_pen,
+                                        const Color *text_color) const noexcept
+{
+  const bool show_ring = CommonInterface::GetUISettings().traffic.no_position_target_distance_ring;
+  if (show_ring) {
+    // No position target - Paint a distance ring
+    const int radius = std::max(1, iround(scale));
+    canvas.Select(look.radar_pen);
+    // dashed ring: 10° on, 10° off
+    for (int arc = 0; arc < 360; arc += 20) {
+      canvas.DrawArc(radar_center, radius,
+                    Angle::Degrees(arc), Angle::Degrees(arc + 10));
+    }
+    canvas.Select(*target_pen);
+  }
+
+  // No position target - Paint a dot
+  const unsigned radar_radius = radar_renderer.GetRadius();
+  const int dot_radius = std::max(1,
+    int(ScaleRadarPermille(radar_radius, NOPOSTARGET_PERMILLE)));
+  canvas.DrawCircle(target_point, dot_radius);
+  // No position target - print exclamation mark in the middle over the dot
+  if (!small) {
+    const char em[] = "!";
+    const PixelSize text_size = canvas.CalcTextSize(em);
+    const PixelPoint text_position {
+      target_point.x - int(text_size.width / 2),
+      target_point.y - int(text_size.height / 2)
+    };
+    canvas.SetTextColor(*text_color);
+    canvas.DrawText(text_position, em);
+  }
+}
+
 /**
  * Paints the traffic symbols on the given canvas
  * @param canvas The canvas to paint on
@@ -280,8 +326,14 @@ FlarmColorPen(const FlarmTrafficLook &look, FlarmColor color)
 void
 FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
                                      const FlarmTraffic &traffic,
-                                     unsigned i)
+                                     unsigned i) noexcept
 {
+  /* Absolute traffic (GDL90 / ADS-B) has no relatives until FlarmComputer
+     has ownship GPS.  Distance zero would plot on the aircraft — skip
+     until relatives are usable.  Classic FLARM already sends N/E. */
+  if (traffic.absolute_location && traffic.distance.IsZero())
+    return;
+
   // Save relative East/North
   DoublePoint2D p(traffic.relative_east, -traffic.relative_north);
 
@@ -289,7 +341,7 @@ FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
   double scale = RangeScale(traffic.distance);
 
   // Don't display distracting, far away targets in WarningMode
-  if (WarningMode() && !traffic.HasAlarm() && scale == radius)
+  if (WarningMode() && !traffic.HasAlarm() && scale == radar_renderer.GetRadius())
     return;
 
   // x and y are not between 0 and 1 (distance will be handled via scale)
@@ -302,18 +354,18 @@ FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
   }
 
   if (!enable_north_up) {
-    // Rotate x and y to have a track up display
+    // Track-up: rotate even when east or north is zero (cardinal bearing).
     p = fr.Rotate(p);
   }
 
   // Calculate screen coordinates
-  sc[i].x = radar_mid.x + iround(p.x * scale);
-  sc[i].y = radar_mid.y + iround(p.y * scale);
+  const auto radar_mid = radar_renderer.GetCenter();
+  sc[i].x = (traffic.relative_east) ? radar_mid.x + iround(p.x * scale) : radar_mid.x;
+  sc[i].y = (traffic.relative_east) ? radar_mid.y + iround(p.y * scale) : radar_mid.y - scale;
 
   const Color *text_color;
   const Pen *target_pen, *circle_pen;
-  const Brush *target_brush, *arrow_brush;
-  bool hollow_brush = false;
+  const Brush *target_brush = nullptr, *arrow_brush;
   unsigned circles = 0;
 
   // Set the arrow color depending on alarm level
@@ -340,7 +392,6 @@ FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
       text_color = &look.passive_color;
       target_pen = &look.passive_pen;
       arrow_brush = &look.passive_brush;
-      hollow_brush = true;
     } else {
       // Search for team color
       const FlarmColor team_color = FlarmFriends::GetFriendColor(traffic.id);
@@ -353,37 +404,37 @@ FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
         // unnecessary - prevents "may be used uninitialized" compiler warning
         circle_pen = &look.default_pen;
       }
+      // same colours of FLARM targets as in map display
+      text_color = &look.default_color;
+      target_pen = &look.radar_pen;
+      arrow_brush = &look.default_brush;
 
-      if (!small && static_cast<unsigned> (selection) == i) {
-        text_color = &look.selection_color;
-        target_brush = arrow_brush = &look.selection_brush;
-        target_pen = &look.selection_pen;
+      if (traffic.relative_altitude > (const RoughAltitude)50) {
+        target_brush = &look.safe_above_brush;
+      } else if (traffic.relative_altitude > (const RoughAltitude)-50) {
+        target_brush = &look.warning_in_altitude_range_brush;
       } else {
-        hollow_brush = true;
-        if (traffic.IsPassive()) {
-          text_color = &look.passive_color;
-          target_pen = &look.passive_pen;
-          arrow_brush = &look.passive_brush;
-        } else {
-          text_color = &look.default_color;
-          target_pen = &look.default_pen;
-          arrow_brush = &look.default_brush;
-        }
+        target_brush = &look.safe_below_brush;
       }
+
+      if (!small && static_cast<unsigned> (selection) == i)
+        target_pen = &look.default_pen;
     }
     break;
   }
 
   if (circles > 0) {
+    const unsigned radar_radius = radar_renderer.GetRadius();
+
     canvas.SelectHollowBrush();
     canvas.Select(*circle_pen);
-    canvas.DrawCircle(sc[i].x, sc[i].y, Layout::FastScale(small ? 8 : 16));
+    canvas.DrawCircle(sc[i], RadarTargetRingRadius(0, radar_radius));
     if (circles == 2)
-      canvas.DrawCircle(sc[i].x, sc[i].y, Layout::FastScale(small ? 10 : 19));
+      canvas.DrawCircle(sc[i], RadarTargetRingRadius(1, radar_radius));
   }
 
   // Create an arrow polygon
-  BulkPixelPoint Arrow[5];
+  BulkPixelPoint Arrow[4];
   if (small) {
     Arrow[0].x = -3;
     Arrow[0].y = 4;
@@ -393,8 +444,6 @@ FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
     Arrow[2].y = 4;
     Arrow[3].x = 0;
     Arrow[3].y = 2;
-    Arrow[4].x = -3;
-    Arrow[4].y = 4;
   } else {
     Arrow[0].x = -6;
     Arrow[0].y = 8;
@@ -404,75 +453,98 @@ FlarmTrafficWindow::PaintRadarTarget(Canvas &canvas,
     Arrow[2].y = 8;
     Arrow[3].x = 0;
     Arrow[3].y = 5;
-    Arrow[4].x = -6;
-    Arrow[4].y = 8;
   }
 
   // Rotate and shift the arrow
-  PolygonRotateShift(Arrow, 5, sc[i],
+  PolygonRotateShift(Arrow, sc[i],
                      traffic.track - (enable_north_up ?
-                                             Angle::Zero() : heading));
+                                      Angle::Zero() : heading),
+                     RadarArrowScale(small, radar_renderer.GetRadius()));
 
   // Select pen and brush
+  if (target_brush == nullptr) {
+    target_brush = &look.passive_brush;
+    target_pen = &look.passive_pen;
+    text_color = &look.passive_color;
+  }
   canvas.Select(*target_pen);
-  if (hollow_brush)
-    canvas.SelectHollowBrush();
-  else
-    canvas.Select(*target_brush);
+  canvas.Select(*target_brush);
+  canvas.SetTextColor(*text_color);
 
-  // Draw the polygon
-  canvas.DrawPolygon(Arrow, 5);
+  // Select font; prepare object sizes and distances by text height as reference
+  canvas.Select(look.label_font);
+
+  canvas.SetBackgroundTransparent();
+  if (!traffic.relative_east) {
+    // No position targets - Paint the dot
+    PaintNoPositionTarget(canvas, sc[i], radar_mid, scale, small,
+                          target_pen, text_color);
+  } else
+    // All other targets - Draw the polygon
+    canvas.DrawPolygon(Arrow, 4);
 
   if (small) {
     if (!WarningMode() || traffic.HasAlarm())
       PaintTargetInfoSmall(canvas, traffic, i, *text_color, *arrow_brush);
-
     return;
   }
 
-  // if warning exists -> don't draw vertical speeds
+  // if warning exists -> don't draw side labels on other targets
   if (WarningMode())
     return;
 
-  // if vertical speed to small or negative -> skip this one
-  if (side_display_type == SIDE_INFO_VARIO &&
-      (!traffic.climb_rate_avg30s_available ||
-       traffic.climb_rate_avg30s < 0.5 ||
-       traffic.IsPowered()))
-      return;
-
-  // Select font
-  canvas.SetBackgroundTransparent();
   canvas.Select(look.side_info_font);
-
-  // Format string
-  TCHAR tmp[10];
-
-  if (side_display_type == SIDE_INFO_VARIO)
-    FormatUserVerticalSpeed(traffic.climb_rate_avg30s, tmp, false);
-  else
-    FormatRelativeUserAltitude(traffic.relative_altitude, tmp, true);
-
-  PixelSize sz = canvas.CalcTextSize(tmp);
-
-  // Draw vertical speed shadow
-  canvas.SetTextColor(COLOR_WHITE);
-  canvas.DrawText(sc[i].x + Layout::FastScale(11) + 1,
-                  sc[i].y - sz.cy / 2 + 1, tmp);
-  canvas.DrawText(sc[i].x + Layout::FastScale(11) - 1,
-                  sc[i].y - sz.cy / 2 - 1, tmp);
-
-  // Select color
   canvas.SetTextColor(*text_color);
 
-  // Draw vertical speed
-  canvas.DrawText(sc[i].x + Layout::FastScale(11), sc[i].y - sz.cy / 2, tmp);
+  const unsigned radar_radius = radar_renderer.GetRadius();
+  const bool selected = static_cast<unsigned>(selection) == i;
+
+  // Draw callsign for registered targets (FLARMnet / OGN / user names)
+  if (traffic.HasName()) {
+    const PixelPoint ts{
+      sc[i].x + int(ScaleRadarPermille(radar_radius, SIDE_LABEL_X_PERMILLE)),
+      sc[i].y - int(ScaleRadarPermille(radar_radius, SIDE_LABEL_Y_PERMILLE)),
+    };
+
+    canvas.DrawText(ts, traffic.name);
+  }
+
+  // Value-initialize: an uninitialized StaticString keeps prior stack
+  // contents, so a target without side data would reuse the previous
+  // target's vario/altitude label (#2731).
+  StaticString<10> side_text{};
+
+  if (side_display_type == SideInfoType::VARIO) {
+    if (traffic.climb_rate_avg30s_available &&
+        traffic.climb_rate_avg30s > 0.5 &&
+        !traffic.IsPowered())
+      FormatUserVerticalSpeed(traffic.climb_rate_avg30s,
+                              side_text.data(), false);
+  } else {
+    const int relalt =
+      iround(Units::ToUserAltitude(traffic.relative_altitude) / 100);
+    if (relalt != 0)
+      side_text.Format("%+d", relalt);
+  }
+
+  const PixelPoint tp{
+    sc[i].x + int(ScaleRadarPermille(radar_radius, SIDE_LABEL_X_PERMILLE)),
+    sc[i].y - int(ScaleRadarPermille(radar_radius,
+                                     SIDE_LABEL_Y_CENTER_PERMILLE)),
+  };
+
+  // Side vario/altitude is omitted on the selected target; the info panel
+  // already shows those values in the corners.
+  if (!side_text.empty() && !selected)
+    canvas.DrawText(tp, side_text);
 }
 
 void
-FlarmTrafficWindow::PaintTargetInfoSmall(
-    Canvas &canvas, const FlarmTraffic &traffic, unsigned i,
-    const Color &text_color, const Brush &arrow_brush)
+FlarmTrafficWindow::PaintTargetInfoSmall(Canvas &canvas,
+                                         const FlarmTraffic &traffic,
+                                         unsigned i,
+                                         const Color &text_color,
+                                         const Brush &arrow_brush) noexcept
 {
   const short relalt =
       iround(Units::ToUserAltitude(traffic.relative_altitude) / 100);
@@ -483,7 +555,7 @@ FlarmTrafficWindow::PaintTargetInfoSmall(
 
   // Write the relativ altitude devided by 100 to the Buffer
   StaticString<10> buffer;
-  buffer.Format(_T("%d"), abs(relalt));
+  const auto relalt_s = buffer.Format("%d", abs(relalt));
 
   // Select font
   canvas.SetBackgroundTransparent();
@@ -491,12 +563,16 @@ FlarmTrafficWindow::PaintTargetInfoSmall(
   canvas.SetTextColor(text_color);
 
   // Calculate size of the output string
-  PixelSize tsize = canvas.CalcTextSize(buffer);
+  PixelSize tsize = canvas.CalcTextSize(relalt_s);
 
-  unsigned dist = Layout::FastScale(traffic.HasAlarm() ? 12 : 8);
+  const unsigned radar_radius = radar_renderer.GetRadius();
+  const unsigned dist = ScaleRadarPermille(radar_radius,
+    traffic.HasAlarm()
+    ? ALT_LABEL_ALARM_DIST_PERMILLE
+    : ALT_LABEL_DIST_PERMILLE);
 
   // Draw string
-  canvas.DrawText(sc[i].x + dist, sc[i].y - tsize.cy / 2, buffer);
+  canvas.DrawText(sc[i].At(int(dist), -int(tsize.height / 2)), relalt_s);
 
   // Set target_brush for the up/down arrow
   canvas.Select(arrow_brush);
@@ -517,12 +593,14 @@ FlarmTrafficWindow::PaintTargetInfoSmall(
     flip = -1;
 
   // Shift the arrow to the right position
+  const unsigned tri_scale =
+    ScaleRadarPermille(radar_radius, ALT_TRIANGLE_PERMILLE);
   for (int j = 0; j < 3; j++) {
-    triangle[j].x = Layout::FastScale(triangle[j].x);
-    triangle[j].y = Layout::FastScale(triangle[j].y);
+    triangle[j].x = int(tri_scale) * triangle[j].x / 3;
+    triangle[j].y = int(tri_scale) * triangle[j].y / 3;
 
-    triangle[j].x = sc[i].x + dist + triangle[j].x + tsize.cx / 2;
-    triangle[j].y = sc[i].y + flip * (triangle[j].y  - tsize.cy / 2);
+    triangle[j] = sc[i].At(int(dist) + triangle[j].x + int(tsize.width / 2),
+                           flip * (triangle[j].y - int(tsize.height / 2)));
   }
   triangle[3].x = triangle[0].x;
   triangle[3].y = triangle[0].y;
@@ -537,7 +615,7 @@ FlarmTrafficWindow::PaintTargetInfoSmall(
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::PaintRadarTraffic(Canvas &canvas)
+FlarmTrafficWindow::PaintRadarTraffic(Canvas &canvas) noexcept
 {
   if (data.IsEmpty()) {
     PaintRadarNoTraffic(canvas);
@@ -577,23 +655,25 @@ FlarmTrafficWindow::PaintRadarTraffic(Canvas &canvas)
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::PaintRadarPlane(Canvas &canvas) const
+FlarmTrafficWindow::PaintRadarPlane(Canvas &canvas) const noexcept
 {
+  const auto radar_mid = radar_renderer.GetCenter();
+  const unsigned radar_radius = radar_renderer.GetRadius();
+
   canvas.Select(look.plane_pen);
 
-  IntPoint2D p1(Layout::FastScale(small ? 5 : 10),
-                -Layout::FastScale(small ? 1 : 2));
-  IntPoint2D p2(-p1.x, p1.y);
+  PixelPoint p1(int(ScaleRadarPermille(radar_radius, PLANE_WING_X_PERMILLE)),
+                  -int(ScaleRadarPermille(radar_radius, PLANE_WING_Y_PERMILLE)));
+  PixelPoint p2(-p1.x, p1.y);
 
   if (enable_north_up) {
     p1 = fir.Rotate(p1);
     p2 = fir.Rotate(p2);
   }
 
-  canvas.DrawLine(radar_mid.x + p1.x, radar_mid.y + p1.y,
-                  radar_mid.x + p2.x, radar_mid.y + p2.y);
+  canvas.DrawLine(radar_mid + p1, radar_mid + p2);
 
-  p2 = { 0, Layout::FastScale(small ? 3 : 6) };
+  p2 = { 0, int(ScaleRadarPermille(radar_radius, PLANE_FUSE_PERMILLE)) };
   p1 = { 0, -p2.y };
 
   if (enable_north_up) {
@@ -601,10 +681,9 @@ FlarmTrafficWindow::PaintRadarPlane(Canvas &canvas) const
     p2 = fir.Rotate(p2);
   }
 
-  canvas.DrawLine(radar_mid.x + p1.x, radar_mid.y + p1.y,
-                  radar_mid.x + p2.x, radar_mid.y + p2.y);
+  canvas.DrawLine(radar_mid + p1, radar_mid + p2);
 
-  p1.x = Layout::FastScale(small ? 2 : 4);
+  p1.x = int(ScaleRadarPermille(radar_radius, PLANE_WING_TIP_PERMILLE));
   p1.y = p1.x;
   p2 = { -p1.x, p1.y };
 
@@ -613,8 +692,14 @@ FlarmTrafficWindow::PaintRadarPlane(Canvas &canvas) const
     p2 = fir.Rotate(p2);
   }
 
-  canvas.DrawLine(radar_mid.x + p1.x, radar_mid.y + p1.y,
-                  radar_mid.x + p2.x, radar_mid.y + p2.y);
+  canvas.DrawLine(radar_mid + p1, radar_mid + p2);
+}
+
+[[gnu::const]]
+static PixelPoint
+iround(DoublePoint2D p) noexcept
+{
+  return {iround(p.x), iround(p.y)};
 }
 
 /**
@@ -622,24 +707,34 @@ FlarmTrafficWindow::PaintRadarPlane(Canvas &canvas) const
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::PaintNorth(Canvas &canvas) const
+FlarmTrafficWindow::PaintNorth(Canvas &canvas) const noexcept
 {
   DoublePoint2D p(0, -1);
   if (!enable_north_up) {
     p = fr.Rotate(p);
   }
 
-  canvas.SetTextColor(look.background_color);
   canvas.Select(look.radar_pen);
   canvas.Select(look.radar_brush);
   canvas.SetBackgroundTransparent();
   canvas.Select(look.label_font);
 
-  PixelSize s = canvas.CalcTextSize(_T("N"));
-  canvas.DrawCircle(radar_mid.x + iround(p.x * radius),
-                radar_mid.y + iround(p.y * radius), s.cy * 0.65);
-  canvas.DrawText(radar_mid.x + iround(p.x * radius) - s.cx / 2,
-                  radar_mid.y + iround(p.y * radius) - s.cy / 2, _T("N"));
+  PixelSize s = canvas.CalcTextSize("N");
+  const auto radar_mid = radar_renderer.GetCenter();
+  const PixelPoint q = radar_mid + iround(p * (radar_renderer.GetRadius() + (s.height * 2 / 3)));
+  canvas.SetTextColor(look.radar_color);
+  canvas.DrawText(q - s / 2u, "N");
+}
+
+static void
+DrawCircleLabel(Canvas &canvas, PixelPoint p,
+                std::string_view text) noexcept
+{
+  const auto size = canvas.CalcTextSize(text);
+  p.x -= size.width / 2;
+  p.y -= size.height * 3 / 4;
+
+  canvas.DrawText(p, text);
 }
 
 /**
@@ -647,15 +742,16 @@ FlarmTrafficWindow::PaintNorth(Canvas &canvas) const
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::PaintRadarBackground(Canvas &canvas) const
+FlarmTrafficWindow::PaintRadarBackground(Canvas &canvas) const noexcept
 {
   canvas.SelectHollowBrush();
   canvas.Select(look.radar_pen);
   canvas.SetTextColor(look.radar_color);
 
   // Paint circles
-  canvas.DrawCircle(radar_mid.x, radar_mid.y, radius);
-  canvas.DrawCircle(radar_mid.x, radar_mid.y, radius / 2);
+  const unsigned radius = radar_renderer.GetRadius();
+  radar_renderer.DrawCircle(canvas, radius);
+  radar_renderer.DrawCircle(canvas, radius / 2);
 
   PaintRadarPlane(canvas);
 
@@ -667,18 +763,13 @@ FlarmTrafficWindow::PaintRadarBackground(Canvas &canvas) const
   canvas.SetBackgroundOpaque();
   canvas.SetBackgroundColor(look.background_color);
 
-  TCHAR distance_string[10];
-  FormatUserDistanceSmart(distance, distance_string,
-                          ARRAY_SIZE(distance_string), 1000);
-  PixelSize s = canvas.CalcTextSize(distance_string);
-  canvas.DrawText(radar_mid.x - s.cx / 2,
-                  radar_mid.y + radius - s.cy * 0.75, distance_string);
+  const auto radar_mid = radar_renderer.GetCenter();
 
-  FormatUserDistanceSmart(distance / 2, distance_string,
-                          ARRAY_SIZE(distance_string), 1000);
-  s = canvas.CalcTextSize(distance_string);
-  canvas.DrawText(radar_mid.x - s.cx / 2,
-                  radar_mid.y + radius / 2 - s.cy * 0.75, distance_string);
+  DrawCircleLabel(canvas, radar_mid + PixelSize{0u, radius},
+                  FormatUserDistanceSmart(distance, true, 1000).c_str());
+
+  DrawCircleLabel(canvas, radar_mid + PixelSize{0u, radius / 2},
+                  FormatUserDistanceSmart(distance / 2, true, 1000).c_str());
 
   canvas.SetBackgroundTransparent();
 
@@ -690,7 +781,7 @@ FlarmTrafficWindow::PaintRadarBackground(Canvas &canvas) const
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::Paint(Canvas &canvas)
+FlarmTrafficWindow::Paint(Canvas &canvas) noexcept
 {
   assert(selection < (int)data.list.size());
   assert(selection < 0 || data.list[selection].IsDefined());
@@ -707,7 +798,7 @@ FlarmTrafficWindow::Paint(Canvas &canvas)
  * @param canvas The canvas to paint on
  */
 void
-FlarmTrafficWindow::OnPaint(Canvas &canvas)
+FlarmTrafficWindow::OnPaint(Canvas &canvas) noexcept
 {
 #ifdef ENABLE_OPENGL
   if (small) {
@@ -715,7 +806,7 @@ FlarmTrafficWindow::OnPaint(Canvas &canvas)
 
     canvas.SelectBlackPen();
     canvas.Select(Brush(look.background_color.WithAlpha(0xd0)));
-    canvas.DrawCircle(radar_mid.x, radar_mid.y, radius);
+    radar_renderer.DrawCircle(canvas, radar_renderer.GetRadius());
 
   } else
 #endif
@@ -725,7 +816,7 @@ FlarmTrafficWindow::OnPaint(Canvas &canvas)
 }
 
 bool
-FlarmTrafficWindow::SelectNearTarget(PixelPoint p, int max_distance)
+FlarmTrafficWindow::SelectNearTarget(PixelPoint p, int max_distance) noexcept
 {
   int min_distance = 99999;
   int min_id = -1;

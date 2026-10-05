@@ -1,48 +1,31 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ThermalLocator.hpp"
+#include "ThermalRecency.hpp"
 #include "Geo/Math.hpp"
 #include "Geo/SpeedVector.hpp"
 #include "Geo/Flat/FlatProjection.hpp"
-#include "Math/FastMath.hpp"
 #include "NMEA/ThermalLocator.hpp"
+#include "time/Cast.hxx"
 
 #include <algorithm>
 
-#include <assert.h>
+#include <cassert>
+
+using namespace std::chrono;
 
 inline void
-ThermalLocator::Point::Drift(double t, const FlatProjection &projection,
+ThermalLocator::Point::Drift(TimeStamp t, const FlatProjection &projection,
                              const GeoPoint& wind_drift)
 {
   const auto dt = t - t_0;
 
   // thermal decay function is located in GenerateSineTables.cpp
-  recency_weight = thermal_recency_fn((unsigned)fabs(dt));
+  recency_weight = thermal_recency_fn(duration_cast<duration<unsigned>>(abs(dt)).count());
   lift_weight = w*recency_weight;
 
-  GeoPoint p = location + wind_drift * dt;
+  GeoPoint p = location + wind_drift * ToFloatSeconds(dt);
 
   // convert to flat earth coordinates
   loc_drift = projection.ProjectFloat(p);
@@ -56,21 +39,22 @@ ThermalLocator::Reset()
 }
 
 inline void
-ThermalLocator::AddPoint(const double t, const GeoPoint &location, const double w)
+ThermalLocator::AddPoint(const TimeStamp t, const GeoPoint &location,
+                         const double w) noexcept
 {
   points[n_index].location = location;
   points[n_index].t_0 = t;
   points[n_index].w = std::max(w, -0.1);
   // lift_weight and recency_weight are set by Drift()
 
-  n_index = (n_index + 1) % TLOCATOR_NMAX;
+  n_index = (n_index + 1) % points.size();
 
-  if (n_points < TLOCATOR_NMAX)
+  if (n_points < points.size())
     n_points++;
 }
 
 void
-ThermalLocator::Update(const double t_0,
+ThermalLocator::Update(const TimeStamp t_0,
                        const GeoPoint &location_0,
                        const SpeedVector wind, 
                        ThermalLocatorInfo &therm)
@@ -133,7 +117,7 @@ ThermalLocator::glider_average()
 }
 
 inline void
-ThermalLocator::Drift(const double t_0, const FlatProjection &projection,
+ThermalLocator::Drift(const TimeStamp t_0, const FlatProjection &projection,
                       const GeoPoint& traildrift)
 {
   for (unsigned i = 0; i < n_points; ++i)
@@ -141,7 +125,7 @@ ThermalLocator::Drift(const double t_0, const FlatProjection &projection,
 }
 
 void
-ThermalLocator::Process(const bool circling, const double time,
+ThermalLocator::Process(const bool circling, const TimeStamp time,
                         const GeoPoint &location, const double w,
                         const SpeedVector wind, ThermalLocatorInfo& therm)
 {

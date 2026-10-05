@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskPropertiesPanel.hpp"
 #include "Internal.hpp"
@@ -32,10 +12,14 @@ Copyright_License {
 #include "Language/Language.hpp"
 #include "Interface.hpp"
 
+using namespace std::chrono;
+
 enum Controls {
   TASK_TYPE,
   MIN_TIME,
   START_REQUIRES_ARM,
+  START_SCORE_EXIT,
+  NAVIGATE_NEAREST,
   START_OPEN_TIME,
   START_CLOSE_TIME,
   START_MAX_SPEED,
@@ -43,14 +27,17 @@ enum Controls {
   START_HEIGHT_REF,
   FINISH_MIN_HEIGHT,
   FINISH_HEIGHT_REF,
+  PEV_START_WAIT_TIME,
+  PEV_START_WINDOW,
   FAI_FINISH_HEIGHT,
 };
 
 TaskPropertiesPanel::TaskPropertiesPanel(TaskManagerDialog &_dialog,
-                                         OrderedTask **_active_task,
-                                         bool *_task_modified)
+                                         std::unique_ptr<OrderedTask> &_active_task,
+                                         bool *_task_modified) noexcept
   :RowFormWidget(_dialog.GetLook()), dialog(_dialog),
-   ordered_task_pointer(_active_task), ordered_task(*ordered_task_pointer),
+   ordered_task_pointer(_active_task),
+   ordered_task(ordered_task_pointer.get()),
    task_changed(_task_modified) {}
 
 void
@@ -64,12 +51,14 @@ TaskPropertiesPanel::RefreshView()
   bool fai_start_finish = p.finish_constraints.fai_finish;
 
   SetRowVisible(MIN_TIME, aat_types);
-  LoadValueTime(MIN_TIME, (int)p.aat_min_time);
+  LoadValueDuration(MIN_TIME, p.aat_min_time);
 
   LoadValue(START_REQUIRES_ARM, p.start_constraints.require_arm);
+  LoadValue(START_SCORE_EXIT, p.start_constraints.score_exit);
+  LoadValue(NAVIGATE_NEAREST, p.navigate_nearest);
 
-  LoadValue(START_OPEN_TIME, p.start_constraints.open_time_span.GetStart());
-  LoadValue(START_CLOSE_TIME, p.start_constraints.open_time_span.GetEnd());
+  LoadValue(START_OPEN_TIME, p.start_constraints.open_time_span.GetRoughStart());
+  LoadValue(START_CLOSE_TIME, p.start_constraints.open_time_span.GetRoughEnd());
 
   SetRowVisible(START_MAX_SPEED, !fai_start_finish);
   LoadValue(START_MAX_SPEED, p.start_constraints.max_speed,
@@ -94,6 +83,13 @@ TaskPropertiesPanel::RefreshView()
 
   LoadValueEnum(TASK_TYPE, ftype);
 
+  SetRowVisible(PEV_START_WAIT_TIME, !fai_start_finish);
+  LoadValueDuration(PEV_START_WAIT_TIME,
+                    p.start_constraints.pev_start_wait_time);
+  SetRowVisible(PEV_START_WINDOW, !fai_start_finish);
+  LoadValueDuration(PEV_START_WINDOW,
+                    p.start_constraints.pev_start_window);
+
   dialog.InvalidateTaskView();
 
   // aat_min_time
@@ -109,21 +105,20 @@ TaskPropertiesPanel::ReadValues()
   TaskFactoryType newtype = ordered_task->GetFactoryType();
   changed |= SaveValueEnum(TASK_TYPE, newtype);
 
-  int min_time = GetValueInteger(MIN_TIME);
-  if (min_time != (int)p.aat_min_time) {
-    p.aat_min_time = min_time;
-    changed = true;
-  }
+  changed |= SaveValue(MIN_TIME, p.aat_min_time);
 
   if (SaveValue(START_REQUIRES_ARM, p.start_constraints.require_arm))
     changed = true;
 
-  RoughTime new_open = p.start_constraints.open_time_span.GetStart();
-  RoughTime new_close = p.start_constraints.open_time_span.GetEnd();
+  changed |= SaveValue(START_SCORE_EXIT, p.start_constraints.score_exit);
+  changed |= SaveValue(NAVIGATE_NEAREST, p.navigate_nearest);
+
+  RoughTime new_open = p.start_constraints.open_time_span.GetRoughStart();
+  RoughTime new_close = p.start_constraints.open_time_span.GetRoughEnd();
   const bool start_open_modified = SaveValue(START_OPEN_TIME, new_open);
   const bool start_close_modified = SaveValue(START_CLOSE_TIME, new_close);
   if (start_open_modified || start_close_modified) {
-    p.start_constraints.open_time_span = RoughTimeSpan(new_open, new_close);
+    p.start_constraints.open_time_span = TimeSpan::FromRoughTimes(new_open, new_close);
     changed = true;
   }
 
@@ -153,6 +148,11 @@ TaskPropertiesPanel::ReadValues()
   changed |= SaveValueEnum(FINISH_HEIGHT_REF,
                            p.finish_constraints.min_height_ref);
 
+  changed |= SaveValue(PEV_START_WAIT_TIME,
+                       p.start_constraints.pev_start_wait_time);
+  changed |= SaveValue(PEV_START_WINDOW,
+                       p.start_constraints.pev_start_window);
+
   if (changed)
     ordered_task->SetOrderedTaskSettings(p);
 
@@ -163,7 +163,7 @@ void
 TaskPropertiesPanel::OnFAIFinishHeightChange(DataFieldBoolean &df)
 {
   OrderedTaskSettings p = ordered_task->GetOrderedTaskSettings();
-  bool newvalue = df.GetAsBoolean();
+  bool newvalue = df.GetValue();
   if (newvalue != p.finish_constraints.fai_finish) {
     p.finish_constraints.fai_finish = p.start_constraints.fai_finish
       = newvalue;
@@ -188,7 +188,7 @@ TaskPropertiesPanel::OnTaskTypeChange(DataFieldEnum &df)
 }
 
 void
-TaskPropertiesPanel::OnModified(DataField &df)
+TaskPropertiesPanel::OnModified(DataField &df) noexcept
 {
   if (IsDataField(FAI_FINISH_HEIGHT, df))
     OnFAIFinishHeightChange((DataFieldBoolean &)df);
@@ -197,7 +197,8 @@ TaskPropertiesPanel::OnModified(DataField &df)
 }
 
 void
-TaskPropertiesPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+TaskPropertiesPanel::Prepare([[maybe_unused]] ContainerWindow &parent,
+                             [[maybe_unused]] const PixelRect &rc) noexcept
 {
   DataFieldEnum *dfe = new DataFieldEnum(this);
   dfe->EnableItemHelp(true);
@@ -208,15 +209,21 @@ TaskPropertiesPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
                      (unsigned)factory_types[i],
                      OrderedTaskFactoryDescription(factory_types[i]));
     if (factory_types[i] == ordered_task->GetFactoryType())
-      dfe->Set((unsigned)factory_types[i]);
+      dfe->SetValue(factory_types[i]);
   }
   Add(_("Task type"), _("Sets the behaviour for the current task."), dfe);
 
-  AddTime(_("AAT min. time"), _("Minimum AAT task time in minutes."),
-          0, 36000, 60, 180);
+  AddDuration(_("AAT min. time"), _("Minimum AAT task time in minutes."),
+              {}, hours{10}, minutes{1}, minutes{3});
 
   AddBoolean(_("Arm start manually"),
              _("Configure whether the start must be armed manually or automatically."),
+             false);
+
+  AddBoolean(_("Score start exit"), nullptr, false);
+
+  AddBoolean(_("Navigate to nearest point"),
+             _("Navigate to the nearest point of the start and finish zones."),
              false);
 
   const RoughTimeDelta time_zone =
@@ -227,21 +234,21 @@ TaskPropertiesPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
                RoughTime::Invalid(), time_zone);
 
   AddFloat(_("Start max. speed"),
-           _("Maximum speed allowed in start observation zone.  Set to 0 for no limit."),
-           _T("%.0f %s"), _T("%.0f"),
+           _("Maximum speed allowed in start observation zone. Set to 0 for no limit."),
+           "%.0f %s", "%.0f",
            0, 300, 5, false, 0);
 
   AddFloat(_("Start max. height"),
-           _("Maximum height based on start height reference (AGL or MSL) while starting the task.  Set to 0 for no limit."),
-           _T("%.0f %s"), _T("%.0f"),
+           _("Maximum height based on start height reference (AGL or MSL) while starting the task. Set to 0 for no limit."),
+           "%.0f %s", "%.0f",
            0, 10000, 25, false, 0);
 
   static constexpr StaticEnumChoice altitude_reference_list[] = {
-    { (unsigned)AltitudeReference::AGL, N_("AGL"),
+    { AltitudeReference::AGL, N_("AGL"),
       N_("Reference is the height above the task point."), },
-    { (unsigned)AltitudeReference::MSL, N_("MSL"),
+    { AltitudeReference::MSL, N_("MSL"),
       N_("Reference is altitude above mean sea level."), },
-    { 0 }
+    nullptr
   };
 
   AddEnum(_("Start height ref."),
@@ -249,13 +256,22 @@ TaskPropertiesPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
           altitude_reference_list);
 
   AddFloat(_("Finish min. height"),
-           _("Minimum height based on finish height reference (AGL or MSL) while finishing the task.  Set to 0 for no limit."),
-           _T("%.0f %s"), _T("%.0f"),
+           _("Minimum height based on finish height reference (AGL or MSL) while finishing the task. Set to 0 for no limit."),
+           "%.0f %s", "%.0f",
            0, 10000, 25, false, 0);
 
   AddEnum(_("Finish height ref."),
           _("Reference used for finish min height rule."),
           altitude_reference_list);
+
+  AddDuration(_("PEV start wait time"),
+              _("Wait time in minutes after Pilot Event and before start gate opens. "
+                "0 means start opens immediately."),
+              {}, minutes{30}, minutes{1}, {});
+  AddDuration(_("PEV start window"),
+              _("Number of minutes the start remains open after Pilot Event and PEV wait time. "
+                "0 means start will never close after it opens."),
+              {}, minutes{30}, minutes{1}, {});
 
   AddBoolean(_("FAI start / finish rules"),
              _("If enabled, has no max start height or max start speed and requires the minimum height above ground for finish to be greater than 1000m below the start height."),
@@ -263,15 +279,15 @@ TaskPropertiesPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
 }
 
 void
-TaskPropertiesPanel::ReClick()
+TaskPropertiesPanel::ReClick() noexcept
 {
   dialog.TaskViewClicked();
 }
 
 void
-TaskPropertiesPanel::Show(const PixelRect &rc)
+TaskPropertiesPanel::Show(const PixelRect &rc) noexcept
 {
-  ordered_task = *ordered_task_pointer;
+  ordered_task = ordered_task_pointer.get();
   orig_taskType = ordered_task->GetFactoryType();
 
   RefreshView();
@@ -280,7 +296,7 @@ TaskPropertiesPanel::Show(const PixelRect &rc)
 }
 
 bool
-TaskPropertiesPanel::Leave()
+TaskPropertiesPanel::Leave() noexcept
 {
   ReadValues();
   if (orig_taskType != ordered_task->GetFactoryType()) {

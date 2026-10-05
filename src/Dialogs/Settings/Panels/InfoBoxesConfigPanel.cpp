@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxesConfigPanel.hpp"
 #include "../dlgConfigInfoboxes.hpp"
@@ -27,29 +7,29 @@ Copyright_License {
 #include "Profile/Current.hpp"
 #include "Profile/InfoBoxConfig.hpp"
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
 #include "Interface.hpp"
-#include "InfoBoxes/InfoBoxManager.hpp"
-#include "InfoBoxes/InfoBoxLayout.hpp"
 #include "Widget/RowFormWidget.hpp"
 #include "Language/Language.hpp"
 #include "UIGlobals.hpp"
 #include "Look/Look.hpp"
+#include "MainWindow.hpp"
+#include "UIState.hpp"
 
 class InfoBoxesConfigPanel final
-  : public RowFormWidget, public ActionListener {
+  : public RowFormWidget {
 public:
   InfoBoxesConfigPanel()
     :RowFormWidget(UIGlobals::GetDialogLook()) {}
 
 public:
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
-  virtual void OnAction(int id) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
+
+  void OnAction(int id) noexcept;
 };
 
 void
-InfoBoxesConfigPanel::OnAction(int id)
+InfoBoxesConfigPanel::OnAction(int id) noexcept
 {
   InfoBoxSettings &settings = CommonInterface::SetUISettings().info_boxes;
 
@@ -60,17 +40,24 @@ InfoBoxesConfigPanel::OnAction(int id)
     dlgConfigInfoboxesShowModal(UIGlobals::GetMainWindow(),
                                 UIGlobals::GetDialogLook(),
                                 UIGlobals::GetLook().info_box,
-                                InfoBoxManager::layout.geometry, data,
+                                settings.ResolveGeometry(data),
+                                data,
                                 i >= InfoBoxSettings::PREASSIGNED_PANELS);
   if (changed) {
     Profile::Save(Profile::map, data, i);
     Profile::Save();
     ((Button &)GetRow(i)).SetCaption(gettext(data.name));
+
+    // If the edited panel is currently active, rebuild layout so
+    // the new geometry apply immediately
+    if (CommonInterface::GetUIState().panel_index == i)
+      CommonInterface::main_window->ReinitialiseLayout();
   }
 }
 
 void
-InfoBoxesConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+InfoBoxesConfigPanel::Prepare(ContainerWindow &parent,
+                              const PixelRect &rc) noexcept
 {
   const InfoBoxSettings &settings = CommonInterface::GetUISettings().info_boxes;
 
@@ -79,7 +66,7 @@ InfoBoxesConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   for (unsigned i = 0; i < InfoBoxSettings::MAX_PANELS; i++) {
     const InfoBoxSettings::Panel &data = settings.panels[i];
 
-    AddButton(gettext(data.name), *this, i);
+    AddButton(gettext(data.name), [this, i](){ OnAction(i); });
     if (i>2)
       SetExpertRow(i);
   }
@@ -90,7 +77,7 @@ InfoBoxesConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
 }
 
 bool
-InfoBoxesConfigPanel::Save(bool &_changed)
+InfoBoxesConfigPanel::Save([[maybe_unused]] bool &_changed) noexcept
 {
   InfoBoxSettings &settings = CommonInterface::SetUISettings().info_boxes;
   SaveValue(InfoBoxSettings::MAX_PANELS, ProfileKeys::UseFinalGlideDisplayMode,
@@ -99,8 +86,8 @@ InfoBoxesConfigPanel::Save(bool &_changed)
   return true;
 }
 
-Widget *
+std::unique_ptr<Widget>
 CreateInfoBoxesConfigPanel()
 {
-  return new InfoBoxesConfigPanel();
+  return std::make_unique<InfoBoxesConfigPanel>();
 }

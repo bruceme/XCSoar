@@ -1,45 +1,51 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "NanoLogger.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/RecordedFlight.hpp"
 #include "Device/Util/NMEAWriter.hpp"
 #include "Device/Util/NMEAReader.hpp"
+#include "Operation/Cancelled.hpp"
 #include "Operation/Operation.hpp"
-#include "OS/Path.hpp"
-#include "Time/TimeoutClock.hpp"
+#include "system/Path.hpp"
+#include "io/BufferedOutputStream.hxx"
+#include "io/FileOutputStream.hxx"
+#include "time/TimeoutClock.hpp"
 #include "NMEA/InputLine.hpp"
+#include "util/SpanCast.hxx"
+#include "util/StringCompare.hxx"
+#include "system/FileUtil.hpp"
+#include "util/TextFile.hxx"
+#include "io/FileLineReader.hpp"
+#include "LogFile.hpp"
 
 #include <algorithm>
-#include <stdio.h>
+#include <chrono>
 #include <stdlib.h>
-#include <string.h>
+#include <fstream>
+#include <exception>
 
-static bool
+#include <fmt/format.h>
+
+using std::string_view_literals::operator""sv;
+
+static unsigned
+CountLinesInFile(Path path)
+{
+  FileLineReaderA reader(path);
+  unsigned line_count = 0;
+  while (reader.ReadLine() != nullptr) {
+    line_count++;
+  }
+  // Return next line number to download (1-indexed)
+  return line_count + 1;
+}
+
+static void
 RequestLogbookInfo(Port &port, OperationEnvironment &env)
 {
-  return PortWriteNMEA(port, "PLXVC,LOGBOOKSIZE,R,", env);
+  PortWriteNMEA(port, "PLXVC,LOGBOOKSIZE,R,", env);
 }
 
 static char *
@@ -54,8 +60,7 @@ GetNumberOfFlights(Port &port, PortNMEAReader &reader,
 {
   reader.Flush();
 
-  if (!RequestLogbookInfo(port, env))
-    return -1;
+  RequestLogbookInfo(port, env);
 
   const char *response;
   while (true) {
@@ -63,14 +68,14 @@ GetNumberOfFlights(Port &port, PortNMEAReader &reader,
     if (response == nullptr)
       return -1;
 
-    if (memcmp(response, ",A,", 3) == 0) {
+    if (auto a = StringAfterPrefix(response, ",A,"sv)) {
       /* old Nano firmware versions (e.g. 2.05) print "LOGBOOK,A,n" */
-      response += 3;
+      response = a;
       break;
-    } else if (memcmp(response, "SIZE,A,", 7) == 0) {
+    } else if (auto size_a = StringAfterPrefix(response, "SIZE,A,"sv)) {
       /* new Nano firmware versions (e.g. 2.10) print
          "LOGBOOKSIZE,A,n" */
-      response += 7;
+      response = size_a;
       break;
     }
   }
@@ -110,7 +115,9 @@ ReadDate(NMEAInputLine &line, BrokenDate &date)
   if (endptr == p || *endptr != 0)
     return false;
 
-  return date.IsPlausible();
+  /* accept implausible dates (e.g. 00.00.1980) from devices
+     without an RTC -- the flight is still downloadable */
+  return true;
 }
 
 static bool
@@ -134,17 +141,15 @@ ReadTime(NMEAInputLine &line, BrokenTime &time)
   if (endptr == p || *endptr != 0)
     return false;
 
-  return time.IsPlausible();
+  return true;
 }
 
-static bool
+static void
 RequestLogbookContents(Port &port, unsigned start, unsigned end,
                        OperationEnvironment &env)
 {
-  char buffer[32];
-  sprintf(buffer, "PLXVC,LOGBOOK,R,%u,%u,", start, end);
-
-  return PortWriteNMEA(port, buffer, env);
+  const auto cmd = fmt::format("PLXVC,LOGBOOK,R,{},{},", start, end);
+  PortWriteNMEA(port, cmd.c_str(), env);
 }
 
 static bool
@@ -159,37 +164,34 @@ static bool
 ParseLogbookContent(const char *_line, RecordedFlightInfo &info)
 {
   NMEAInputLine line(_line);
+  line.Skip();
 
   unsigned n;
-  return line.Skip() &&
-    line.ReadChecked(n) &&
+  return line.ReadChecked(n) &&
     ReadFilename(line, info) > 0 &&
     ReadDate(line, info.date) &&
     ReadTime(line, info.start_time) &&
     ReadTime(line, info.end_time);
 }
 
-static bool
-ReadLogbookContent(PortNMEAReader &reader, RecordedFlightInfo &info,
-                   TimeoutClock timeout)
-{
-  while (true) {
-    const char *line = ReadLogbookLine(reader, timeout);
-    if (line == nullptr)
-      return false;
-
-    if (ParseLogbookContent(line, info))
-      return true;
-  }
-}
-
+/**
+ * Read exactly @p n logbook response lines, appending parseable
+ * entries to @p flight_list.  Entries with implausible dates
+ * (e.g. 00.00.1980 from devices without an RTC) are still
+ * included so the user can download those flights.
+ */
 static bool
 ReadLogbookContents(PortNMEAReader &reader, RecordedFlightList &flight_list,
                     unsigned n, TimeoutClock timeout)
 {
   while (n-- > 0) {
-    if (!ReadLogbookContent(reader, flight_list.append(), timeout))
+    const char *line = ReadLogbookLine(reader, timeout);
+    if (line == nullptr)
       return false;
+
+    RecordedFlightInfo info;
+    if (ParseLogbookContent(line, info) && !flight_list.full())
+      flight_list.append() = info;
   }
 
   return true;
@@ -203,8 +205,8 @@ GetLogbookContents(Port &port, PortNMEAReader &reader,
 {
   reader.Flush();
 
-  return RequestLogbookContents(port, start, start + n, env) &&
-    ReadLogbookContents(reader, flight_list, n, timeout);
+  RequestLogbookContents(port, start, start + n, env);
+  return ReadLogbookContents(reader, flight_list, n, timeout);
 }
 
 bool
@@ -214,14 +216,19 @@ Nano::ReadFlightList(Port &port, RecordedFlightList &flight_list,
   port.StopRxThread();
   PortNMEAReader reader(port, env);
 
-  TimeoutClock timeout(2000);
+  TimeoutClock timeout(std::chrono::seconds(2));
   int nflights = GetNumberOfFlights(port, reader, env, timeout);
   if (nflights <= 0)
     return nflights == 0;
 
   env.SetProgressRange(nflights);
 
-  unsigned requested_tail = 1;
+  /* Start download at first flight in logger if capacity of flight_list is
+     enough for all flights in logger. Otherwise, calculate the starting
+     point to fill flight_list to capacity with only the latest flights. */
+  unsigned requested_tail = (unsigned) std::max(1,
+                     (signed) nflights - (signed) flight_list.max_size() + 1);
+
   while (true) {
     const unsigned room = flight_list.max_size() - flight_list.size();
     const unsigned remaining = nflights - requested_tail + 1;
@@ -232,7 +239,7 @@ Nano::ReadFlightList(Port &port, RecordedFlightList &flight_list,
     /* read 8 records at a time */
     const unsigned nrequest = std::min(nmax, 8u);
 
-    timeout = TimeoutClock(2000);
+    timeout = TimeoutClock(std::chrono::seconds(2));
     if (!GetLogbookContents(port, reader, flight_list,
                             requested_tail, nrequest, env, timeout))
       return false;
@@ -240,23 +247,29 @@ Nano::ReadFlightList(Port &port, RecordedFlightList &flight_list,
     requested_tail += nrequest;
     env.SetProgressPosition(requested_tail - 1);
   }
+  if (flight_list.size() > 1) {
+    std::reverse(flight_list.begin(), flight_list.end());
+  }
 
   return true;
 }
 
-static bool
+static void
 RequestFlight(Port &port, const char *filename,
               unsigned start_row, unsigned end_row,
               OperationEnvironment &env)
 {
-  char buffer[64];
-  sprintf(buffer, "PLXVC,FLIGHT,R,%s,%u,%u,", filename, start_row, end_row);
-
-  return PortWriteNMEA(port, buffer, env);
+  const auto cmd = fmt::format("PLXVC,FLIGHT,R,{},{},{},",
+                               filename, start_row, end_row);
+  PortWriteNMEA(port, cmd.c_str(), env);
 }
 
-static bool
-HandleFlightLine(const char *_line, FILE *file,
+/**
+ * Write one flight row.  Returns the number of bytes written, or 0
+ * when the row is rejected.
+ */
+static unsigned
+HandleFlightLine(const char *_line, BufferedOutputStream &os,
                  unsigned &i, unsigned &row_count_r)
 {
   NMEAInputLine line(_line);
@@ -268,38 +281,39 @@ HandleFlightLine(const char *_line, FILE *file,
   unsigned row, row_count;
   if (!line.ReadChecked(row) || !line.ReadChecked(row_count) ||
       row < 1 || row > row_count)
-    return false;
+    return 0;
 
   if (row != i)
     /* wrong row index, what happened here? */
-    return false;
+    return 0;
 
   if (row_count_r == 0)
     row_count_r = row_count;
   else if (row_count != row_count_r)
     /* don't allow changes in file size */
-    return false;
+    return 0;
 
-  auto content = line.Rest();
-  size_t length = content.end() - content.begin();
-  if (fwrite(content.begin(), 1, length, file) != length)
-    return false;
-
-  fputs("\r\n", file);
+  const std::string_view payload = line.Rest();
+  os.Write(AsBytes(payload));
+  os.Write("\r\n");
   ++i;
-  return true;
+  return unsigned(payload.size() + 2);
 }
 
 static bool
-DownloadFlightInner(Port &port, const char *filename, FILE *file,
-                    OperationEnvironment &env)
+DownloadFlightInner(Port &port, const char *filename, BufferedOutputStream &os,
+                    OperationEnvironment &env, unsigned *resume_row = nullptr)
 {
   PortNMEAReader reader(port, env);
-  unsigned row_count = 0, i = 1;
+  unsigned row_count = 0, i = (resume_row && *resume_row > 0) ? *resume_row : 1;
+  const unsigned FLUSH_INTERVAL = 500;  // Flush to disk every 500 lines
+  unsigned lines_since_last_flush = 0;
+  unsigned bytes_written = 0;
+  bool range_set = false;
 
   while (true) {
-    /* read up to 32 lines at a time */
-    unsigned nrequest = row_count == 0 ? 1 : 32;
+    /* read up to 50 lines at a time */
+    unsigned nrequest = row_count == 0 ? 1 : 50;
     if (row_count > 0) {
       assert(i <= row_count);
       const unsigned remaining = row_count - i + 1;
@@ -310,6 +324,7 @@ DownloadFlightInner(Port &port, const char *filename, FILE *file,
     const unsigned start = i;
     const unsigned end = start + nrequest;
     unsigned request_retry_count = 0;
+    constexpr unsigned MAX_REQUEST_RETRY_COUNT = 2; // based on testing retrying on this lvl has little to no effect
 
     /* read the requested lines and save to file */
 
@@ -317,20 +332,38 @@ DownloadFlightInner(Port &port, const char *filename, FILE *file,
       if (i == start) {
         /* send request range to Nano */
         reader.Flush();
-        if (!RequestFlight(port, filename, start, end, env))
-          return false;
+        RequestFlight(port, filename, start, end, env);
         request_retry_count++;
       }
 
-      TimeoutClock timeout(2000);
-      const char *line = reader.ExpectLine("PLXVC,FLIGHT,A,", timeout);
-      if (line == nullptr || !HandleFlightLine(line, file, i, row_count)) {
-        if (request_retry_count > 5)
-          return false;
+      TimeoutClock timeout(std::chrono::seconds(row_count == 0 ? 20 : 2)); // using row_count to detect first request
+      const char *line = nullptr;
+      try {
+        line = reader.ExpectLine("PLXVC,FLIGHT,A,", timeout);
+      } catch (const OperationCancelled &) {
+        throw;
+      } catch (...) {
+        LogFormat("NanoLogger: communication with logger timed out,"
+                  " tries: %u, line: %u", request_retry_count, i);
+        LogError(std::current_exception(), "NanoLogger: download failing");
+      }
+
+      const unsigned wrote = line == nullptr
+        ? 0
+        : HandleFlightLine(line, os, i, row_count);
+      if (wrote == 0) {
+        if (request_retry_count > MAX_REQUEST_RETRY_COUNT) {
+          /* Update resume point before throwing - but note that buffered data
+             may not be flushed to disk yet, so resume will restart from last flush */
+          if (resume_row)
+            *resume_row = i - lines_since_last_flush;  // Safe resume point
+          throw std::runtime_error("Flight download failed: maximum retries exceeded");
+        }
 
         /* Discard data which might still be in-transit, e.g. buffered
            inside a bluetooth dongle */
-        port.FullFlush(env, 200, 2000);
+        port.FullFlush(env, std::chrono::milliseconds(200),
+                       std::chrono::seconds(2));
 
         /* If we already received parts of the request range correctly break
            out of the loop to calculate new request range */
@@ -338,18 +371,63 @@ DownloadFlightInner(Port &port, const char *filename, FILE *file,
           break;
 
         /* No valid reply received (i==start) - request same range again */
+      } else {
+        /* Line was successfully processed and written to buffer */
+        bytes_written += wrote;
+        lines_since_last_flush++;
+
+        /* This range has delivered a row.  A later bad line must
+           start a new range instead of tripping the retry limit. */
+        request_retry_count = 0;
+
+        /* Periodic flush: write buffered data to disk */
+        if (lines_since_last_flush >= FLUSH_INTERVAL) {
+          try {
+            os.Flush();
+            /* Only update resume_row after successful flush to disk */
+            if (resume_row)
+              *resume_row = i;
+            lines_since_last_flush = 0;
+          } catch (...) {
+            /* If flush fails, keep resume_row at previous safe point */
+            LogError(std::current_exception(),
+                     "NanoLogger: failed to flush data to disk");
+            throw;
+          }
+        }
       }
     }
 
-    if (i > row_count)
+    if (i > row_count) {
+      /* Download complete - perform final flush */
+      try {
+        os.Flush();
+        if (resume_row)
+          *resume_row = i;
+      } catch (...) {
+        LogError(std::current_exception(),
+                 "NanoLogger: failed to flush final data to disk");
+        throw;
+      }
+
+      if (row_count > 0) {
+        if (!range_set)
+          env.SetProgressRange(row_count);
+        env.SetProgressBytes(bytes_written);
+        env.SetProgressPosition(row_count);
+      }
       /* finished successfully */
       return true;
+    }
 
-    if (start == 1)
+    if (!range_set){
       /* configure the range in the first iteration, now that we know
          the length of the file */
       env.SetProgressRange(row_count);
+      range_set = true;
+    }
 
+    env.SetProgressBytes(bytes_written);
     env.SetProgressPosition(i - 1);
   }
 }
@@ -359,15 +437,75 @@ Nano::DownloadFlight(Port &port, const RecordedFlightInfo &flight,
                      Path path, OperationEnvironment &env)
 {
   port.StopRxThread();
+  port.FullFlush(env, std::chrono::milliseconds(200), std::chrono::seconds(2));
 
-  FILE *file = _tfopen(path.c_str(), _T("wb"));
-  if (file == nullptr)
-    return false;
+  const char *filename = flight.internal.lx.nano_filename;
+  /*
+  LXNANO filename length limit nano_filename uses a size 16 buffer
+  but actual are only 12 characters long and i do not know if it is /0 terminated
+  so to be safe we limit to 12 characters since we want to have predictable filenames
+  */ 
+  constexpr int NANO_FILENAME_LEN = 12; 
 
-  bool success = DownloadFlightInner(port, flight.internal.lx.nano_filename,
-                                     file, env);
-  if (fclose(file) != 0)
-    success = false;
+  char partial_filename[64];
+  snprintf(partial_filename,
+           sizeof(partial_filename),
+           "%.*s.partial",
+           NANO_FILENAME_LEN,
+           filename);
 
-  return success;
+  
+  const auto partial_path = AllocatedPath::Build(path.GetParent(), partial_filename);
+
+  // Check if partial file exists and count lines to determine resume point
+  unsigned calculated_resume_row = 1;
+  if (File::Exists(partial_path)) {
+    try {
+      // Count lines in existing partial file
+      calculated_resume_row = CountLinesInFile(partial_path);
+      if (calculated_resume_row > 1) {
+        LogFormat("NanoLogger: resuming download from line %u",
+                  calculated_resume_row);
+      }
+    } catch (...) {
+      LogError(std::current_exception(),
+               "NanoLogger: failed to count lines in partial file,"
+               " deleting it for clean fresh download.");
+      // If we can't count, delete partial and start fresh
+      File::Delete(partial_path);
+      calculated_resume_row = 1;
+    }
+  }
+
+  // Open file in appropriate mode
+  FileOutputStream fos(partial_path, 
+                      calculated_resume_row > 1 
+                        ? FileOutputStream::Mode::APPEND_OR_CREATE
+                        : FileOutputStream::Mode::CREATE);
+  BufferedOutputStream bos(fos);
+  try {
+    bool success = DownloadFlightInner(port, filename,
+                                      bos, env, &calculated_resume_row);
+
+    if (success) {
+      bos.Flush();
+      fos.Commit();
+      LogFormat("NanoLogger: download complete, renaming to final filename");
+      if (!File::Rename(partial_path, path)) {
+        LogFormat("NanoLogger: failed to rename partial flight log to final"
+                  " filename");
+        return false;
+      }
+      return true;
+    } 
+  } catch (...) {
+    try {
+        bos.Flush();
+        fos.Commit();
+      } catch (...) {
+        LogFormat("NanoLogger: failed to flush partial data to disk");
+      }
+    throw;
+  }
+  return false; //never hapens but compiler does not know DownloadFlightInner throws on failure
 }

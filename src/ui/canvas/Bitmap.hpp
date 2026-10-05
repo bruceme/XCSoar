@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
+
+#include "ui/dim/Point.hpp"
+#include "ui/dim/Size.hpp"
+
+#ifdef USE_MEMORY_CANVAS
+#include "ui/canvas/memory/Buffer.hpp"
+#include "ui/canvas/memory/PixelTraits.hpp"
+#endif
+
+#ifdef ANDROID
+#include <jni.h>
+#endif
+
+#include <cassert>
+#include <span>
+
+class Path;
+class ResourceId;
+class UncompressedImage;
+struct GeoQuadrilateral;
+
+#ifdef ENABLE_OPENGL
+class GLTexture;
+#elif defined(USE_MEMORY_CANVAS)
+#ifdef GREYSCALE
+using BitmapPixelTraits = GreyscalePixelTraits;
+#else
+using BitmapPixelTraits = BGRAPixelTraits;
+#endif
+#endif
+
+/**
+ * An image loaded from storage.
+ */
+class Bitmap final
+{
+public:
+  enum class Type {
+    /**
+     * A standard bitmap that will be blitted to the screen.  After
+     * loading, it will be converted to the screen's pixel format.
+     */
+    STANDARD,
+
+    /**
+     * A monochrome bitmap (1 bit per pixel).
+     */
+    MONO,
+  };
+
+protected:
+#ifdef ENABLE_OPENGL
+  GLTexture *texture = nullptr;
+  PixelSize size;
+
+  /**
+   * Flip up/down?  Some image formats (such as BMP and TIFF) store
+   * the bottom-most row first.
+   */
+  bool flipped = false;
+#elif defined(USE_MEMORY_CANVAS)
+  WritableImageBuffer<BitmapPixelTraits> buffer = WritableImageBuffer<BitmapPixelTraits>::Empty();
+#endif
+
+  /**
+   * True if the decoded image contained non-grayscale pixels.
+   * Set during Load() on platforms that go through UncompressedImage.
+   */
+  bool has_colors = false;
+
+public:
+  Bitmap() = default;
+  explicit Bitmap(ResourceId id);
+
+#ifndef ANDROID
+  Bitmap(std::span<const std::byte> buffer);
+#endif
+
+  Bitmap(Bitmap &&src) noexcept;
+
+  ~Bitmap() noexcept {
+    Reset();
+  }
+
+  Bitmap &operator=(Bitmap &&src) noexcept;
+
+  bool IsDefined() const noexcept {
+#ifdef ENABLE_OPENGL
+    return texture != nullptr;
+#elif defined(USE_MEMORY_CANVAS)
+    return buffer.data != nullptr;
+#endif
+  }
+
+  /**
+   * Did the decoded image contain non-grayscale (coloured) pixels?
+   */
+  bool HasColors() const noexcept {
+    return has_colors;
+  }
+
+#ifdef USE_MEMORY_CANVAS
+  void Create(PixelSize _size) noexcept {
+    assert(!IsDefined());
+
+    buffer.Allocate(_size);
+  }
+#endif
+
+#ifdef ENABLE_OPENGL
+  const PixelSize &GetSize() const noexcept {
+    return size;
+  }
+
+  unsigned GetWidth() const noexcept {
+    return size.width;
+  }
+
+  unsigned GetHeight() const noexcept {
+    return size.height;
+  }
+
+  bool IsFlipped() const noexcept {
+    return flipped;
+  }
+#elif defined(USE_MEMORY_CANVAS)
+  const PixelSize &GetSize() const noexcept {
+    return buffer.size;
+  }
+
+  unsigned GetWidth() const noexcept {
+    return buffer.size.width;
+  }
+
+  unsigned GetHeight() const noexcept {
+    return buffer.size.height;
+  }
+#endif
+
+  bool Load(UncompressedImage &&uncompressed, Type type=Type::STANDARD);
+
+#ifndef ANDROID
+  bool Load(std::span<const std::byte> buffer, Type type=Type::STANDARD);
+#endif
+
+  bool Load(ResourceId id, Type type=Type::STANDARD);
+
+#ifndef ENABLE_OPENGL
+  /**
+   * Load a bitmap and stretch it by the specified zoom factor.
+   */
+  bool LoadStretch(ResourceId id, unsigned zoom);
+#endif
+
+  bool LoadFile(Path path);
+
+  /**
+   * Load a georeferenced image and return its bounds.
+   * Throws a std::runtime_error on error.
+   */
+  GeoQuadrilateral LoadGeoFile(Path path);
+
+  void Reset() noexcept;
+
+#ifdef ENABLE_OPENGL
+  GLTexture *GetNative() const noexcept {
+    return texture;
+  }
+#elif defined(USE_MEMORY_CANVAS)
+  ConstImageBuffer<BitmapPixelTraits> GetNative() const noexcept {
+    return buffer;
+  }
+#endif
+
+#ifdef ENABLE_OPENGL
+private:
+  bool MakeTexture(const UncompressedImage &uncompressed, Type type) noexcept;
+
+#ifdef ANDROID
+  bool Set(JNIEnv *env, jobject _bmp, Type _type,
+           bool flipped = false) noexcept;
+  bool MakeTexture(jobject _bmp, Type _type,
+                   bool flipped = false) noexcept;
+#endif
+#endif
+};

@@ -1,34 +1,16 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef FLARM_TRAFFIC_WINDOW_H
-#define FLARM_TRAFFIC_WINDOW_H
-
-#include "Screen/PaintWindow.hpp"
+#include "ui/window/PaintWindow.hpp"
+#include "Renderer/RadarRenderer.hpp"
 #include "FLARM/List.hpp"
-#include "FLARM/Color.hpp"
 #include "TeamCode/Settings.hpp"
 #include "Math/FastRotation.hpp"
+#include "ui/canvas/Pen.hpp"
+
+#include <cstdint>
 
 class Color;
 class Brush;
@@ -41,105 +23,138 @@ class FlarmTrafficWindow : public PaintWindow {
 protected:
   const FlarmTrafficLook &look;
 
+  RadarRenderer radar_renderer;
+
   /**
    * The distance of the biggest circle in meters.
    */
-  double distance;
+  double distance = 2000;
 
-  int selection;
-  int warning;
-  PixelPoint radar_mid;
+  int selection = -1;
+  int warning = -1;
 
-  /**
-   * The minimum distance between the window boundary and the biggest
-   * circle in pixels.
-   */
-  const unsigned h_padding, v_padding;
-
-  /**
-   * The radius of the biggest circle in pixels.
-   */
-  unsigned radius;
-
-  bool small;
+  const bool small;
 
   PixelPoint sc[TrafficList::MAX_COUNT];
 
-  bool enable_north_up;
-  Angle heading;
+  bool enable_north_up = false;
+  Angle heading = Angle::Zero();
   FastRotation fr;
   FastIntegerRotation fir;
   TrafficList data;
-  Validity data_modified;
   TeamCodeSettings settings;
 
 public:
-  enum SideInfoType {
-    SIDE_INFO_RELATIVE_ALTITUDE,
-    SIDE_INFO_VARIO,
-  } side_display_type;
+  enum class SideInfoType : uint8_t {
+    RELATIVE_ALTITUDE,
+    VARIO,
+  } side_display_type = SideInfoType::VARIO;
 
 public:
   FlarmTrafficWindow(const FlarmTrafficLook &_look,
                      unsigned _h_padding, unsigned _v_padding,
-                     bool _small = false);
+                     bool _small = false) noexcept;
 
 public:
-  bool WarningMode() const;
+  [[gnu::pure]]
+  bool WarningMode() const noexcept;
 
-  const FlarmTraffic *GetTarget() const {
+  const FlarmTraffic *GetTarget() const noexcept {
     return selection >= 0
       ? &data.list[selection]
       : NULL;
   }
 
-  void SetTarget(int i);
+  void SetTarget(int i) noexcept;
 
-  void SetTarget(const FlarmTraffic *traffic) {
+  void SetTarget(const FlarmTraffic *traffic) noexcept {
     SetTarget(traffic != NULL ? (int)data.TrafficIndex(traffic) : -1);
   }
 
-  void SetTarget(const FlarmId &id) {
+  void SetTarget(const FlarmId &id) noexcept {
     SetTarget(data.FindTraffic(id));
   }
 
-  void NextTarget();
-  void PrevTarget();
-  bool SelectNearTarget(PixelPoint p, int max_distance);
+  void NextTarget() noexcept;
+  void PrevTarget() noexcept;
+  bool SelectNearTarget(PixelPoint p, int max_distance) noexcept;
 
-  void SetDistance(double _distance) {
+  void SetDistance(double _distance) noexcept {
     distance = _distance;
     Invalidate();
   }
 
-  void Paint(Canvas &canvas);
+  [[gnu::pure]]
+  static unsigned ScaleRadarPermille(unsigned radar_radius,
+                                     unsigned permille) noexcept;
+
+  void Paint(Canvas &canvas) noexcept;
 
 protected:
-  double RangeScale(double d) const;
+  [[gnu::pure]]
+  double RangeScale(double d) const noexcept;
 
-  void UpdateSelector(FlarmId id, PixelPoint pt);
-  void UpdateWarnings();
+  void UpdateSelector(FlarmId id, PixelPoint pt) noexcept;
+  void UpdateWarnings() noexcept;
   void Update(Angle new_direction, const TrafficList &new_data,
-              const TeamCodeSettings &new_settings);
-  void PaintRadarNoTraffic(Canvas &canvas) const;
+              const TeamCodeSettings &new_settings) noexcept;
+  void PaintRadarNoTraffic(Canvas &canvas) const noexcept;
   void PaintRadarTarget(Canvas &canvas, const FlarmTraffic &traffic,
-                        unsigned i);
-  void PaintRadarTraffic(Canvas &canvas);
+                        unsigned i) noexcept;
+  void PaintRadarTraffic(Canvas &canvas) noexcept;
 
-  void PaintTargetInfoSmall(
-      Canvas &canvas, const FlarmTraffic &traffic, unsigned i,
-      const Color &text_color, const Brush &arrow_brush);
+  void PaintTargetInfoSmall(Canvas &canvas, const FlarmTraffic &traffic,
+                            unsigned i,
+                            const Color &text_color,
+                            const Brush &arrow_brush) noexcept;
 
-  void PaintRadarPlane(Canvas &canvas) const;
-  void PaintRadarBackground(Canvas &canvas) const;
-  void PaintNorth(Canvas &canvas) const;
+  void PaintRadarPlane(Canvas &canvas) const noexcept;
+  void PaintRadarBackground(Canvas &canvas) const noexcept;
+  void PaintNorth(Canvas &canvas) const noexcept;
+
+protected:
+  static constexpr unsigned TARGET_RING_PERMILLE = 140;
+  static constexpr unsigned TARGET_RING_OUTER_PERMILLE = 170;
+  static constexpr unsigned NOPOSTARGET_PERMILLE = 70;
+  static constexpr unsigned ARROW_ICON_PERMILLE = 400;
+  static constexpr unsigned ALT_LABEL_DIST_PERMILLE = 135;
+  static constexpr unsigned ALT_LABEL_ALARM_DIST_PERMILLE = 200;
+  static constexpr unsigned ALT_TRIANGLE_PERMILLE = 60;
+  static constexpr unsigned SIDE_LABEL_X_PERMILLE = 100;
+  static constexpr unsigned SIDE_LABEL_Y_PERMILLE = 175;
+  static constexpr unsigned SIDE_LABEL_Y_CENTER_PERMILLE = 75;
+  static constexpr unsigned PLANE_WING_X_PERMILLE = 85;
+  static constexpr unsigned PLANE_WING_Y_PERMILLE = 17;
+  static constexpr unsigned PLANE_FUSE_PERMILLE = 51;
+  static constexpr unsigned PLANE_WING_TIP_PERMILLE = 34;
+  static constexpr unsigned TEAM_DOT_PERMILLE = 47;
+  static constexpr unsigned TEAM_DOT_GAP_PERMILLE = 60;
 
 protected:
   /* virtual methods from class Window */
-  virtual void OnResize(PixelSize new_size) override;
+  void OnResize(PixelSize new_size) noexcept override;
 
   /* virtual methods from class PaintWindow */
-  virtual void OnPaint(Canvas &canvas) override;
-};
+  void OnPaint(Canvas &canvas) noexcept override;
 
-#endif
+private:
+  [[gnu::pure]]
+  static unsigned RadarTargetRingRadius(unsigned index,
+                                        unsigned radar_radius) noexcept;
+
+  [[gnu::pure]]
+  static int RadarArrowScale(bool small_radar,
+                             unsigned radar_radius) noexcept;
+
+  /**
+   * Renders a FLARM target that has no position data.
+   * Draws an optional distance ring, a dot, and an exclamation mark.
+   */
+  void PaintNoPositionTarget(Canvas &canvas,
+                           const PixelPoint &target_point,
+                           const PixelPoint &radar_center,
+                           double scale,
+                           bool small,
+                           const Pen *target_pen,
+                           const Color *text_color) const noexcept;
+};

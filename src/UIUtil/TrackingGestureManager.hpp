@@ -1,38 +1,10 @@
-/*
- * Copyright (C) 2012 Tobias Bieniek <Tobias.Bieniek@gmx.de>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright The XCSoar Project
 
-#ifndef TRACKING_GESTURE_MANAGER_HPP
-#define TRACKING_GESTURE_MANAGER_HPP
+#pragma once
 
 #include "GestureManager.hpp"
-
-#include "Screen/Point.hpp"
+#include "ui/dim/Point.hpp"
 
 #include <vector>
 
@@ -49,12 +21,23 @@ public:
 private:
   PointVector points;
 
+  /** Lower bound for #trail_spacing in pixels */
+  static constexpr int MIN_TRAIL_SPACING = 1;
+
+  /**
+   * Minimum distance in pixels between two trail points.  This is
+   * much smaller than the gesture detection threshold, so the trail
+   * follows the finger closely instead of being a coarse polyline
+   * through the detection points.
+   */
+  int trail_spacing = MIN_TRAIL_SPACING;
+
 public:
   /**
    * Stops the GestureManager and returns the recognized gesture
    * @return NULL or recognized gesture string
    */
-  const TCHAR* Finish();
+  const char* Finish() noexcept;
 
   /**
    * Starts the GestureManager at the given coordinates
@@ -81,5 +64,3 @@ public:
     return points;
   }
 };
-
-#endif

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxes/Content/Altitude.hpp"
 #include "Factory.hpp"
@@ -28,15 +8,12 @@ Copyright_License {
 #include "InfoBoxes/Panel/AltitudeInfo.hpp"
 #include "InfoBoxes/Panel/AltitudeSimulator.hpp"
 #include "InfoBoxes/Panel/AltitudeSetup.hpp"
+#include "NMEA/Info.hpp"
 #include "Units/Units.hpp"
 #include "Interface.hpp"
-#include "Engine/Waypoint/Waypoint.hpp"
-#include "Engine/Waypoint/Waypoints.hpp"
 #include "Language/Language.hpp"
-#include "Components.hpp"
-#include "Simulator.hpp"
 
-#include <tchar.h>
+#include <optional>
 
 /*
  * Subpart callback function pointers
@@ -49,17 +26,49 @@ constexpr
 const InfoBoxPanel altitude_infobox_panels[] = {
   { N_("Simulator"), LoadAltitudeSimulatorPanel },
   { N_("Info"), LoadAltitudeInfoPanel },
-  { N_("Setup"), LoadAltitudeSetupPanel },
+  { NC_("Menu", "Setup"), LoadAltitudeSetupPanel },
   { nullptr, nullptr }
 };
 
 const InfoBoxPanel *
-InfoBoxContentAltitude::GetDialogContent() {
+InfoBoxContentAltitude::GetDialogContent() noexcept
+{
   return altitude_infobox_panels;
 }
 
+namespace {
+
+/**
+ * Logger / IGC pressure or ISA pressure altitude only (no QNH baro, no GPS).
+ */
+[[gnu::pure]] std::optional<double>
+IgcOrIsaPressureAltitudeOrInvalid(const NMEAInfo &basic) noexcept
+{
+  if (basic.igc_pressure_altitude_available)
+    return basic.igc_pressure_altitude;
+  if (basic.pressure_altitude_available)
+    return basic.pressure_altitude;
+  return std::nullopt;
+}
+
+} // namespace
+
 void
-UpdateInfoBoxAltitudeNav(InfoBoxData &data)
+UpdateInfoBoxAltitudeIGC(InfoBoxData &data) noexcept
+{
+  const NMEAInfo &basic = CommonInterface::Basic();
+  const auto a = IgcOrIsaPressureAltitudeOrInvalid(basic);
+  if (!a) {
+    data.SetInvalid();
+    return;
+  }
+
+  data.SetValueFromAltitude(*a);
+  data.SetCommentFromAlternateAltitude(*a);
+}
+
+void
+UpdateInfoBoxAltitudeNav(InfoBoxData &data) noexcept
 {
   const MoreData &basic = CommonInterface::Basic();
 
@@ -85,7 +94,7 @@ UpdateInfoBoxAltitudeNav(InfoBoxData &data)
 }
 
 void
-InfoBoxContentAltitudeGPS::Update(InfoBoxData &data)
+InfoBoxContentAltitudeGPS::Update(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
 
@@ -99,7 +108,7 @@ InfoBoxContentAltitudeGPS::Update(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxAltitudeAGL(InfoBoxData &data)
+UpdateInfoBoxAltitudeAGL(InfoBoxData &data) noexcept
 {
   const DerivedInfo &calculated = CommonInterface::Calculated();
 
@@ -117,7 +126,7 @@ UpdateInfoBoxAltitudeAGL(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxAltitudeBaro(InfoBoxData &data)
+UpdateInfoBoxAltitudeBaro(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
 
@@ -135,27 +144,30 @@ UpdateInfoBoxAltitudeBaro(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxAltitudeQFE(InfoBoxData &data)
+UpdateInfoBoxAltitudeQFE(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
+  const auto &calculated = CommonInterface::Calculated();
 
-  if (!basic.gps_altitude_available) {
+  const auto any_altitude = basic.GetAnyAltitude();
+  if (!any_altitude) {
     data.SetInvalid();
     return;
   }
 
-  auto Value = basic.gps_altitude;
+  if (!calculated.flight.HasTakenOff()) {
+    data.SetInvalid();
+    data.SetComment(_("Not flying"));
+    return;
+  }
 
-  const auto home_waypoint = way_points.GetHome();
-  if (home_waypoint)
-    Value -= home_waypoint->elevation;
-
-  data.SetValueFromAltitude(Value);
-  data.SetCommentFromAlternateAltitude(Value);
+  const double value = *any_altitude - calculated.flight.takeoff_altitude;
+  data.SetValueFromAltitude(value);
+  data.SetCommentFromAlternateAltitude(value);
 }
 
 void
-UpdateInfoBoxAltitudeFlightLevel(InfoBoxData &data)
+UpdateInfoBoxAltitudeFlightLevel(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
   const ComputerSettings &settings_computer =
@@ -168,10 +180,10 @@ UpdateInfoBoxAltitudeFlightLevel(InfoBoxData &data)
     data.SetTitleColor(0);
 
     // Set Value
-    data.UnsafeFormatValue(_T("%03d"), iround(Altitude / 100));
+    data.FmtValue("{:03}", iround(Altitude / 100));
 
     // Set Comment
-    data.UnsafeFormatComment(_T("%dft"), iround(Altitude));
+    data.FmtComment("{}ft", iround(Altitude));
 
   } else if (basic.gps_altitude_available &&
              settings_computer.pressure_available) {
@@ -183,10 +195,10 @@ UpdateInfoBoxAltitudeFlightLevel(InfoBoxData &data)
     data.SetTitleColor(1);
 
     // Set Value
-    data.UnsafeFormatValue(_T("%03d"), iround(Altitude / 100));
+    data.FmtValue("{:03}", iround(Altitude / 100));
 
     // Set Comment
-    data.UnsafeFormatComment(_T("%dft"), iround(Altitude));
+    data.FmtComment("{}ft", iround(Altitude));
 
   } else if ((basic.baro_altitude_available || basic.gps_altitude_available) &&
              !settings_computer.pressure_available) {
@@ -195,4 +207,31 @@ UpdateInfoBoxAltitudeFlightLevel(InfoBoxData &data)
   } else {
     data.SetInvalid();
   }
+}
+
+void
+UpdateInfoBoxAltitudeQNH(InfoBoxData &data) noexcept
+{
+  const ComputerSettings &settings_computer =
+    CommonInterface::GetComputerSettings();
+
+  if (!settings_computer.pressure_available) {
+    data.SetInvalid();
+    data.SetComment(_("no QNH"));
+    return;
+  }
+
+  const AtmosphericPressure &qnh = settings_computer.pressure;
+  const Unit unit = Units::current.pressure_unit;
+  const double value = Units::ToUserPressure(qnh);
+
+  data.SetCommentInvalid();
+
+  if (unit == Unit::INCH_MERCURY) {
+    data.FmtValue("{:.2f}", value);
+  } else {
+    data.FmtValue("{}", iround(value));
+  }
+
+  data.SetValueUnit(unit);
 }

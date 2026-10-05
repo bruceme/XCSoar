@@ -1,38 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_AUDIO_ALGORITHMS_HPP
-#define XCSOAR_AUDIO_ALGORITHMS_HPP
-
-#include "Compiler.h"
-#include "OS/ByteOrder.hpp"
+#include "util/Compiler.h"
+#include "util/ByteOrder.hxx"
 
 #include <algorithm>
+#include <limits>
 #include <type_traits>
-
-#include <assert.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 
 /* Algorithms for processing audio data */
 
@@ -59,12 +39,11 @@ inline void UpmixMonoPCM(T *pcm_stream_buffer, size_t num_mono_frames,
  * Convert an int32_t value to int16_t and perform clipping on
  * overflow / underflow.
  */
-inline int16_t Clip(int32_t value) {
+constexpr int16_t Clip(int32_t value) noexcept {
   return static_cast<int16_t>(
-      std::min(
-          std::max(
-              value,
-              static_cast<int32_t>(std::numeric_limits<int16_t>::min())),
+      std::clamp(
+          value,
+          static_cast<int32_t>(std::numeric_limits<int16_t>::min()),
           static_cast<int32_t>(std::numeric_limits<int16_t>::max())));
 }
 
@@ -154,5 +133,3 @@ inline void ByteSwapAndLowerVolume(int16_t *buffer, size_t num_frames,
                 100);
   }
 }
-
-#endif

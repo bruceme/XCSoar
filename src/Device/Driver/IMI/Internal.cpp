@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Protocol/Protocol.hpp"
@@ -28,7 +8,15 @@ Copyright_License {
 #include "Units/Unit.hpp"
 #include "Units/Units.hpp"
 #include "NMEA/Checksum.hpp"
-#include "Util/StringAPI.hxx"
+
+using std::string_view_literals::operator""sv;
+
+bool
+IMIDevice::EnableNMEA(OperationEnvironment &env)
+{
+  IMI::Disconnect(port, env);
+  return true;
+}
 
 bool
 IMIDevice::Connect(OperationEnvironment &env)
@@ -40,13 +28,6 @@ IMIDevice::Connect(OperationEnvironment &env)
   return true;
 }
 
-void
-IMIDevice::Disconnect(OperationEnvironment &env)
-{
-  // disconnect
-  IMI::Disconnect(port, env);
-}
-
 static bool
 ReadAltitude(NMEAInputLine &line, double &value_r)
 {
@@ -56,7 +37,7 @@ ReadAltitude(NMEAInputLine &line, double &value_r)
   if (!available)
     return false;
 
-  if (unit == _T('f') || unit == _T('F'))
+  if (unit == 'f' || unit == 'F')
     value = Units::ToSysUnit(value, Unit::FEET);
 
   value_r = value;
@@ -70,10 +51,9 @@ IMIDevice::ParseNMEA(const char *String, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(String);
-  char type[16];
-  line.Read(type, 16);
 
-  if (StringIsEqual(type, "$PGRMZ")) {
+  const auto type = line.ReadView();
+  if (type == "$PGRMZ"sv) {
     double value;
 
     /* The normal Garmin $PGRMZ line contains the "true" barometric

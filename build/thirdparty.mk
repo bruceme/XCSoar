@@ -1,11 +1,7 @@
-ifeq ($(MAKECMDGOALS),kobo-libs) # kludge to allow bootstrapping kobo-libs
-$(error Target "kobo-libs" is obsolete, please use "libs" instead)
-endif
-
 ifeq ($(TARGET_IS_KOBO),y)
-USE_THIRDPARTY_LIBS = y
+  USE_THIRDPARTY_LIBS = y
 else ifeq ($(TARGET),PC)
-USE_THIRDPARTY_LIBS = y
+  USE_THIRDPARTY_LIBS = y
 else ifeq ($(TARGET),ANDROID)
   ifeq ($(FAT_BINARY),y)
     # this is handled by android.mk
@@ -13,41 +9,66 @@ else ifeq ($(TARGET),ANDROID)
   else
     USE_THIRDPARTY_LIBS = y
   endif
-else ifeq ($(TARGET_IS_DARWIN),y)
-USE_THIRDPARTY_LIBS = y
+else ifeq ($(TARGET_IS_IOS),y)
+  USE_THIRDPARTY_LIBS = y
+else ifeq ($(TARGET_IS_OSX),y)
+  # macOS always uses the pinned SDL2 build; ANGLE is enabled by default.
+  # Omitted packages are discovered on the system.
+  USE_THIRDPARTY_LIBS = y
+  USE_ANGLE ?= y
+  ifeq ($(USE_ANGLE),y)
+    THIRDPARTY_PACKAGES ?= angle,sdl2
+  else
+    THIRDPARTY_PACKAGES ?= sdl2
+  endif
 else
-USE_THIRDPARTY_LIBS = n
+  USE_THIRDPARTY_LIBS = n
 endif
 
 ifeq ($(USE_THIRDPARTY_LIBS),y)
 
-# In most cases, the ACTUAL_HOST_TRIPLET is not explicitly set. Set it to the
-# value of HOST_TRIPLET in this case.
-# This is for targets for which a toolchain is used, which was originally
-# intended for another target ABI, e. g. when the arm-linux-gnueabihf toolchain
-# used to compile for musl instead of glibc, and so the actual triplet is
-# something like arm-linux-musleabihf.
-ifeq ($(ACTUAL_HOST_TRIPLET),)
-  ACTUAL_HOST_TRIPLET = $(HOST_TRIPLET)
-endif
+THIRDPARTY_PACKAGES ?= auto
+empty :=
+space := $(empty) $(empty)
+comma := ,
+THIRDPARTY_PACKAGES_LIST = $(sort $(strip $(subst $(comma), ,$(THIRDPARTY_PACKAGES))))
+THIRDPARTY_PACKAGES_NORMALIZED = $(subst $(space),$(comma),$(THIRDPARTY_PACKAGES_LIST))
+THIRDPARTY_PACKAGES_TAG = $(if $(THIRDPARTY_PACKAGES_NORMALIZED),$(subst $(comma),-,$(THIRDPARTY_PACKAGES_NORMALIZED)),none)
+THIRDPARTY_USE_ANGLE = $(if $(USE_ANGLE),$(USE_ANGLE),auto)
+THIRDPARTY_CONFIG_TAG = $(THIRDPARTY_PACKAGES_TAG)-angle-$(THIRDPARTY_USE_ANGLE)
+
+# Helper: returns y if the named package is part of the current third-party
+# selection, n otherwise.  With THIRDPARTY_PACKAGES=auto, every package is
+# considered selected.
+THIRDPARTY_PACKAGE_SELECTED = $(if $(filter auto,$(THIRDPARTY_PACKAGES)),y,$(if $(filter $(1),$(THIRDPARTY_PACKAGES_LIST)),y,n))
 
 # -Wl,--gc-sections breaks the (Kobo) glibc build
 THIRDPARTY_LDFLAGS_FILTER_OUT = -L$(THIRDPARTY_LIBS_DIR)/% -Wl,--gc-sections
 
-THIRDPARTY_LIBS_DIR = $(TARGET_OUTPUT_DIR)/lib/$(ACTUAL_HOST_TRIPLET)
-THIRDPARTY_LIBS_ROOT = $(THIRDPARTY_LIBS_DIR)/root
+THIRDPARTY_LIBS_DIR = $(ARCH_OUTPUT_DIR)/lib/$(THIRDPARTY_CONFIG_TAG)
+THIRDPARTY_LIBS_ROOT = $(THIRDPARTY_LIBS_DIR)/$(HOST_TRIPLET)
+THIRDPARTY_LIBS_STAMP = $(THIRDPARTY_LIBS_DIR)/stamp
 
 .PHONY: libs
-libs: $(THIRDPARTY_LIBS_DIR)/stamp
+libs: $(THIRDPARTY_LIBS_STAMP)
 
-compile-depends += $(THIRDPARTY_LIBS_DIR)/stamp
-$(THIRDPARTY_LIBS_DIR)/stamp:
-	./build/thirdparty.py $(TARGET_OUTPUT_DIR) $(TARGET) $(HOST_TRIPLET) $(ACTUAL_HOST_TRIPLET) "$(TARGET_ARCH)" "$(TARGET_CPPFLAGS)" "$(filter-out $(THIRDPARTY_LDFLAGS_FILTER_OUT),$(TARGET_LDFLAGS))" $(CC) $(CXX) $(AR) "$(ARFLAGS)" $(RANLIB) $(STRIP)
+compile-depends += $(THIRDPARTY_LIBS_STAMP)
+$(THIRDPARTY_LIBS_STAMP):
+	GEOTIFF=$(GEOTIFF) THIRDPARTY_PACKAGES="$(THIRDPARTY_PACKAGES_NORMALIZED)" USE_ANGLE=$(THIRDPARTY_USE_ANGLE) ./build/thirdparty.py $(THIRDPARTY_LIBS_DIR) $(HOST_TRIPLET) $(TARGET_IS_IOS) "$(TARGET_ARCH)" "$(TARGET_CPPFLAGS)" "$(filter-out $(THIRDPARTY_LDFLAGS_FILTER_OUT),$(TARGET_LDFLAGS))" "$(WRAPPED_CC)" "$(WRAPPED_CXX)" $(AR) "$(ARFLAGS)" $(RANLIB) $(STRIP) "$(WINDRES)" $(ENABLE_SDL)
 	touch $@
 
+ifeq ($(TARGET_IS_KOBO),n)
 TARGET_CPPFLAGS += -isystem $(THIRDPARTY_LIBS_ROOT)/include
 TARGET_LDFLAGS += -L$(THIRDPARTY_LIBS_ROOT)/lib
+endif
 
+endif
+
+ifeq ($(TARGET_IS_KOBO),y)
+  # we build a toolchain as part of the thirdparty-library build
+  BUILD_TOOLCHAIN_TARGET = $(THIRDPARTY_LIBS_STAMP)
+else
+  BUILD_TOOLCHAIN_TARGET =
 endif
 
 compile-depends += boost

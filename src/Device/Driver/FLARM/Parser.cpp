@@ -1,53 +1,77 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device.hpp"
-#include "Util/Macros.hpp"
-#include "Util/StringAPI.hxx"
-#include "NMEA/InputLine.hpp"
+#include "FLARM/Id.hpp"
 #include "NMEA/Checksum.hpp"
+#include "NMEA/Info.hpp"
+#include "NMEA/InputLine.hpp"
 
-#include <string.h>
+#include <cstring>
+#include <string>
+
+using std::string_view_literals::operator""sv;
 
 bool
-FlarmDevice::ParsePFLAC(NMEAInputLine &line)
+FlarmDevice::ParsePFLAC(NMEAInputLine &line, NMEAInfo &info)
 {
-  char responsetype[10];
-  line.Read(responsetype, 10);
+  [[maybe_unused]] const auto responsetype = line.ReadView();
 
-  char name[80];
-  line.Read(name, 80);
+  const auto name = line.ReadView();
 
-  if (StringIsEqual(name, "ERROR"))
+  if (name == "ERROR"sv)
     // ignore error responses...
     return true;
 
-  char value[256];
-  line.Read(value, ARRAY_SIZE(value));
+  if (name == "RADIOID"sv) {
+    /* Format: <IDType>,<ID> */
+    const auto id_type = line.ReadView();
+    const auto id_hex = line.ReadView();
+    {
+      std::string value;
+      value.reserve(id_type.size() + 1 + id_hex.size());
+      value.append(id_type);
+      value.push_back(',');
+      value.append(id_hex);
 
-  settings.Lock();
-  settings.Set(name, value);
-  settings.Unlock();
+      const std::lock_guard<Mutex> lock(settings);
+      settings.Set(std::string{name}, std::move(value));
+    }
+
+    FlarmId id = FlarmId::Undefined();
+    if (!id_hex.empty() && id_hex.size() < 16) {
+      char hex[16];
+      memcpy(hex, id_hex.data(), id_hex.size());
+      hex[id_hex.size()] = '\0';
+      id = FlarmId::Parse(hex, nullptr);
+    }
+
+    /* Always update radio_id so a missing/invalid RADIOID does not
+       leave a stale self-id in the blackboard. */
+    info.flarm.hardware.radio_id = id;
+    if (id.IsDefined())
+      info.flarm.hardware.available.Update(info.clock);
+
+    return true;
+  }
+
+  if (name == "DEVTYPE"sv) {
+    const auto value = line.Rest();
+
+    // Check if the hardware is a PowerFLARM variant
+    if (value.find("Power"sv) != std::string_view::npos) {
+      this->SetPowerFlarm(true);
+    }
+
+    const std::lock_guard<Mutex> lock(settings);
+    settings.Set(std::string{name}, std::string{value});
+    return true;
+  }
+
+  const auto value = line.Rest();
+
+  const std::lock_guard<Mutex> lock(settings);
+  settings.Set(std::string{name}, std::string{value});
 
   return true;
 }
@@ -59,11 +83,10 @@ FlarmDevice::ParseNMEA(const char *_line, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(_line);
-  char type[16];
-  line.Read(type, 16);
 
-  if (StringIsEqual(type, "$PFLAC"))
-    return ParsePFLAC(line);
+  const auto type = line.ReadView();
+  if (type == "$PFLAC"sv)
+    return ParsePFLAC(line, info);
   else
     return false;
 }

@@ -1,39 +1,64 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "SymbolRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 
 #include <algorithm>
 
+namespace {
+
+[[gnu::pure]]
+unsigned
+MinDimension(const PixelRect &rc) noexcept
+{
+  return std::min(rc.GetWidth(), rc.GetHeight());
+}
+
+/** One fifth of the shorter rc side; used for arrows and bar symbols. */
+[[gnu::pure]]
+unsigned
+DrawSize(const PixelRect &rc, unsigned max_draw_size) noexcept
+{
+  unsigned size = std::max(1u, MinDimension(rc) / 5);
+  if (max_draw_size > 0)
+    size = std::min(size, max_draw_size);
+
+  return size;
+}
+
+/**
+ * Horizontal bar half-extents (WithMargin size).
+ * @param min_dim_for_width if non-zero, bar is 75% of this (menu icon)
+ */
+[[gnu::pure]]
+PixelSize
+BarMargin(unsigned draw_size, unsigned min_dim_for_width) noexcept
+{
+  const unsigned width = min_dim_for_width > 0
+    ? std::max(1u, min_dim_for_width * 3 / 8)
+    : draw_size;
+  return {width, std::max(1u, draw_size / 3)};
+}
+
 void
-SymbolRenderer::DrawArrow(Canvas &canvas, PixelRect rc, Direction direction)
+DrawBarAt(Canvas &canvas, PixelPoint center, PixelSize margin) noexcept
+{
+  canvas.DrawRectangle(PixelRect{center}.WithMargin(margin));
+}
+
+} // namespace
+
+void
+SymbolRenderer::DrawArrow(Canvas &canvas, PixelRect rc,
+                          Direction direction,
+                          unsigned max_draw_size) noexcept
 {
   assert(direction == UP || direction == DOWN ||
          direction == LEFT || direction == RIGHT);
 
-  auto size = std::min(rc.GetWidth(), rc.GetHeight()) / 5;
-  auto center = rc.GetCenter();
+  const unsigned size = DrawSize(rc, max_draw_size);
+  const auto center = rc.GetCenter();
   BulkPixelPoint arrow[3];
 
   if (direction == LEFT || direction == RIGHT) {
@@ -56,17 +81,59 @@ SymbolRenderer::DrawArrow(Canvas &canvas, PixelRect rc, Direction direction)
 }
 
 void
-SymbolRenderer::DrawSign(Canvas &canvas, PixelRect rc, bool plus)
+SymbolRenderer::DrawSign(Canvas &canvas, PixelRect rc, bool plus,
+                         unsigned max_draw_size) noexcept
 {
-  unsigned size = std::min(rc.GetWidth(), rc.GetHeight()) / 5;
-  auto center = rc.GetCenter();
+  if (MinDimension(rc) == 0)
+    return;
 
-  // Draw horizontal bar
-  canvas.Rectangle(center.x - size, center.y - size / 3,
-                   center.x + size, center.y + size / 3);
+  const unsigned draw_size = DrawSize(rc, max_draw_size);
+  const auto center = rc.GetCenter();
+  const PixelSize margin = BarMargin(draw_size, 0);
+
+  DrawBarAt(canvas, center, margin);
 
   if (plus)
-    // Draw vertical bar
-    canvas.Rectangle(center.x - size / 3, center.y - size,
-                     center.x + size / 3, center.y + size);
+    DrawBarAt(canvas, center, {margin.height, margin.width});
+}
+
+void
+SymbolRenderer::DrawHamburger(Canvas &canvas, PixelRect rc) noexcept
+{
+  const unsigned min_dim = MinDimension(rc);
+  if (min_dim == 0)
+    return;
+
+  const unsigned draw_size = DrawSize(rc, 0);
+  const auto center = rc.GetCenter();
+  const PixelSize margin = BarMargin(draw_size, min_dim);
+  const int step = int(2 * margin.height + std::max(1u, draw_size / 3));
+
+  DrawBarAt(canvas, {center.x, center.y - step}, margin);
+  DrawBarAt(canvas, center, margin);
+  DrawBarAt(canvas, {center.x, center.y + step}, margin);
+}
+
+void
+SymbolRenderer::DrawBolt(Canvas &canvas, PixelRect rc) noexcept
+{
+  const unsigned min_dim = MinDimension(rc);
+  if (min_dim == 0)
+    return;
+
+  /* Material-style lightning bolt (filled zigzag), sized like the
+     hamburger icon so it reads clearly on map overlay buttons. */
+  const int s = int(std::max(1u, min_dim * 3 / 8));
+  const auto c = rc.GetCenter();
+
+  const BulkPixelPoint bolt[] = {
+    {c.x + s * 2 / 10, c.y - s},
+    {c.x - s * 5 / 10, c.y + s / 10},
+    {c.x - s / 10, c.y + s / 10},
+    {c.x - s * 2 / 10, c.y + s},
+    {c.x + s * 5 / 10, c.y - s / 10},
+    {c.x + s / 10, c.y - s / 10},
+  };
+
+  canvas.DrawPolygon(bolt, 6);
 }

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /* TextUtil.java - Android text handling to be used by C++ Code via jni.
  */
@@ -33,17 +13,18 @@ import android.graphics.Canvas;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 
-public class TextUtil {
-  private Paint paint;
-  private Paint.FontMetricsInt metrics;
-  private int[] extent = new int[2];
-  private int[] id = new int[5];
+public final class TextUtil {
+  private final Paint paint;
+  private final Paint.FontMetricsInt metrics;
+  private final int[] extent = new int[2];
+  private final int[] id = new int[5];
 
   public TextUtil(int style, int textSize,
                   int paint_flags, boolean monospace) {
-    Typeface tf = monospace
-      ? Typeface.MONOSPACE
-      : Typeface.create((Typeface)null, style);
+    Typeface tf = Typeface.create(monospace
+                                  ? Typeface.MONOSPACE
+                                  : Typeface.DEFAULT,
+                                  style);
 
     paint = new Paint(paint_flags);
     paint.setTypeface(tf);
@@ -61,10 +42,9 @@ public class TextUtil {
     paint.getTextBounds(m, 0, 1, bounds);
 
     metrics[0] = Math.round(paint.descent() - paint.ascent());
-    metrics[1] = paint.getTypeface().getStyle();
-    metrics[2] = Math.round(-paint.ascent());
-    metrics[3] = bounds.height();
-    metrics[4] = Math.round(paint.getFontSpacing());
+    metrics[1] = Math.round(-paint.ascent());
+    metrics[2] = bounds.height();
+    metrics[3] = Math.round(paint.getFontSpacing());
   }
 
   public int[] getTextBounds(String text) {
@@ -85,7 +65,7 @@ public class TextUtil {
     bmp.eraseColor(Color.TRANSPARENT);
     paint.setColor(Color.WHITE);
     Canvas canvas = new Canvas(bmp);
-    canvas.drawText(text, 0, -paint.getFontMetricsInt().ascent, paint);
+    canvas.drawText(text, 0, -metrics.ascent, paint);
 
     // create OpenGL texture
     if (!BitmapUtil.bitmapToOpenGL(bmp, true, false, id))

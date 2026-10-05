@@ -1,30 +1,9 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLAT_PROJECTION_HPP
-#define XCSOAR_FLAT_PROJECTION_HPP
+#pragma once
 
 #include "Geo/GeoPoint.hpp"
-#include "Compiler.h"
 
 struct FlatPoint;
 struct FlatGeoPoint;
@@ -91,7 +70,7 @@ public:
    *
    * @return Projected point
    */
-  gcc_pure
+  [[gnu::pure]]
   FlatGeoPoint ProjectInteger(const GeoPoint &tp) const;
 
   /**
@@ -101,13 +80,13 @@ public:
    *
    * @return Projected bounds
    */
-  gcc_pure
+  [[gnu::pure]]
   FlatBoundingBox Project(const GeoBounds &bb) const;
 
   /**
    * Project a square defined by its center and a radius.
    */
-  gcc_pure
+  [[gnu::pure]]
   FlatBoundingBox ProjectSquare(const GeoPoint center, double radius) const;
 
   /**
@@ -117,7 +96,7 @@ public:
    *
    * @return Projected point
    */
-  gcc_pure
+  [[gnu::pure]]
   GeoPoint Unproject(const FlatGeoPoint &tp) const;
 
   /**
@@ -127,7 +106,7 @@ public:
    *
    * @return Projected bounds
    */
-  gcc_pure
+  [[gnu::pure]]
   GeoBounds Unproject(const FlatBoundingBox &bb) const;
 
   /**
@@ -137,7 +116,7 @@ public:
    *
    * @return Projected point
    */
-  gcc_pure
+  [[gnu::pure]]
   FlatPoint ProjectFloat(const GeoPoint &tp) const;
 
   /**
@@ -147,7 +126,7 @@ public:
    *
    * @return Projected point
    */
-  gcc_pure
+  [[gnu::pure]]
   GeoPoint Unproject(const FlatPoint &tp) const;
 
   /**
@@ -159,7 +138,7 @@ public:
    *
    * @return Distance in flat earth projected units
    */
-  gcc_pure
+  [[gnu::pure]]
   unsigned ProjectRangeInteger(const GeoPoint &tp, double range) const;
 
   /**
@@ -171,7 +150,7 @@ public:
    *
    * @return Distance in flat earth projected units
    */
-  gcc_pure
+  [[gnu::pure]]
   double ProjectRangeFloat(const GeoPoint &tp, double range) const;
 
   /** 
@@ -179,7 +158,7 @@ public:
    * 
    * @return Center point of task projection
    */
-  gcc_pure
+  [[gnu::pure]]
   const GeoPoint &GetCenter() const {
     return center;
   }
@@ -187,10 +166,8 @@ public:
   /**
    * Return approximate grid to flat earth scale in meters
    */
-  gcc_pure
+  [[gnu::pure]]
   double GetApproximateScale() const {
     return approx_scale;
   }
 };
-
-#endif

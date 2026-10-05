@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ProcessTimer.hpp"
 #include "Interface.hpp"
@@ -28,8 +8,8 @@ Copyright_License {
 #include "Input/InputEvents.hpp"
 #include "Device/MultipleDevices.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
-#include "Components.hpp"
-#include "Time/PeriodClock.hpp"
+#include "time/PeriodClock.hpp"
+#include "time/RoughTime.hpp"
 #include "MainWindow.hpp"
 #include "PopupMessage.hpp"
 #include "Simulator.hpp"
@@ -39,11 +19,27 @@ Copyright_License {
 #include "BallastDumpManager.hpp"
 #include "Operation/Operation.hpp"
 #include "Tracking/TrackingGlue.hpp"
-#include "Event/Idle.hpp"
-#include "Dialogs/Tracking/CloudEnableDialog.hpp"
+#include "net/client/tim/Glue.hpp"
+#include "ui/event/Idle.hpp"
+#include "Components.hpp"
+#include "NetComponents.hpp"
+#include "BackendComponents.hpp"
+#include "LogFile.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifdef HAVE_HTTP
+#include "NOTAM/NOTAMGlue.hpp"
+#endif
+
+#ifdef __APPLE__
+#include "Apple/DarkMode.hpp"
+#endif
 
 static void
-MessageProcessTimer()
+MessageProcessTimer() noexcept
 {
   // don't display messages if airspace warning dialog is active
   if (CommonInterface::main_window->popup != nullptr &&
@@ -57,9 +53,9 @@ MessageProcessTimer()
  * defined in settings
  */
 static void
-SystemClockTimer()
+SystemClockTimer() noexcept
 {
-#ifdef WIN32
+#ifdef _WIN32
   const NMEAInfo &basic = CommonInterface::Basic();
 
   // as soon as we get a fix for the first time, set the
@@ -96,20 +92,20 @@ SystemClockTimer()
 }
 
 static void
-SystemProcessTimer()
+SystemProcessTimer() noexcept
 {
   SystemClockTimer();
 }
 
 static void
-BlackboardProcessTimer()
+BlackboardProcessTimer() noexcept
 {
-  device_blackboard->ExpireWallClock();
+  backend_components->device_blackboard->ExpireWallClock();
   XCSoarInterface::ExchangeBlackboard();
 }
 
 static void
-BallastDumpProcessTimer()
+BallastDumpProcessTimer() noexcept
 {
   ComputerSettings &settings_computer =
     CommonInterface::SetComputerSettings();
@@ -129,17 +125,17 @@ BallastDumpProcessTimer()
     // Plane is dry now -> disable ballast_timer
     settings_computer.polar.ballast_timer_active = false;
 
-  if (protected_task_manager != nullptr)
-    protected_task_manager->SetGlidePolar(glide_polar);
+  if (backend_components->protected_task_manager != nullptr)
+    backend_components->protected_task_manager->SetGlidePolar(glide_polar);
 }
 
 static void
-ProcessAutoBugs()
+ProcessAutoBugs() noexcept
 {
   /**
    * Increase the bugs value every hour.
    */
-  static constexpr double interval(3600);
+  static constexpr FloatDuration interval = std::chrono::hours{1};
 
   /**
    * Decrement the bugs setting by 1%.
@@ -155,14 +151,14 @@ ProcessAutoBugs()
    * The time stamp (from FlyingState::flight_time) when we last
    * increased the bugs value automatically.
    */
-  static double last_auto_bugs;
+  static FloatDuration last_auto_bugs;
 
   const FlyingState &flight = CommonInterface::Calculated().flight;
   const PolarSettings &polar = CommonInterface::GetComputerSettings().polar;
 
   if (!flight.flying)
     /* reset when not flying */
-    last_auto_bugs = 0;
+    last_auto_bugs = {};
   else if (!polar.auto_bugs)
     /* feature is disabled */
     last_auto_bugs = flight.flight_time;
@@ -173,20 +169,69 @@ ProcessAutoBugs()
   }
 }
 
+/**
+ * Keep the UTC offset up to date, unless the user has configured it
+ * manually.  This picks up daylight saving time transitions, and time
+ * zone changes while travelling.
+ */
 static void
-SettingsProcessTimer()
+UTCOffsetProcessTimer() noexcept
 {
-  CloudEnableDialog();
+  const auto &settings = CommonInterface::GetComputerSettings();
+  if (settings.local_time_source == LocalTimeSource::MANUAL_UTC_OFFSET)
+    return;
+
+  /* calculating the UTC offset is cheap, but there is no point in
+     doing it on every timer tick */
+  static PeriodClock clock;
+  if (!clock.CheckUpdate(std::chrono::seconds(30)))
+    return;
+
+  if (const auto utc_offset = settings.GetCurrentUTCOffset();
+      utc_offset != settings.utc_offset)
+    CommonInterface::SetComputerSettings().utc_offset = utc_offset;
+}
+
+static void
+SettingsProcessTimer() noexcept
+{
+  UTCOffsetProcessTimer();
   BallastDumpProcessTimer();
   ProcessAutoBugs();
 }
 
+#ifdef __APPLE__
+
+/**
+ * Follows the operating system's appearance setting, which macOS and
+ * iOS may switch at any time, e.g. on their sunset-to-sunrise
+ * schedule.  Neither sends the application an event our event loop
+ * could see, so the setting has to be polled; this is only necessary
+ * while the user has asked us to follow it.
+ */
 static void
-CommonProcessTimer()
+DarkModeProcessTimer() noexcept
+{
+  if (CommonInterface::GetUISettings().dark_mode !=
+      UISettings::DarkMode::AUTO)
+    return;
+
+  if (UpdateAppleDarkMode())
+    CommonInterface::main_window->ReinitialiseLook();
+}
+
+#endif
+
+static void
+CommonProcessTimer() noexcept
 {
   BlackboardProcessTimer();
 
   SettingsProcessTimer();
+
+#ifdef __APPLE__
+  DarkModeProcessTimer();
+#endif
 
   InfoBoxManager::ProcessTimer();
   InputEvents::ProcessTimer();
@@ -196,9 +241,9 @@ CommonProcessTimer()
 }
 
 static void
-ConnectionProcessTimer()
+ConnectionProcessTimer() noexcept
 {
-  if (devices == nullptr)
+  if (backend_components->devices == nullptr)
     return;
 
   static bool connected_last = false;
@@ -230,42 +275,70 @@ ConnectionProcessTimer()
   /* this OperationEnvironment instance must be persistent, because
      DeviceDescriptor::Open() is asynchronous */
   static QuietOperationEnvironment env;
-  devices->AutoReopen(env);
+  backend_components->devices->AutoReopen(env);
 }
 
 void
-ProcessTimer()
+ProcessTimer() noexcept
 {
   CommonProcessTimer();
 
   if (!is_simulator()) {
     // now check GPS status
-    if (devices != nullptr)
-      devices->Tick();
+    if (backend_components->devices != nullptr)
+      backend_components->devices->Tick();
 
     // also service replay logger
-    if (replay && replay->IsActive()) {
+    if (backend_components->replay && backend_components->replay->IsActive()) {
       if (CommonInterface::MovementDetected())
-        replay->Stop();
+        backend_components->replay->Stop();
     }
 
     ConnectionProcessTimer();
   } else {
     static PeriodClock m_clock;
 
-    if (replay && replay->IsActive()) {
+    if (backend_components->replay && backend_components->replay->IsActive()) {
       m_clock.Update();
-    } else if (m_clock.Elapsed() >= 1000) {
+    } else if (m_clock.Elapsed() >= std::chrono::seconds(1)) {
       m_clock.Update();
-      device_blackboard->ProcessSimulation();
+      backend_components->device_blackboard->ProcessSimulation();
     } else if (!m_clock.IsDefined())
       m_clock.Update();
   }
 
+  if (net_components != nullptr) {
 #ifdef HAVE_TRACKING
-  if (tracking != nullptr) {
-    tracking->SetSettings(CommonInterface::GetComputerSettings().tracking);
-    tracking->OnTimer(CommonInterface::Basic(), CommonInterface::Calculated());
-  }
+    if (net_components->tracking) {
+      net_components->tracking->SetSettings(CommonInterface::GetComputerSettings().tracking);
+      net_components->tracking->OnTimer(CommonInterface::Basic(), CommonInterface::Calculated());
+    }
 #endif
+
+#ifdef HAVE_HTTP
+    if (net_components->tim != nullptr &&
+        CommonInterface::GetComputerSettings().weather.enable_tim)
+      net_components->tim->OnTimer(CommonInterface::Basic());
+
+    const NMEAInfo &basic = CommonInterface::Basic();
+    if (net_components->notam != nullptr) {
+      const auto &notam_settings =
+        CommonInterface::GetComputerSettings().airspace.notam;
+      net_components->notam->SetSettings(notam_settings);
+      if (notam_settings.enabled && basic.location_available) {
+        const auto current_time_utc =
+          basic.time_available && basic.date_time_utc.IsDatePlausible()
+            ? basic.date_time_utc.ToTimePoint()
+            : std::chrono::system_clock::now();
+        try {
+          net_components->notam->OnTimer(basic.location, current_time_utc);
+        } catch (const std::exception &e) {
+          LogFmt("NOTAM: OnTimer failed: {}", e.what());
+        } catch (...) {
+          LogFmt("NOTAM: OnTimer failed");
+        }
+      }
+    }
+#endif
+  }
 }

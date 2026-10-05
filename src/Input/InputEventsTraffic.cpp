@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InputEvents.hpp"
 #include "PageActions.hpp"
@@ -30,9 +10,9 @@ Copyright_License {
 #include "Dialogs/Traffic/TrafficDialogs.hpp"
 
 void
-InputEvents::eventFLARMRadar(gcc_unused const TCHAR *misc)
+InputEvents::eventFLARMRadar([[maybe_unused]] const char *misc)
 {
-  if (StringIsEqual(misc, _T("ForceToggle"))) {
+  if (StringIsEqual(misc, "ForceToggle")) {
     CommonInterface::main_window->ToggleForceFLARMRadar();
   } else
     CommonInterface::main_window->ToggleSuppressFLARMRadar();
@@ -41,43 +21,47 @@ InputEvents::eventFLARMRadar(gcc_unused const TCHAR *misc)
 // FLARM Traffic
 // Displays the FLARM traffic dialog
 void
-InputEvents::eventFlarmTraffic(gcc_unused const TCHAR *misc)
+InputEvents::eventFlarmTraffic([[maybe_unused]] const char *misc)
 {
   PageActions::ShowTrafficRadar();
 }
 
 void
-InputEvents::eventTraffic(const TCHAR *misc)
+InputEvents::eventTraffic(const char *misc)
 {
   LoadFlarmDatabases();
 
-  if (StringIsEqual(misc, _T("show"))) {
+  if (StringIsEqual(misc, "show")) {
     PageActions::ShowTrafficRadar();
     return;
   }
 
   TrafficWidget *traffic_widget = (TrafficWidget *)
-    CommonInterface::main_window->GetFlavourWidget(_T("Traffic"));
+    CommonInterface::main_window->GetFlavourWidget("Traffic");
   if (traffic_widget == nullptr)
     return;
 
-  if (StringIsEqual(misc, _T("zoom auto toggle"))) {
+  if (StringIsEqual(misc, "zoom auto toggle")) {
     traffic_widget->ToggleAutoZoom();
-  } else if (StringIsEqual(misc, _T("zoom in"))) {
+  } else if (StringIsEqual(misc, "zoom in")) {
     traffic_widget->ZoomIn();
-  } else if (StringIsEqual(misc, _T("zoom out"))) {
+  } else if (StringIsEqual(misc, "zoom out")) {
     traffic_widget->ZoomOut();
-  } else if (StringIsEqual(misc, _T("northup toggle"))) {
+  } else if (StringIsEqual(misc, "northup toggle")) {
     traffic_widget->ToggleNorthUp();
-  } else if (StringIsEqual(misc, _T("details"))) {
+  } else if (StringIsEqual(misc, "details")) {
     traffic_widget->OpenDetails();
-  } else if (StringIsEqual(misc, _T("label toggle"))) {
+  } else if (StringIsEqual(misc, "label toggle")) {
     traffic_widget->SwitchData();
+  } else if (StringIsEqual(misc, "next")) {
+    traffic_widget->NextTarget();
+  } else if (StringIsEqual(misc, "previous")) {
+    traffic_widget->PreviousTarget();
   }
 }
 
 void
-InputEvents::eventFlarmDetails(gcc_unused const TCHAR *misc)
+InputEvents::eventFlarmDetails([[maybe_unused]] const char *misc)
 {
   LoadFlarmDatabases();
   TrafficListDialog();

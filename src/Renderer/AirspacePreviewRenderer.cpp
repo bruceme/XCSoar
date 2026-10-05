@@ -1,35 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AirspacePreviewRenderer.hpp"
-#include "Screen/Canvas.hpp"
-#include "Screen/Features.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Airspace/AirspacePolygon.hpp"
 #include "Renderer/AirspaceRendererSettings.hpp"
 #include "Look/AirspaceLook.hpp"
 #include "Geo/GeoBounds.hpp"
 #include "Projection/WindowProjection.hpp"
-#include "Asset.hpp"
 
 #include <vector>
 
@@ -48,7 +26,7 @@ GetPolygonPoints(std::vector<BulkPixelPoint> &pts,
 
   WindowProjection projection;
   projection.SetScreenSize({radius * 2, radius * 2});
-  projection.SetScreenOrigin(pt.x, pt.y);
+  projection.SetScreenOrigin(pt);
   projection.SetGeoLocation(center);
   projection.SetScale(radius * 2 / geo_size);
   projection.SetScreenAngle(Angle::Zero());
@@ -82,16 +60,6 @@ AirspacePreviewRenderer::PrepareFill(
 #elif defined(USE_MEMORY_CANVAS)
   Color color = class_look.fill_color;
   canvas.Select(Brush(LightColor(color)));
-#else
-  unsigned brush = class_settings.brush;
-#ifdef HAVE_ALPHA_BLEND
-  if (settings.transparency)
-    brush = 3;
-#endif
-
-  canvas.Select(look.brushes[brush]);
-  canvas.SetTextColor(LightColor(class_look.fill_color));
-  canvas.SetMixMask();
 #endif
 
   canvas.SelectNullPen();
@@ -100,12 +68,11 @@ AirspacePreviewRenderer::PrepareFill(
 }
 
 void
-AirspacePreviewRenderer::UnprepareFill(Canvas &canvas)
+AirspacePreviewRenderer::UnprepareFill([[maybe_unused]] Canvas &canvas,
+                                       [[maybe_unused]] Color text_color) noexcept
 {
 #ifdef ENABLE_OPENGL
   ::glDisable(GL_BLEND);
-#elif defined(USE_GDI)
-  canvas.SetMixCopy();
 #endif
 }
 
@@ -134,10 +101,7 @@ DrawShape(Canvas &canvas, AbstractAirspace::Shape shape, const PixelPoint pt,
           unsigned radius, const std::vector<BulkPixelPoint> &pts)
 {
   if (shape == AbstractAirspace::Shape::CIRCLE)
-    canvas.DrawCircle(pt.x, pt.y, radius);
-  else if (IsAncientHardware())
-    canvas.Rectangle(pt.x - radius, pt.y - radius,
-                     pt.x + radius, pt.y + radius);
+    canvas.DrawCircle(pt, radius);
   else
     canvas.DrawPolygon(&pts[0], (unsigned)pts.size());
 }
@@ -149,18 +113,19 @@ AirspacePreviewRenderer::Draw(Canvas &canvas, const AbstractAirspace &airspace,
                               const AirspaceLook &look)
 {
   AbstractAirspace::Shape shape = airspace.GetShape();
-  AirspaceClass type = airspace.GetType();
+  AirspaceClass as_type_or_class = settings.classes[airspace.GetTypeOrClass()].display ? airspace.GetTypeOrClass() : airspace.GetClass();
 
   // Container for storing the points of a polygon airspace
   std::vector<BulkPixelPoint> pts;
-  if (shape == AbstractAirspace::Shape::POLYGON && !IsAncientHardware())
+  if (shape == AbstractAirspace::Shape::POLYGON)
     GetPolygonPoints(pts, (const AirspacePolygon &)airspace, pt, radius);
 
-  if (PrepareFill(canvas, type, look, settings)) {
+  const Color text_color = canvas.GetTextColor();
+  if (PrepareFill(canvas, as_type_or_class, look, settings)) {
     DrawShape(canvas, shape, pt, radius, pts);
-    UnprepareFill(canvas);
+    UnprepareFill(canvas, text_color);
   }
 
-  if (PrepareOutline(canvas, type, look, settings))
+  if (PrepareOutline(canvas, as_type_or_class, look, settings))
     DrawShape(canvas, shape, pt, radius, pts);
 }

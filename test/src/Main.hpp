@@ -1,21 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
 /*
  * This header contains common boilerplate initialisation code for a
  * lot of debug programs.
  *
  */
+ 
+ #pragma once
 
-#include "Util/PrintException.hxx"
+#include "util/PrintException.hxx"
 
 #if defined(ENABLE_CMDLINE) || defined(ENABLE_MAIN_WINDOW)
-#include "OS/Args.hpp"
+#include "system/Args.hpp"
 #endif
 
 #if defined(ENABLE_MAIN_WINDOW) && !defined(ENABLE_CMDLINE)
 #define USAGE "-WxH"
-#endif
-
-#if defined(ENABLE_RESOURCE_LOADER) && defined(USE_GDI)
-#include "ResourceLoader.hpp"
 #endif
 
 #ifdef ENABLE_DIALOG
@@ -31,11 +32,10 @@
 #endif
 
 #ifdef ENABLE_MAIN_WINDOW
-#include "Screen/SingleWindow.hpp"
-#include "Form/ActionListener.hpp"
+#include "ui/window/SingleWindow.hpp"
 #include "UIGlobals.hpp"
-#include "Util/CharUtil.hxx"
-#include "Util/NumberParser.hpp"
+#include "util/CharUtil.hxx"
+#include "util/NumberParser.hpp"
 #define ENABLE_SCREEN
 #endif
 
@@ -57,8 +57,9 @@
 #endif
 
 #ifdef ENABLE_SCREEN
-#include "Screen/Init.hpp"
+#include "ui/window/Init.hpp"
 #include "Screen/Layout.hpp"
+#include "ui/dim/Size.hpp"
 #include "Fonts.hpp"
 #endif
 
@@ -71,7 +72,7 @@
 #include "LocalPath.hpp"
 #endif
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <windows.h>
 #endif
 
@@ -84,10 +85,28 @@ static void
 ParseCommandLine(Args &args);
 #endif
 
-static void Main();
+#ifdef ENABLE_MAIN_WINDOW
+
+class TestMainWindow;
+
+static void
+Main(TestMainWindow &main_window);
+
+#else
+
+static void
+Main(UI::Display &display);
+
+#endif
 
 #ifdef ENABLE_LOOK
 static Look *look;
+
+const MapLook &
+UIGlobals::GetMapLook()
+{
+  return look->map;
+}
 #endif
 
 #ifdef ENABLE_DIALOG_LOOK
@@ -116,8 +135,8 @@ UIGlobals::GetDialogLook()
 
 #ifdef ENABLE_MAIN_WINDOW
 
-class TestMainWindow : public SingleWindow, public ActionListener {
-  Window *full_window;
+class TestMainWindow : public UI::SingleWindow {
+  Window *full_window = nullptr;
 
 #ifdef ENABLE_CLOSE_BUTTON
   Button close_button;
@@ -129,7 +148,7 @@ public:
     LAST_BUTTON
   };
 
-  TestMainWindow():full_window(nullptr) {}
+  using UI::SingleWindow::SingleWindow;
 
   /**
    * Configure a #Window that will be auto-resize to the full client
@@ -139,31 +158,22 @@ public:
     full_window = &w;
   }
 
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override {
-    switch (id) {
-    case CLOSE:
-      Close();
-      break;
-    }
-  }
-
 protected:
   /* virtual methods from class Window */
   void OnCreate() override {
     SingleWindow::OnCreate();
 
 #ifdef ENABLE_CLOSE_BUTTON
-    close_button.Create(*this, *button_look, _T("Close"),
+    close_button.Create(*this, *button_look, "Close",
                         GetCloseButtonRect(GetClientRect()),
                         WindowStyle(),
-                        *this, CLOSE);
+                        [this](){ Close(); });
 #endif
   }
 
-  void OnResize(PixelSize new_size) override {
+  void OnResize(PixelSize new_size) noexcept override {
     SingleWindow::OnResize(new_size);
-    Layout::Initialize(new_size);
+    Layout::Initialise(GetDisplay(), new_size);
 
     if (full_window != nullptr)
       full_window->Resize(new_size);
@@ -171,7 +181,7 @@ protected:
 
 protected:
 #ifdef ENABLE_CLOSE_BUTTON
-  gcc_pure
+  [[gnu::pure]]
   PixelRect GetCloseButtonRect(PixelRect rc) const {
     rc.right -= 5;
     rc.left = rc.right - 120;
@@ -182,26 +192,26 @@ protected:
 #endif
 };
 
-static TestMainWindow main_window;
+static TestMainWindow *main_window;
 
-SingleWindow &
+UI::SingleWindow &
 UIGlobals::GetMainWindow()
 {
-  return main_window;
+  return *main_window;
 }
 #endif
 
-#ifndef WIN32
-int main(int argc, char **argv)
+#ifndef _WIN32
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 #else
 int WINAPI
-WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-        LPSTR lpCmdLine2,
-        int nCmdShow)
+WinMain([[maybe_unused]] HINSTANCE hInstance, [[maybe_unused]] HINSTANCE hPrevInstance,
+        [[maybe_unused]] LPSTR lpCmdLine2,
+        [[maybe_unused]] int nCmdShow)
 #endif
 {
 #if defined(ENABLE_CMDLINE) || defined(ENABLE_MAIN_WINDOW)
-#ifdef WIN32
+#ifdef _WIN32
   Args args(GetCommandLine(), USAGE);
 #else
   Args args(argc, argv, USAGE);
@@ -212,11 +222,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (a != nullptr && a[0] == '-' && IsDigitASCII(a[1])) {
     args.GetNext();
     char *p;
-    window_size.cx = ParseUnsigned(a + 1, &p);
+    window_size.width = ParseUnsigned(a + 1, &p);
     if (*p != 'x' && *p != 'X')
       args.UsageError();
     a = p;
-    window_size.cy = ParseUnsigned(a + 1, &p);
+    window_size.height = ParseUnsigned(a + 1, &p);
     if (*p != '\0')
       args.UsageError();
   }
@@ -227,17 +237,13 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   args.ExpectEnd();
 #endif
 
-#if defined(ENABLE_RESOURCE_LOADER) && defined(USE_GDI)
-  ResourceLoader::Init(hInstance);
-#endif
-
 #ifdef ENABLE_SCREEN
 #ifndef ENABLE_MAIN_WINDOW
   constexpr PixelSize window_size{800, 600};
 #endif
 
   ScreenGlobalInit screen_init;
-  Layout::Initialize(window_size);
+  Layout::Initialise(screen_init.GetDisplay(), window_size);
   InitialiseFonts();
 #endif
 
@@ -278,20 +284,26 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #endif
 
 #ifdef ENABLE_MAIN_WINDOW
-  main_window.Create(_T("Test"), window_size);
-  main_window.Show();
+  main_window = new TestMainWindow(screen_init.GetDisplay());
+  main_window->Create("Test", window_size);
+  main_window->Show();
 #endif
 
   int result = EXIT_SUCCESS;
   try {
-    Main();
-  } catch (const std::exception &e) {
-    PrintException(e);
+#ifdef ENABLE_MAIN_WINDOW
+    Main(*main_window);
+#else
+    Main(screen_init.GetDisplay());
+#endif
+  } catch (...) {
+    PrintException(std::current_exception());
     result = EXIT_FAILURE;
   }
 
 #ifdef ENABLE_MAIN_WINDOW
-  main_window.Destroy();
+  main_window->Destroy();
+  delete main_window;
 #endif
 
 #ifdef ENABLE_DATA_PATH

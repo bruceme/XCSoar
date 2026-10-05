@@ -1,33 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TERRAIN_HEIGHT_HPP
-#define XCSOAR_TERRAIN_HEIGHT_HPP
+#pragma once
 
 #include <type_traits>
 
-#include <stdint.h>
-#include <math.h>
+#include <cstdint>
 
 enum class TerrainType : uint8_t {
   UNKNOWN, GROUND, WATER
@@ -45,26 +23,27 @@ class TerrainHeight {
   int16_t value;
 
 public:
-  TerrainHeight() = default;
-  explicit constexpr TerrainHeight(int16_t _value):value(_value) {}
+  TerrainHeight() noexcept = default;
+  explicit constexpr TerrainHeight(int16_t _value) noexcept
+    :value(_value) {}
 
-  static constexpr TerrainHeight Invalid() {
+  static constexpr TerrainHeight Invalid() noexcept {
     return TerrainHeight(INVALID);
   }
 
-  constexpr bool IsInvalid() const {
+  constexpr bool IsInvalid() const noexcept {
     return value == INVALID;
   }
 
-  constexpr bool IsWater() const {
+  constexpr bool IsWater() const noexcept {
     return value <= WATER_THRESHOLD && !IsInvalid();
   }
 
-  constexpr bool IsSpecial() const {
+  constexpr bool IsSpecial() const noexcept {
     return value <= WATER_THRESHOLD;
   }
 
-  constexpr TerrainType GetType() const {
+  constexpr TerrainType GetType() const noexcept {
     return !IsSpecial()
       ? TerrainType::GROUND
       : (IsWater()
@@ -72,7 +51,7 @@ public:
          : TerrainType::UNKNOWN);
   }
 
-  constexpr int16_t GetValue() const {
+  constexpr int16_t GetValue() const noexcept {
     return value;
   }
 
@@ -85,7 +64,7 @@ public:
    * other.  Don't use it for calculations where the altitude matters
    * (e.g. glide path calculations).
    */
-  constexpr int16_t GetValueOr0() const {
+  constexpr int16_t GetValueOr0() const noexcept {
     return !IsSpecial() ? value : 0;
   }
 
@@ -94,7 +73,7 @@ public:
    * converted to the given fallback values.
    */
   constexpr double ToDouble(double invalid_value,
-                            double water_value=0.) const {
+                            double water_value=0.) const noexcept {
     return !IsSpecial()
       ? double(value)
       : (IsInvalid() ? invalid_value : water_value);
@@ -102,5 +81,3 @@ public:
 };
 
 static_assert(std::is_trivial<TerrainHeight>::value, "type is not trivial");
-
-#endif

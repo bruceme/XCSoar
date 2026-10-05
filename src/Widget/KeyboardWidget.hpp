@@ -1,56 +1,31 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_KEYBOARD_CONTROL_HPP
-#define XCSOAR_KEYBOARD_CONTROL_HPP
-
+#include "ui/dim/Point.hpp"
 #include "Widget.hpp"
 #include "Form/CharacterButton.hpp"
-#include "Form/ActionListener.hpp"
 #include "Form/Button.hpp"
 
-#include <tchar.h>
+#include <cstdint>
 
 struct ButtonLook;
-class WndSymbolButton;
+class ContainerWindow;
+class Window;
 
-class KeyboardWidget : public NullWidget, ActionListener {
+class KeyboardWidget : public NullWidget {
 public:
   typedef bool (*OnCharacterCallback_t)(unsigned ch);
 
 protected:
-  enum Actions {
-    SHIFT,
-  };
-
   static constexpr unsigned MAX_BUTTONS = 40;
 
   const ButtonLook &look;
 
   OnCharacterCallback_t on_character;
 
-  unsigned button_width;
-  unsigned button_height;
+  PixelSize button_size;
 
   unsigned num_buttons;
   CharacterButton buttons[MAX_BUTTONS];
@@ -59,6 +34,19 @@ protected:
   bool shift_state;
 
   const bool show_shift_button;
+
+  /**
+   * Client area of the text-entry dialog; used for focus lookup when
+   * moving between on-screen key buttons with the hardware cursor keys.
+   */
+  ContainerWindow *parent_container = nullptr;
+
+  /**
+   * When @c KEY_UP moves from the number row to the on-screen backspace, we
+   * remember the digit index (0..9) so @c KEY_DOWN from that button can return
+   * to the same key.
+   */
+  int number_row_before_backspace = -1;
 
 public:
   KeyboardWidget(const ButtonLook &_look,
@@ -72,46 +60,124 @@ public:
   /**
    * Show only the buttons representing the specified character list.
    */
-  void SetAllowedCharacters(const TCHAR *allowed);
+  void SetAllowedCharacters(const char *allowed);
+
+  /**
+   * Move focus to the on-screen @em Space key (inverse of @c KEY_DOWN
+   * from that key to the action row in text entry).
+   */
+  bool FocusSpaceKey() noexcept;
+
+  /**
+   * Focus the first enabled on-screen key (number row first).  Used as
+   * a fallback when Space is unavailable.
+   */
+  bool FocusFirstEnabledInGrid() noexcept;
 
 private:
-  void PrepareSize(const PixelRect &rc);
+  void PrepareSize(const PixelRect &rc) noexcept;
   void OnResize(const PixelRect &rc);
 
-  gcc_pure
+  [[gnu::pure]]
   Button *FindButton(unsigned ch);
 
-  void MoveButton(unsigned ch, int left, int top);
-  void ResizeButton(unsigned ch, unsigned width, unsigned height);
+  void MoveButton(unsigned ch, PixelPoint position) noexcept;
+
+  /**
+   * Move the '-' / '_' key (only one of them exists at a time, see
+   * #UpdateShiftState).
+   */
+  void MoveSymbolKey(PixelPoint position) noexcept;
+
+  void ResizeButton(unsigned ch, PixelSize size) noexcept;
   void ResizeButtons();
-  void SetButtonsSize();
-  void MoveButtonsToRow(const PixelRect &rc,
-                        const TCHAR *buttons, unsigned row,
-                        int offset_left = 0);
+  void MoveButtonsToRow(const PixelRect &rc, const char *row_keys, unsigned row,
+                        int offset_left = 0) noexcept;
   void MoveButtons(const PixelRect &rc);
 
-  gcc_pure
+  [[gnu::pure]]
   static bool IsLandscape(const PixelRect &rc) {
     return rc.GetWidth() >= rc.GetHeight();
   }
 
-  /* updates UI based on value of shift_state property */
-  void UpdateShiftState();
-
-  void AddButton(ContainerWindow &parent, const TCHAR *caption, unsigned ch);
+  void UpdateShiftState() noexcept;
+  void AddButton(ContainerWindow &parent, const char *caption, unsigned ch);
+  void OnShiftClicked() noexcept;
 
 public:
-  /* virtual methods from class Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  void Show(const PixelRect &rc) override;
-  void Hide() override;
-  void Move(const PixelRect &rc) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
+  void Hide() noexcept override;
+  void Move(const PixelRect &rc) noexcept override;
+  void Unprepare() noexcept override;
+
+  bool KeyPress(unsigned key_code) noexcept override {
+    return KeyPressImpl(key_code, nullptr, nullptr);
+  }
+
+  /**
+   * @param backspace optional backspace @c Button above the key grid.
+   * @param action_row_first the first of the main row (usually @em OK);
+   *  @c KEY_UP from the action row (@em OK / Cancel / Clear) focuses
+   *  @em Space (or the first enabled key); further @c KEY_UP follows
+   *  the grid to on-screen @em backspace; @c KEY_DOWN from @em Space
+   *  focuses the action row; @c KEY_UP from @em backspace focuses it.
+   */
+  bool KeyPress(unsigned key_code, Button *backspace,
+                Button *action_row_first = nullptr) noexcept {
+    return KeyPressImpl(key_code, backspace, action_row_first);
+  }
 
 private:
-  void OnShiftClicked();
+  enum class FocusArea : uint8_t {
+    Grid,
+    Backspace,
+    ActionRow,
+    Other,
+  };
 
-  /* virtual methods from ActionListener */
-  void OnAction(int id) override;
+  bool KeyPressImpl(unsigned key_code, Button *backspace,
+                    Button *action_row_first) noexcept;
+
+  [[gnu::pure]]
+  FocusArea ClassifyFocusArea(Window *w, int grid_index,
+                              Button *backspace,
+                              Button *action_row_first) const noexcept;
+
+  bool RouteSpaceToActionRow(unsigned key_code, Button *action_row,
+                            Window *w) noexcept;
+  bool RouteNumberRowAndBackspace(unsigned key_code, Button *back,
+                                  Window *w) noexcept;
+  bool MoveFocusInGridByArrowKey(unsigned key_code, Window *w, Button *back,
+                                 Button *action_row_first) noexcept;
+  bool MoveByVerticalInGrid(int from, int diy, Button *back,
+                            Button *action_row_first) noexcept;
+
+  [[gnu::pure]]
+  int GetNavigableCount() const noexcept {
+    return (int)num_buttons + (show_shift_button ? 1 : 0);
+  }
+
+  const Button *GetByIndex(int idx) const noexcept;
+  Button *GetByIndex(int idx) noexcept;
+
+  bool TryNavigableKeyCenter(int from_idx, int j, PixelPoint &c_out) const
+    noexcept;
+  bool TrySetFocusToEnabledKey(int j) noexcept;
+
+  [[gnu::pure]]
+  int FindIndexOf(const Window *w) const noexcept;
+
+  /** @return index of the @em Space key, or @a -1. */
+  [[gnu::pure]]
+  int GetSpaceKeyIndex() const noexcept;
+
+  bool GetCenterByIndex(int idx, PixelPoint &out) const noexcept;
+
+  [[gnu::pure]]
+  int FindIndexVerticalFrom(int from_idx, int diy) const noexcept;
+  [[gnu::pure]]
+  int FindIndexHorizontalFrom(int from_idx, int dix) const noexcept;
+
+  bool FocusFirstEnabledInNumberRow(int prefer_index) noexcept;
 };
-
-#endif

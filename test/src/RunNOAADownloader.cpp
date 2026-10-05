@@ -1,38 +1,31 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
+#include "CoInstance.hpp"
 #include "Weather/TAF.hpp"
 #include "Weather/METAR.hpp"
 #include "Weather/NOAAStore.hpp"
 #include "Weather/NOAAUpdater.hpp"
-#include "Net/HTTP/Init.hpp"
-#include "ConsoleJobRunner.hpp"
+#include "net/http/Init.hpp"
+#include "co/Task.hxx"
+#include "Operation/ConsoleOperationEnvironment.hpp"
 #include "Units/Units.hpp"
 #include "Formatter/UserUnits.hpp"
 #include "Formatter/GeoPointFormatter.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
+#include "util/PrintException.hxx"
 
 #include <cstdio>
+
+struct Instance : CoInstance {
+  const Net::ScopeInit net_init{GetEventLoop()};
+};
+
+static Co::InvokeTask
+Run(NOAAStore &store, ProgressListener &progress)
+{
+  co_await NOAAUpdater::Update(store, *Net::curl, progress);
+}
 
 static void
 DisplayParsedMETAR(const NOAAStore::Item &station)
@@ -47,41 +40,41 @@ DisplayParsedMETAR(const NOAAStore::Item &station)
   printf("Parsed Data:\n");
 
   if (parsed.name_available)
-    _tprintf(_T("Name: %s\n"), parsed.name.c_str());
+    printf("Name: %s\n", parsed.name.c_str());
 
   if (parsed.location_available)
-    _tprintf(_T("Location: %s\n"),
+    printf("Location: %s\n",
              FormatGeoPoint(parsed.location, CoordinateFormat::DDMMSS).c_str());
 
   if (parsed.qnh_available) {
-    TCHAR buffer[256];
-    FormatUserPressure(parsed.qnh, buffer, ARRAY_SIZE(buffer));
-    _tprintf(_T("QNH: %s\n"), buffer);
+    char buffer[256];
+    FormatUserPressure(parsed.qnh, buffer);
+    printf("QNH: %s\n", buffer);
   }
 
   if (parsed.wind_available) {
-    TCHAR buffer[256];
-    FormatUserWindSpeed(parsed.wind.norm, buffer, ARRAY_SIZE(buffer));
-    _tprintf(_T("Wind: %.0f" DEG " %s\n"),
+    char buffer[256];
+    FormatUserWindSpeed(parsed.wind.norm, buffer);
+    printf("Wind: %.0f" DEG " %s\n",
              (double)parsed.wind.bearing.Degrees(), buffer);
   }
 
   if (parsed.temperatures_available) {
-    TCHAR buffer[256];
-    FormatUserTemperature(parsed.temperature, buffer, ARRAY_SIZE(buffer));
-    _tprintf(_T("Temperature: %s\n"), buffer);
-    FormatUserTemperature(parsed.dew_point, buffer, ARRAY_SIZE(buffer));
-    _tprintf(_T("Dew point: %s\n"), buffer);
+    char buffer[256];
+    FormatUserTemperature(parsed.temperature, buffer);
+    printf("Temperature: %s\n", buffer);
+    FormatUserTemperature(parsed.dew_point, buffer);
+    printf("Dew point: %s\n", buffer);
   }
 
   if (parsed.visibility_available) {
-    TCHAR buffer[256];
+    char buffer[256];
     if (parsed.visibility >= 9999)
-      _tcscpy(buffer, _T("unlimited"));
+      strcpy(buffer, "unlimited");
     else {
-      FormatUserDistanceSmart(parsed.visibility, buffer, ARRAY_SIZE(buffer));
+      FormatUserDistanceSmart(parsed.visibility, buffer);
     }
-    _tprintf(_T("Visibility: %s\n"), buffer);
+    printf("Visibility: %s\n", buffer);
   }
 
   printf("\n");
@@ -106,10 +99,10 @@ DisplayMETAR(const NOAAStore::Item &station)
          (unsigned)metar.last_update.second);
 
   if (!metar.content.empty())
-    _tprintf(_T("%s\n\n"), metar.content.c_str());
+    printf("%s\n\n", metar.content.c_str());
 
   if (!metar.decoded.empty())
-    _tprintf(_T("%s\n\n"), metar.decoded.c_str());
+    printf("%s\n\n", metar.decoded.c_str());
 
   DisplayParsedMETAR(station);
 }
@@ -133,12 +126,12 @@ DisplayTAF(const NOAAStore::Item &station)
          (unsigned)taf.last_update.second);
 
   if (!taf.content.empty())
-    _tprintf(_T("%s\n\n"), taf.content.c_str());
+    printf("%s\n\n", taf.content.c_str());
 }
 
 int
 main(int argc, char *argv[])
-{
+try {
   if (argc < 2) {
     printf("Usage: %s <code>[ <code> ...]\n", argv[0]);
     printf("   <code> is the four letter ICAO code (upper case)\n");
@@ -153,11 +146,12 @@ main(int argc, char *argv[])
     store.AddStation(argv[i]);
   }
 
-  Net::Initialise();
+  Instance instance;
+
+  ConsoleOperationEnvironment env;
 
   printf("Updating METAR and TAF ...\n");
-  ConsoleJobRunner runner;
-  NOAAUpdater::Update(store, runner);
+  instance.Run(Run(store, env));
 
   for (auto i = store.begin(), end = store.end(); i != end; ++i) {
     printf("---\n");
@@ -166,7 +160,8 @@ main(int argc, char *argv[])
     DisplayTAF(*i);
   }
 
-  Net::Deinitialise();
-
   return 0;
+} catch (...) {
+  PrintException(std::current_exception());
+  return EXIT_FAILURE;
 }

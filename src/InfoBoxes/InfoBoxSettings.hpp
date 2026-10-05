@@ -1,34 +1,39 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFO_BOX_SETTINGS_HPP
-#define XCSOAR_INFO_BOX_SETTINGS_HPP
-
-#include "Util/StaticString.hxx"
-#include "Compiler.h"
+#include "util/StaticString.hxx"
+#include "util/Compiler.h"
 #include "InfoBoxes/Content/Type.hpp"
 
-#include <stdint.h>
+#include <cstddef>
+#include <cstdint>
+
+/**
+ * The three freely editable lines of an #InfoBoxFactory::e_CustomText
+ * InfoBox.
+ */
+struct InfoBoxCustomText {
+  static constexpr std::size_t MAX_LENGTH = 24;
+
+  StaticString<MAX_LENGTH> title, value, comment;
+
+  void Clear() noexcept {
+    title.clear();
+    value.clear();
+    comment.clear();
+  }
+
+  /**
+   * Copy one edited line. A quotation mark or a line break would make
+   * the profile writer store an empty value, so those are dropped.
+   *
+   * @return true if the line was modified
+   */
+  static bool AssignLine(StaticString<MAX_LENGTH> &dest,
+                         const char *src) noexcept;
+};
 
 struct InfoBoxSettings {
   enum PanelIndex {
@@ -36,18 +41,6 @@ struct InfoBoxSettings {
     PANEL_CRUISE,
     PANEL_FINAL_GLIDE,
     PANEL_AUXILIARY,
-  };
-
-  struct Panel {
-    static constexpr unsigned MAX_CONTENTS = 24;
-
-    StaticString<32u> name;
-    InfoBoxFactory::Type contents[MAX_CONTENTS];
-
-    void Clear();
-
-    gcc_pure
-    bool IsEmpty() const;
   };
 
   static constexpr unsigned MAX_PANELS = 8;
@@ -115,9 +108,58 @@ struct InfoBoxSettings {
     RIGHT_16 = 19,
     LEFT_12_RIGHT_3_VARIO = 20,
 
+    /** 10 infoboxes along top or left */
+    TOP_LEFT_10 = 21,
+    /** 10 infoboxes along bottom or right side */
+    BOTTOM_RIGHT_10 = 22,
+    /** 10 infoboxes split bottom/top or left/right */
+    SPLIT_10 = 23,
+    /** 12 infoboxes 3X4 split bottom/top or left/right */
+    SPLIT_3X4 = 24,
+    /** 15 infoboxes 3X5 split bottom/top or left/right */
+    SPLIT_3X5 = 25,
+    /** 18 infoboxes 3X6 split bottom/top or left/right */
+    SPLIT_3X6 = 26,
+
   } geometry;
 
-  bool inverse, use_colors;
+  struct Panel {
+    static constexpr unsigned MAX_CONTENTS = 24;
+
+    StaticString<32u> name;
+    InfoBoxFactory::Type contents[MAX_CONTENTS];
+
+    /**
+     * The free text of the #InfoBoxFactory::e_CustomText InfoBoxes;
+     * empty for every other type.
+     */
+    InfoBoxCustomText text[MAX_CONTENTS];
+
+    /**
+     * Geometry override for this panel. The value
+     * INHERIT_GEOMETRY falls back to the global setting.
+     */
+    static constexpr uint8_t INHERIT_GEOMETRY = 0xff;
+    uint8_t geometry;
+
+    void Clear() noexcept;
+
+    [[gnu::pure]]
+    bool IsEmpty() const noexcept;
+  };
+/*
+ * scales the font for InfoBox titles and comments between 50% and 150%
+ * the value of scale_title_font ranges from 50 to 150 accordingly.
+ */
+  unsigned scale_title_font;
+
+  bool use_colors;
+
+  enum class Theme : uint8_t {
+    FOLLOW_GLOBAL,
+    LIGHT,
+    DARK,
+  } theme;
 
   enum class BorderStyle : uint8_t {
     BOX,
@@ -128,7 +170,13 @@ struct InfoBoxSettings {
 
   Panel panels[MAX_PANELS];
 
-  void SetDefaults();
-};
+  [[nodiscard]]
+  constexpr Geometry ResolveGeometry(const Panel &panel) const noexcept
+  {
+    return panel.geometry == Panel::INHERIT_GEOMETRY
+               ? geometry
+               : static_cast<Geometry>(panel.geometry);
+  }
 
-#endif
+  void SetDefaults() noexcept;
+};

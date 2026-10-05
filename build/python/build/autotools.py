@@ -1,43 +1,42 @@
 import os.path, subprocess, sys
+from typing import Collection, Iterable, Optional, Sequence, Union
+from collections.abc import Mapping
 
 from build.makeproject import MakeProject
+from .toolchain import AnyToolchain
 
 class AutotoolsProject(MakeProject):
-    def __init__(self, url, alternative_url, md5, installed, configure_args=[],
-                 autogen=False,
-                 cppflags='',
-                 ldflags='',
-                 libs='',
-                 shared=False,
-                 install_prefix=None,
-                 use_destdir=False,
-                 make_args=[],
-                 config_script='configure',
-                 use_actual_arch=False,
+    def __init__(self, url: Union[str, Sequence[str]], md5: str, installed: str,
+                 configure_args: Iterable[str]=[],
+                 autogen: bool=False,
+                 autoreconf: bool=False,
+                 per_arch_cflags: Optional[Mapping[str, str]]=None,
+                 cppflags: str='',
+                 ldflags: str='',
+                 libs: str='',
+                 install_prefix: Optional[str]=None,
+                 use_destdir: bool=False,
+                 subdirs: Optional[Collection[str]]=None,
                  **kwargs):
-        MakeProject.__init__(self, url, alternative_url, md5, installed, **kwargs)
+        MakeProject.__init__(self, url, md5, installed, **kwargs)
         self.configure_args = configure_args
         self.autogen = autogen
+        self.autoreconf = autoreconf
+        self.per_arch_cflags = per_arch_cflags
         self.cppflags = cppflags
         self.ldflags = ldflags
         self.libs = libs
-        self.shared = shared
         self.install_prefix = install_prefix
         self.use_destdir = use_destdir
-        self.make_args = make_args
-        self.config_script = config_script
-        self.use_actual_arch = use_actual_arch
+        self.subdirs = subdirs
 
-    def _filter_cflags(self, flags):
-        if self.shared:
-            # filter out certain flags which are only useful with
-            # static linking
-            for f in ('-fvisibility=hidden', '-fdata-sections', '-ffunction-sections'):
-                flags = flags.replace(' ' + f + ' ', ' ')
-        return flags
+    def configure(self, toolchain: AnyToolchain, src: Optional[str]=None, build: Optional[str]=None, target_toolchain: Optional[AnyToolchain]=None) -> str:
+        if src is None:
+            src = self.unpack(toolchain)
 
-    def configure(self, toolchain):
-        src = self.unpack(toolchain)
+        if build is None:
+            build = self.make_build_path(toolchain)
+
         if self.autogen:
             if sys.platform == 'darwin':
                 subprocess.check_call(['glibtoolize', '--force'], cwd=src)
@@ -46,8 +45,8 @@ class AutotoolsProject(MakeProject):
             subprocess.check_call(['aclocal'], cwd=src)
             subprocess.check_call(['automake', '--add-missing', '--force-missing', '--foreign'], cwd=src)
             subprocess.check_call(['autoconf'], cwd=src)
-
-        build = self.make_build_path(toolchain)
+        if self.autoreconf:
+            subprocess.check_call(['autoreconf', '-vif'], cwd=src)
 
         cppflags = toolchain.cppflags
         if self.name == 'glibc':
@@ -62,12 +61,16 @@ class AutotoolsProject(MakeProject):
         if install_prefix is None:
             install_prefix = toolchain.install_prefix
 
+        arch_cflags = ''
+        if self.per_arch_cflags is not None and toolchain.host_triplet is not None:
+            arch_cflags = self.per_arch_cflags.get(toolchain.host_triplet, '')
+
         configure = [
-            os.path.join(src, self.config_script),
+            os.path.join(src, 'configure'),
             'CC=' + toolchain.cc,
             'CXX=' + toolchain.cxx,
-            'CFLAGS=' + self._filter_cflags(toolchain.cflags),
-            'CXXFLAGS=' + self._filter_cflags(toolchain.cxxflags),
+            'CFLAGS=' + toolchain.cflags + ' ' + arch_cflags,
+            'CXXFLAGS=' + toolchain.cxxflags + ' ' + arch_cflags,
             'CPPFLAGS=' + cppflags + ' ' + self.cppflags,
             'LDFLAGS=' + toolchain.ldflags + ' ' + self.ldflags,
             'LIBS=' + toolchain.libs + ' ' + self.libs,
@@ -75,23 +78,47 @@ class AutotoolsProject(MakeProject):
             'ARFLAGS=' + toolchain.arflags,
             'RANLIB=' + toolchain.ranlib,
             'STRIP=' + toolchain.strip,
-            '--host=' + (toolchain.actual_arch if self.use_actual_arch else toolchain.toolchain_arch),
             '--prefix=' + install_prefix,
-            '--enable-silent-rules',
-        ] + self.configure_args
+            '--disable-silent-rules',
+        ]
 
-        subprocess.check_call(configure, cwd=build, env=toolchain.env)
+        if toolchain.host_triplet is not None:
+            configure.append('--host=' + toolchain.host_triplet)
+
+        if target_toolchain is not None:
+            if target_toolchain.host_triplet is not None:
+                configure.append('--target=' + target_toolchain.host_triplet)
+
+        configure.extend(self.configure_args)
+
+        try:
+            print(configure)
+            subprocess.check_call(configure, cwd=build, env=toolchain.env)
+        except subprocess.CalledProcessError:
+            # dump config.log after a failed configure run
+            try:
+                with open(os.path.join(build, 'config.log')) as f:
+                    sys.stdout.write(f.read())
+            except:
+                pass
+            # re-raise the exception
+            raise
+
         return build
 
-    def get_make_args(self, toolchain):
-        return MakeProject.get_make_args(self, toolchain) + self.make_args
+    def get_make_args(self, toolchain: AnyToolchain) -> list[str]:
+        return MakeProject.get_make_args(self, toolchain)
 
-    def get_make_install_args(self, toolchain):
+    def get_make_install_args(self, toolchain: AnyToolchain) -> list[str]:
         args = MakeProject.get_make_install_args(self, toolchain)
         if self.use_destdir:
             args += ['DESTDIR=' + toolchain.install_prefix]
         return args
 
-    def build(self, toolchain):
-        build = self.configure(toolchain)
-        MakeProject.build(self, toolchain, build)
+    def _build(self, toolchain: AnyToolchain, target_toolchain: Optional[AnyToolchain]=None) -> None:
+        build = self.configure(toolchain, target_toolchain=target_toolchain)
+        if self.subdirs is not None:
+            for subdir in self.subdirs:
+                self.build_make(toolchain, os.path.join(build, subdir))
+        else:
+            self.build_make(toolchain, build)

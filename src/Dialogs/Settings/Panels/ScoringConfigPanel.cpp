@@ -1,28 +1,9 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ScoringConfigPanel.hpp"
-#include "Profile/ProfileKeys.hpp"
+#include "Profile/Keys.hpp"
+#include "Profile/Profile.hpp"
 #include "Form/DataField/Enum.hpp"
 #include "Form/DataField/Boolean.hpp"
 #include "Form/DataField/Listener.hpp"
@@ -38,6 +19,8 @@ enum ControlIndex {
   SPACER,
   SHOW_FAI_TRIANGLE_AREAS,
   FAI_TRIANGLE_THRESHOLD,
+  SPACER2,
+  SHOW_95_PERCENT_RULE_HELPERS
 };
 
 class ScoringConfigPanel final
@@ -51,74 +34,89 @@ protected:
 
 public:
   /* methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
 private:
   /* methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override;
+  void OnModified(DataField &df) noexcept override;
 };
 
 void
-ScoringConfigPanel::OnModified(DataField &df)
+ScoringConfigPanel::OnModified(DataField &df) noexcept
 {
   if (IsDataField(SHOW_FAI_TRIANGLE_AREAS, df)) {
     const DataFieldBoolean &dfb = (const DataFieldBoolean &)df;
-    ShowFAITriangleControls(dfb.GetAsBoolean());
+    ShowFAITriangleControls(dfb.GetValue());
   }
 }
 
 void
 ScoringConfigPanel::ShowFAITriangleControls(bool show)
 {
-  SetRowVisible(FAI_TRIANGLE_THRESHOLD, show);
+  SetRowAvailable(FAI_TRIANGLE_THRESHOLD, show);
 }
 
 static constexpr StaticEnumChoice fai_triangle_threshold_list[] = {
-  { (unsigned)FAITriangleSettings::Threshold::FAI, _T("750km (FAI)") },
-  { (unsigned)FAITriangleSettings::Threshold::KM500, _T("500km (OLC, DMSt)") },
-  { 0 }
+  { FAITriangleSettings::Threshold::FAI, "750km (FAI)" },
+  { FAITriangleSettings::Threshold::KM500, "500km (OLC, DMSt)" },
+  nullptr
 };
 
 void
-ScoringConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+ScoringConfigPanel::Prepare([[maybe_unused]] ContainerWindow &parent,
+                            [[maybe_unused]] const PixelRect &rc) noexcept
 {
   const ComputerSettings &settings_computer = CommonInterface::GetComputerSettings();
   const ContestSettings &contest_settings = settings_computer.contest;
   const MapSettings &map_settings = CommonInterface::GetMapSettings();
 
   const StaticEnumChoice contests_list[] = {
-    { (unsigned)Contest::NONE, ContestToString(Contest::NONE),
-      N_("Disable OLC Calculations") },
-    { (unsigned)Contest::OLC_FAI, ContestToString(Contest::OLC_FAI),
+    { Contest::NONE, ContestToString(Contest::NONE),
+      N_("Disable contest calculations") },
+    { Contest::OLC_FAI, ContestToString(Contest::OLC_FAI),
       N_("Conforms to FAI triangle rules. Three turns and common start and finish. No leg less than 28% "
           "of total except for tasks longer than 500km: No leg less than 25% or larger than 45%.") },
-    { (unsigned)Contest::OLC_CLASSIC, ContestToString(Contest::OLC_CLASSIC),
+    { Contest::OLC_CLASSIC, ContestToString(Contest::OLC_CLASSIC),
       N_("Up to seven points including start and finish, finish height must not be lower than "
           "start height less 1000 meters.") },
-    { (unsigned)Contest::OLC_LEAGUE, ContestToString(Contest::OLC_LEAGUE),
+    { Contest::OLC_LEAGUE, ContestToString(Contest::OLC_LEAGUE),
       N_("The most recent contest with Sprint task rules.") },
-    { (unsigned)Contest::OLC_PLUS, ContestToString(Contest::OLC_PLUS),
+    { Contest::OLC_PLUS, ContestToString(Contest::OLC_PLUS),
       N_("A combination of Classic and FAI rules. 30% of the FAI score are added to the Classic score.") },
-    { (unsigned)Contest::DMST, ContestToString(Contest::DMST),
+    { Contest::DMST, ContestToString(Contest::DMST),
       /* German competition, no translation */
-      _T("Deutsche Meisterschaft im Streckensegelflug.") },
-    { (unsigned)Contest::XCONTEST, ContestToString(Contest::XCONTEST),
+      "Deutsche Meisterschaft im Streckensegelflug." },
+    { Contest::XCONTEST, ContestToString(Contest::XCONTEST),
       N_("PG online contest with different track values: Free flight - 1 km = 1.0 point; "
-          "flat trianlge - 1 km = 1.2 p; FAI triangle - 1 km = 1.4 p.") },
-    { (unsigned)Contest::DHV_XC, ContestToString(Contest::DHV_XC),
+          "flat triangle - 1 km = 1.2 p; FAI triangle - 1 km = 1.4 p.") },
+    { Contest::DHV_XC, ContestToString(Contest::DHV_XC),
       N_("European PG online contest of the DHV organization. Pretty much the same as the XContest rules, "
           "but with different track values: 1 km = 1.5 points, 1.75 p and 2.0 p for FAI triangles respectively.") },
-    { (unsigned)Contest::SIS_AT, ContestToString(Contest::SIS_AT),
+    { Contest::SIS_AT, ContestToString(Contest::SIS_AT),
       N_("Austrian online glider contest. Tracks around max. six waypoints are scored. The "
           "bounding box part with 1 km = 1.0 point and the additional zick-zack part with 1 km = 0.5 p.") },
-    { (unsigned)Contest::NET_COUPE, ContestToString(Contest::NET_COUPE),
-      N_("The FFVV NetCoupe \"libre\" competiton.") },
-    { 0 }
+    { Contest::NET_COUPE, ContestToString(Contest::NET_COUPE),
+      N_("FFVP Federal Cup (NetCoupe) on WeGlide. The scored path has at most "
+          "three turnpoints between start and finish and at least 25 km total. "
+          "Points are proportional to credited distance, 100 divided by the "
+          "glider handicap (DAeC-style index), and a success factor of 1.0 for "
+          "a free flight or 1.2 for a task declared electronically before "
+          "takeoff. XCSoar live scoring uses a success factor of 1.0 only, not "
+          "the 1.2 multiplier for declared tasks.") },
+    { Contest::WEGLIDE_FREE, ContestToString(Contest::WEGLIDE_FREE),
+      N_("WeGlide combines multiple scoring systems in the WeGlide Free contest. The free score is a combination "
+          "of the free distance score and the area bonus. For the area bonus, the scoring program determines the "
+          "largest FAI triangle and the largest Out & Return distance that can be fitted into the flight route.") },
+    { Contest::WEGLIDE_OR, ContestToString(Contest::WEGLIDE_OR),
+      N_("A start point, one turn point and a finish point are chosen from the flight path such that "
+          "the distance between the start point and the turn point is maximized.") },
+    { Contest::CHARRON, ContestToString(Contest::CHARRON),
+      N_("LVZC Charron.online, 5 legs under 200km 6 legs above. Minimum leg distance is 20km, 5 points per km.") },
+    nullptr
   };
-  AddEnum(_("On-Line Contest"),
-      _("Select the rules used for calculating optimal points for the On-Line Contest. "
-          "The implementation  conforms to the official release 2010, Sept.23."),
+  AddEnum(_("Contest"),
+      _("Select the rules used for calculating optimal points for a contest."),
           contests_list, (unsigned)contest_settings.contest);
 
   AddBoolean(_("Predict Contest"),
@@ -140,11 +138,22 @@ ScoringConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
           (unsigned)map_settings.fai_triangle_settings.threshold);
   SetExpertRow(FAI_TRIANGLE_THRESHOLD);
 
+  AddSpacer();
+  SetExpertRow(SPACER2);
+
+  // xgettext:no-c-format
+  AddBoolean(_("95% dist. rule helpers"),
+             _("Show helpers for Argentinean Federation \"95% distance\" rule. "
+               "The AAT Distance Around Target InfoBox will show projected "
+               "distance vs. maximum and change colors as you approach 95%."),
+             map_settings.show_95_percent_rule_helpers);
+  SetExpertRow(SHOW_95_PERCENT_RULE_HELPERS);
+
   ShowFAITriangleControls(map_settings.show_fai_triangle_areas);
 }
 
 bool
-ScoringConfigPanel::Save(bool &_changed)
+ScoringConfigPanel::Save(bool &_changed) noexcept
 {
   bool changed = false;
 
@@ -154,8 +163,8 @@ ScoringConfigPanel::Save(bool &_changed)
 
   changed |= SaveValueEnum(Contests, ProfileKeys::OLCRules,
                            contest_settings.contest);
-  changed |= SaveValueEnum(PREDICT_CONTEST, ProfileKeys::PredictContest,
-                           contest_settings.predict);
+  changed |= SaveValue(PREDICT_CONTEST, ProfileKeys::PredictContest,
+                       contest_settings.predict);
 
   changed |= SaveValue(SHOW_FAI_TRIANGLE_AREAS,
                        ProfileKeys::ShowFAITriangleAreas,
@@ -165,13 +174,30 @@ ScoringConfigPanel::Save(bool &_changed)
                            ProfileKeys::FAITriangleThreshold,
                            map_settings.fai_triangle_settings.threshold);
 
+  changed |= SaveValue(SHOW_95_PERCENT_RULE_HELPERS,
+                       ProfileKeys::Show95PercentRuleHelpers,
+                       map_settings.show_95_percent_rule_helpers);
+
+  /* ContestEnumLayout=2 = current Contest encoding (see ContestProfile).
+     Only stamp when OLCRules is present — do not add the key to
+     untouched profiles.  Rewrite OLCRules so a migrated old NONE
+     (stored as 14) is not read as NET_COUPE after the stamp. */
+  unsigned contest_enum_layout = 0;
+  if (Profile::Exists(ProfileKeys::OLCRules) &&
+      (!Profile::Get(ProfileKeys::ContestEnumLayout, contest_enum_layout) ||
+       contest_enum_layout < 2U)) {
+    Profile::Set(ProfileKeys::ContestEnumLayout, 2U);
+    Profile::SetEnum(ProfileKeys::OLCRules, contest_settings.contest);
+    changed = true;
+  }
+
   _changed |= changed;
 
   return true;
 }
 
-Widget *
+std::unique_ptr<Widget>
 CreateScoringConfigPanel()
 {
-  return new ScoringConfigPanel();
+  return std::make_unique<ScoringConfigPanel>();
 }

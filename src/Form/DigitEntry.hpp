@@ -1,40 +1,20 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_DIGIT_ENTRY_HPP
-#define XCSOAR_FORM_DIGIT_ENTRY_HPP
-
-#include "Screen/PaintWindow.hpp"
+#include "ui/window/PaintWindow.hpp"
 #include "Renderer/ButtonRenderer.hpp"
+#include "time/RoughTimeDecl.hpp"
 
-#include <assert.h>
-#include <stdint.h>
+#include <cassert>
+#include <cstdint>
+#include <functional>
 
 enum class CoordinateFormat : uint8_t;
-class RoughTime;
 class Angle;
+struct BrokenDate;
 class ContainerWindow;
-class ActionListener;
 struct DialogLook;
 
 /**
@@ -60,6 +40,9 @@ class DigitEntry : public PaintWindow {
       DEGREES,
       APOSTROPHE,
       QUOTE,
+      DAY,
+      MONTH,
+      YEAR,
     };
 
     Type type;
@@ -82,14 +65,45 @@ class DigitEntry : public PaintWindow {
         type == Type::DIGIT6 ||
         type == Type::DIGIT19 ||
         type == Type::DIGIT36 ||
-        type == Type::HOUR;
+        type == Type::HOUR ||
+        type == Type::DAY ||
+        type == Type::MONTH ||
+        type == Type::YEAR;
+    }
+
+    constexpr bool NoOverflow() const {
+      return type == Type::DAY ||
+        type == Type::MONTH ||
+        type == Type::YEAR;
+
     }
 
     constexpr unsigned GetMaxNumber() const {
-      return type == Type::DIGIT6 ? 5 :
-             type == Type::HOUR ? 23 :
-             type == Type::DIGIT19 ? 18 :
-             type == Type::DIGIT36 ? 35 : 9;
+      switch (type) {
+      case Type::HOUR:
+        return 23;
+
+      case Type::DAY:
+        return 30;
+
+      case Type::MONTH:
+        return 11;
+
+      case Type::YEAR:
+        return 199;
+
+      case Type::DIGIT6:
+        return 5;
+
+      case Type::DIGIT19:
+        return 18;
+
+      case Type::DIGIT36:
+        return 35;
+
+      default:
+        return 9;
+      }
     }
 
     constexpr bool IsEditable() const {
@@ -107,8 +121,27 @@ class DigitEntry : public PaintWindow {
      * Used for calculating the pixel-based width of the column.
      */
     constexpr unsigned GetWidth() const {
-      return type == Type::UNIT ? 4 :
-             type == Type::HOUR || type == Type::DIGIT19 || type == Type::DIGIT36 ? 2 : 1;
+      switch (type) {
+      case Type::DAY:
+        return 2;
+
+      case Type::MONTH:
+        return 3;
+
+      case Type::YEAR:
+        return 5;
+
+      case Type::UNIT:
+        return 4;
+
+      case Type::HOUR:
+      case Type::DIGIT19:
+      case Type::DIGIT36:
+        return 2;
+
+      default:
+        return 1;
+      }
     }
   };
 
@@ -116,8 +149,7 @@ class DigitEntry : public PaintWindow {
 
   ButtonFrameRenderer button_renderer;
 
-  ActionListener *action_listener;
-  int action_id;
+  std::function<void()> callback;
 
   /**
    * Total number of columns.
@@ -156,6 +188,9 @@ public:
   void CreateTime(ContainerWindow &parent, const PixelRect &rc,
                   const WindowStyle style);
 
+  void CreateDate(ContainerWindow &parent, const PixelRect &rc,
+                  const WindowStyle style);
+
   void CreateAngle(ContainerWindow &parent, const PixelRect &rc,
                    const WindowStyle style);
 
@@ -167,7 +202,7 @@ public:
 
   void CalculateLayout();
 
-  gcc_pure
+  [[gnu::pure]]
   PixelSize GetRecommendedSize() const {
     return PixelSize(columns[length - 1].right, bottom + top);
   }
@@ -176,9 +211,8 @@ public:
    * Sets a listener that will be notified when the user "activates"
    * the control (for example by pressing the "enter" key).
    */
-  void SetActionListener(ActionListener &listener, int id) {
-    action_listener = &listener;
-    action_id = id;
+  void SetCallback(std::function<void()> _callback) noexcept {
+    callback = std::move(_callback);
   }
 
   void SetCursor(unsigned cursor);
@@ -190,41 +224,45 @@ public:
   void SetValue(double value);
   void SetValue(RoughTime value);
   void SetValue(Angle value);
+  void SetValue(BrokenDate value);
 
-  gcc_pure
+  [[gnu::pure]]
   int GetIntegerValue() const;
 
-  gcc_pure
+  [[gnu::pure]]
   unsigned GetUnsignedValue() const;
 
-  gcc_pure
+  [[gnu::pure]]
   double GetDoubleValue() const;
 
-  gcc_pure
+  [[gnu::pure]]
   RoughTime GetTimeValue() const;
 
-  gcc_pure
+  [[gnu::pure]]
+  BrokenDate GetDateValue() const;
+
+  [[gnu::pure]]
   Angle GetAngleValue() const;
 
   void SetLatitude(Angle value, CoordinateFormat format);
   void SetLongitude(Angle value, CoordinateFormat format);
 
-  gcc_pure
+  [[gnu::pure]]
   Angle GetGeoAngle(CoordinateFormat format) const;
 
-  gcc_pure
+  [[gnu::pure]]
   Angle GetLatitude(CoordinateFormat format) const;
 
-  gcc_pure
+  [[gnu::pure]]
   Angle GetLongitude(CoordinateFormat format) const;
 
 protected:
-  gcc_pure
+  [[gnu::pure]]
   bool IsSigned() const {
     return columns[0].IsSign();
   }
 
-  gcc_pure
+  [[gnu::pure]]
   bool IsNegative() const {
     return columns[0].IsSign() && columns[0].IsNegative();
   }
@@ -232,49 +270,47 @@ protected:
   /**
    * Find the first column with that contains a decimal point.
    */
-  gcc_pure
+  [[gnu::pure]]
   int FindDecimalPoint() const;
 
   /**
    * Find the next column to the left (including i) that is numerical.
    */
-  gcc_pure
+  [[gnu::pure]]
   int FindNumberLeft(int i) const;
 
   /**
    * Find the next column to the left (including i) that is editable.
    */
-  gcc_pure
+  [[gnu::pure]]
   int FindEditableLeft(int i) const;
 
   /**
    * Find the next column to the right (including i) that is editable.
    */
-  gcc_pure
+  [[gnu::pure]]
   int FindEditableRight(unsigned i) const;
 
-  gcc_pure
+  [[gnu::pure]]
   unsigned GetPositiveInteger() const;
 
-  gcc_pure
+  [[gnu::pure]]
   double GetPositiveFractional() const;
 
   void IncrementColumn(unsigned i);
   void DecrementColumn(unsigned i);
 
-  gcc_pure
+  [[gnu::pure]]
   int FindColumnAt(unsigned x) const;
 
 private:
   void SetDigits(double degrees, CoordinateFormat format, bool isLatitude);
 
 protected:
-  void OnSetFocus() override;
-  void OnKillFocus() override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnKeyCheck(unsigned key_code) const override;
-  bool OnKeyDown(unsigned key_code) override;
-  void OnPaint(Canvas &canvas) override;
+  void OnSetFocus() noexcept override;
+  void OnKillFocus() noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnKeyCheck(unsigned key_code) const noexcept override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
+  void OnPaint(Canvas &canvas) noexcept override;
 };
-
-#endif

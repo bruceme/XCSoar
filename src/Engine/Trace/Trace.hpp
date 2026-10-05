@@ -1,46 +1,53 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef TRACE_HPP
-#define TRACE_HPP
+#pragma once
 
 #include "Point.hpp"
-#include "Util/NonCopyable.hpp"
-#include "Util/SliceAllocator.hpp"
-#include "Util/Serial.hpp"
+#include "util/NonCopyable.hpp"
+#include "util/Sanitizer.hxx"
+#include "util/SliceAllocator.hxx"
+#include "util/Serial.hpp"
+#include "Geo/Flat/FlatBoundingBox.hpp"
 #include "Geo/Flat/TaskProjection.hpp"
-#include "Compiler.h"
+#include "time/Stamp.hpp"
 
 #include <boost/intrusive/list.hpp>
 #include <boost/intrusive/set.hpp>
-
 #include <algorithm>
-
-#include <assert.h>
+#include <cassert>
+#include <type_traits>
 #include <stdlib.h>
 
 class TracePointVector;
 class TracePointerVector;
+class GeoBounds;
+
+/**
+ * Flat AABB + spacing used to filter a chronological #TracePointVector
+ * to the visible set (points inside or on crossing legs).
+ */
+struct TrailSpatialFilter {
+  FlatBoundingBox box{};
+  unsigned sq_range = 0;
+  /** Minimum stride (1 = no forced skip). */
+  unsigned point_stride = 1;
+  /**
+   * Soft cap on returned points.  If distance thinning still exceeds
+   * this, the older prefix is strided so the recent tail stays dense.
+   */
+  unsigned max_points = 0;
+  bool valid = false;
+};
+
+/**
+ * Bounds-first then spacing-thin from the newest sample, matching
+ * Trace::GetPoints(..., bounds, ...).  Used by TrailRenderer on a local
+ * time-window history without re-walking the store under lock.
+ */
+void FilterTraceByBounds(const TracePointVector &in,
+                         TracePointVector &out,
+                         const TrailSpatialFilter &filter) noexcept;
 
 /**
  * This class uses a smart thinning algorithm to limit the number of items
@@ -54,6 +61,8 @@ class TracePointerVector;
  */
 class Trace : private NonCopyable
 {
+  using Time = TracePoint::Time;
+
   struct TraceDelta
     : boost::intrusive::set_base_hook<boost::intrusive::link_mode<boost::intrusive::normal_link>>,
       boost::intrusive::list_base_hook<boost::intrusive::link_mode<boost::intrusive::normal_link>> {
@@ -64,8 +73,9 @@ class Trace : private NonCopyable
      * time delta.
      * This is like a modified Douglas-Peuker algorithm
      */
-    gcc_pure
-    static bool DeltaRank(const TraceDelta &x, const TraceDelta &y) {
+    [[gnu::pure]]
+    static constexpr bool DeltaRank(const TraceDelta &x,
+                                    const TraceDelta &y) noexcept {
       // distance is king
       if (x.elim_distance < y.elim_distance)
         return true;
@@ -91,25 +101,25 @@ class Trace : private NonCopyable
     }
 
     struct DeltaRankOp {
-      gcc_pure
-      bool operator()(const TraceDelta &s1, const TraceDelta &s2) const {
+      constexpr bool operator()(const TraceDelta &s1,
+                                const TraceDelta &s2) const noexcept {
         return DeltaRank(s1, s2);
       }
     };
 
     TracePoint point;
 
-    unsigned elim_time;
+    Time elim_time;
     unsigned elim_distance;
     unsigned delta_distance;
 
-    explicit TraceDelta(const TracePoint &p)
+    explicit TraceDelta(const TracePoint &p) noexcept
       :point(p),
        elim_time(null_time), elim_distance(null_delta),
        delta_distance(0) {}
 
     TraceDelta(const TracePoint &p_last, const TracePoint &p,
-               const TracePoint &p_next)
+               const TracePoint &p_next) noexcept
       :point(p),
        elim_time(TimeMetric(p_last, p, p_next)),
        elim_distance(DistanceMetric(p_last, p, p_next)),
@@ -121,11 +131,11 @@ class Trace : private NonCopyable
     /**
      * Is this the first or the last point?
      */
-    bool IsEdge() const {
+    constexpr bool IsEdge() const noexcept {
       return elim_time == null_time;
     }
 
-    void Update(const TracePoint &p_last, const TracePoint &p_next) {
+    void Update(const TracePoint &p_last, const TracePoint &p_next) noexcept {
       elim_time = TimeMetric(p_last, point, p_next);
       elim_distance = DistanceMetric(p_last, point, p_next);
       delta_distance = point.FlatDistanceTo(p_last);
@@ -142,9 +152,10 @@ class Trace : private NonCopyable
      *
      * @return Distance error if this node is thinned
      */
+    [[gnu::pure]]
     static unsigned DistanceMetric(const TracePoint &last,
                                    const TracePoint &node,
-                                   const TracePoint &next) {
+                                   const TracePoint &next) noexcept {
       const int d_this = last.FlatDistanceTo(node) + node.FlatDistanceTo(next);
       const int d_rem = last.FlatDistanceTo(next);
       return abs(d_this - d_rem);
@@ -161,8 +172,9 @@ class Trace : private NonCopyable
      *
      * @return Time delta if this node is thinned
      */
-    static unsigned TimeMetric(const TracePoint &last, const TracePoint &node,
-                               const TracePoint &next) {
+    static constexpr Time TimeMetric(const TracePoint &last,
+                                     const TracePoint &node,
+                                     const TracePoint &next) noexcept {
       return next.DeltaTime(last)
         - std::min(next.DeltaTime(node), node.DeltaTime(last));
     }
@@ -177,7 +189,18 @@ class Trace : private NonCopyable
   typedef boost::intrusive::list<TraceDelta,
                                  boost::intrusive::constant_time_size<false>> ChronologicalList;
 
-  SliceAllocator<TraceDelta, 128u> allocator;
+  /**
+   * Use a SliceAllocator for allocating TraceDelta instances.  This
+   * reduces a lot of allocation overhead (both CPU and memory),
+   * because there will be lots of these objects.  Fall back to
+   * std::allocator when compiled with AddressSanitizer, because that
+   * avoids hiding memory errors.
+   */
+  using Allocator = std::conditional_t<HaveAddressSanitizer(),
+                                       std::allocator<TraceDelta>,
+                                       SliceAllocator<TraceDelta, 128u>>;
+
+  Allocator allocator;
 
   DeltaList delta_list;
   ChronologicalList chronological_list;
@@ -185,12 +208,12 @@ class Trace : private NonCopyable
 
   TaskProjection task_projection;
 
-  const unsigned max_time;
-  const unsigned no_thin_time;
+  const Time max_time;
+  const Time no_thin_time;
   const unsigned max_size;
   const unsigned opt_size;
 
-  unsigned average_delta_time;
+  Time average_delta_time;
   unsigned average_delta_distance;
 
   Serial append_serial, modify_serial;
@@ -199,8 +222,8 @@ class Trace : private NonCopyable
   struct Disposer {
     Alloc &alloc;
 
-    void operator()(typename Alloc::pointer td) {
-      alloc.destroy(td);
+    void operator()(typename std::allocator_traits<Alloc>::pointer td) {
+      std::allocator_traits<Alloc>::destroy(alloc, td);
       alloc.deallocate(td, 1);
     }
   };
@@ -223,11 +246,11 @@ public:
    * @param max_time Time window size (seconds), null_time for unlimited
    * @param max_size Maximum number of points that can be stored
    */
-  explicit Trace(const unsigned no_thin_time = 0,
-                 const unsigned max_time = null_time,
-                 const unsigned max_size = 1000);
+  explicit Trace(const Time no_thin_time = {},
+                 const Time max_time = null_time,
+                 const unsigned max_size = 1000) noexcept;
 
-  ~Trace() {
+  ~Trace() noexcept {
     clear();
   }
 
@@ -240,8 +263,8 @@ protected:
    *
    * @return Recent time
    */
-  gcc_pure
-  unsigned GetRecentTime(const unsigned t) const;
+  [[gnu::pure]]
+  Time GetRecentTime(Time t) const noexcept;
 
   /**
    * Update delta values for specified item in the delta list and the
@@ -252,7 +275,7 @@ protected:
    *
    * @return Iterator to updated item
    */
-  void UpdateDelta(TraceDelta &td);
+  void UpdateDelta(TraceDelta &td) noexcept;
 
   /**
    * Erase a non-edge item from delta list and tree, updating
@@ -262,7 +285,7 @@ protected:
    * @param tree Tree to remove from
    *
    */
-  void EraseInside(DeltaList::iterator it);
+  void EraseInside(DeltaList::iterator it) noexcept;
 
   /**
    * Erase elements based on delta metric until the size is
@@ -279,7 +302,7 @@ protected:
    * @return True if items were erased
    */
   bool EraseDelta(const unsigned target_size,
-                  const unsigned recent = 0);
+                  Time recent = {}) noexcept;
 
   /**
    * Erase elements older than specified time from delta and tree,
@@ -290,18 +313,18 @@ protected:
    *
    * @return True if items were erased
    */
-  bool EraseEarlierThan(const unsigned p_time);
+  bool EraseEarlierThan(Time p_time) noexcept;
 
   /**
    * Erase elements more recent than specified time.  This is used to
    * work around slight time warps.
    */
-  void EraseLaterThan(const unsigned min_time);
+  void EraseLaterThan(Time min_time) noexcept;
 
   /**
    * Update start node (and neighbour) after min time pruning
    */
-  void EraseStart(TraceDelta &td_start);
+  void EraseStart(TraceDelta &td_start) noexcept;
 
 public:
   /**
@@ -310,22 +333,22 @@ public:
    *
    * @param a new point; its "flat" (projected) location is ignored
    */
-  void push_back(const TracePoint &point);
+  void push_back(const TracePoint &point) noexcept;
 
   /**
    * Clear the trace store
    */
-  void clear();
+  void clear() noexcept;
 
-  void EraseEarlierThan(double time) {
-    EraseEarlierThan((unsigned)time);
+  void EraseEarlierThan(TimeStamp time) noexcept {
+    EraseEarlierThan(time.Cast<Time>());
   }
 
-  void EraseLaterThan(double time) {
-    EraseLaterThan((unsigned)time);
+  void EraseLaterThan(TimeStamp time) noexcept {
+    EraseLaterThan(time.Cast<Time>());
   }
 
-  unsigned GetMaxSize() const {
+  unsigned GetMaxSize() const noexcept {
     return max_size;
   }
 
@@ -335,7 +358,7 @@ public:
    *
    * @return Number of traces in tree
    */
-  unsigned size() const {
+  unsigned size() const noexcept {
     return cached_size;
   }
 
@@ -344,7 +367,7 @@ public:
    *
    * @return True if no traces stored
    */
-  bool empty() const {
+  bool empty() const noexcept {
     return cached_size == 0;
   }
 
@@ -356,7 +379,7 @@ public:
    * method useful for checking whether the object is unmodified since
    * the last call.
    */
-  const Serial &GetAppendSerial() const {
+  const Serial &GetAppendSerial() const noexcept {
     return append_serial;
   }
 
@@ -364,7 +387,7 @@ public:
    * Returns a #Serial that gets incremented when iterators get
    * Invalidated (e.g. when the #Trace gets cleared or optimised).
    */
-  const Serial &GetModifySerial() const {
+  const Serial &GetModifySerial() const noexcept {
     return modify_serial;
   }
 
@@ -374,12 +397,12 @@ public:
    * @param iov Vector of trace points (output)
    *
    */
-  void GetPoints(TracePointVector& iov) const;
+  void GetPoints(TracePointVector& iov) const noexcept;
 
   /**
    * Retrieve a vector of trace points sorted by time
    */
-  void GetPoints(TracePointerVector &v) const;
+  void GetPoints(TracePointerVector &v) const noexcept;
 
   /**
    * Update the given #TracePointVector after points were appended to
@@ -388,22 +411,58 @@ public:
    *
    * @return true if new points were added
    */
-  bool SyncPoints(TracePointerVector &v) const;
+  bool SyncPoints(TracePointerVector &v) const noexcept;
 
   /**
    * Fill the vector with trace points, not before #min_time, minimum
    * resolution #min_distance.
    */
-  void GetPoints(TracePointVector &v, unsigned min_time,
+  void GetPoints(TracePointVector &v, Time min_time,
                  const GeoPoint &location, double resolution) const;
 
-  const TracePoint &front() const {
+  /**
+   * Fill the vector with trace points not before #min_time that lie
+   * inside \a bounds or on legs that intersect \a bounds, then apply
+   * minimum resolution #min_distance from the newest sample backward.
+   * Bounds are applied before spacing thinning so cost tracks the
+   * viewport, not flight length. The latest point is always kept.
+   */
+  void GetPoints(TracePointVector &v, Time min_time,
+                 const GeoBounds &bounds,
+                 const GeoPoint &location,
+                 double min_distance,
+                 unsigned point_stride = 1,
+                 unsigned max_points = 0) const;
+
+  /**
+   * Copy every chronological point with time >= \a min_time (no spacing
+   * thin).  Used as a UI-side history buffer for cheap local re-filters.
+   */
+  void GetPointsFrom(Time min_time, TracePointVector &v) const noexcept;
+
+  /**
+   * Append chronological points with time > \a after onto \a v.
+   */
+  void AppendPointsAfter(Time after, TracePointVector &v) const noexcept;
+
+  /**
+   * Build a flat spatial filter for \a bounds / spacing (requires a valid
+   * task projection).
+   */
+  [[nodiscard]] [[gnu::pure]]
+  TrailSpatialFilter MakeSpatialFilter(const GeoBounds &bounds,
+                                       const GeoPoint &location,
+                                       double min_distance,
+                                       unsigned point_stride = 1,
+                                       unsigned max_points = 0) const noexcept;
+
+  const TracePoint &front() const noexcept {
     assert(!empty());
 
     return chronological_list.front().point;
   }
 
-  const TracePoint &back() const {
+  const TracePoint &back() const noexcept {
     assert(!empty());
 
     return chronological_list.back().point;
@@ -420,47 +479,47 @@ private:
    * @param latest_time the latest time stamp which is/will be stored
    * in this trace
    */
-  void EnforceTimeWindow(unsigned latest_time);
+  void EnforceTimeWindow(Time latest_time) noexcept;
 
   /**
    * Helper function for Thin().
    */
-  void Thin2();
+  void Thin2() noexcept;
 
   /**
    * Thin the trace: remove old and irrelevant points to make room for
    * more points.
    */
-  void Thin();
+  void Thin() noexcept;
 
-  TraceDelta &GetFront() {
+  TraceDelta &GetFront() noexcept {
     assert(!empty());
 
     return chronological_list.front();
   }
 
-  TraceDelta &GetBack() {
+  TraceDelta &GetBack() noexcept {
     assert(!empty());
 
     return chronological_list.back();
   }
 
-  gcc_pure
-  unsigned CalcAverageDeltaDistance(const unsigned no_thin) const;
+  [[gnu::pure]]
+  unsigned CalcAverageDeltaDistance(Time no_thin) const noexcept;
 
-  gcc_pure
-  unsigned CalcAverageDeltaTime(const unsigned no_thin) const;
+  [[gnu::pure]]
+  Time CalcAverageDeltaTime(Time no_thin) const noexcept;
 
   static constexpr unsigned null_delta = 0 - 1;
 
 public:
-  static constexpr unsigned null_time = 0 - 1;
+  static constexpr auto null_time = TracePoint::INVALID_TIME;
 
-  unsigned GetAverageDeltaDistance() const {
+  unsigned GetAverageDeltaDistance() const noexcept {
     return average_delta_distance;
   }
 
-  unsigned GetAverageDeltaTime() const {
+  Time GetAverageDeltaTime() const noexcept {
     return average_delta_time;
   }
 
@@ -468,7 +527,7 @@ public:
   class const_iterator : public ChronologicalList::const_iterator {
     friend class Trace;
 
-    const_iterator(ChronologicalList::const_iterator &&_iterator)
+    const_iterator(ChronologicalList::const_iterator &&_iterator) noexcept
       :ChronologicalList::const_iterator(std::move(_iterator)) {}
 
   public:
@@ -480,18 +539,18 @@ public:
 
     const_iterator() = default;
 
-    const TracePoint &operator*() const {
+    const TracePoint &operator*() const noexcept {
       const TraceDelta &td = ChronologicalList::const_iterator::operator*();
       return td.point;
     }
 
-    const TracePoint *operator->() const {
+    const TracePoint *operator->() const noexcept {
       const TraceDelta &td = ChronologicalList::const_iterator::operator*();
       return &td.point;
     }
 
     const_iterator &NextSquareRange(unsigned sq_resolution,
-                                    const const_iterator &end) {
+                                    const const_iterator &end) noexcept {
       const TracePoint &previous = **this;
       while (true) {
         ++*this;
@@ -499,29 +558,27 @@ public:
         if (*this == end)
           return *this;
 
-        const TraceDelta &td = (const TraceDelta &)**this;
+        const TraceDelta &td = ChronologicalList::const_iterator::operator*();
         if (td.point.FlatSquareDistanceTo(previous) >= sq_resolution)
           return *this;
       }
     }
   };
 
-  const_iterator begin() const {
+  const_iterator begin() const noexcept {
     return chronological_list.begin();
   }
 
-  const_iterator end() const {
+  const_iterator end() const noexcept {
     return chronological_list.end();
   }
 
-  const TaskProjection &GetProjection() const {
+  const TaskProjection &GetProjection() const noexcept {
     return task_projection;
   }
 
-  gcc_pure
-  unsigned ProjectRange(const GeoPoint &location, double distance) const {
+  [[gnu::pure]]
+  unsigned ProjectRange(const GeoPoint &location, double distance) const noexcept {
     return task_projection.ProjectRangeInteger(location, distance);
   }
 };
-
-#endif

@@ -1,31 +1,12 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DISPLAY_SETTINGS_HPP
-#define XCSOAR_DISPLAY_SETTINGS_HPP
+#pragma once
 
 #include "DisplayOrientation.hpp"
+#include "DisplayType.hpp"
 
+#include <cstdint>
 #include <type_traits>
 
 /**
@@ -33,10 +14,92 @@ Copyright_License {
  */
 struct DisplaySettings {
   DisplayOrientation orientation;
+  uint8_t cursor_size;
+  bool invert_cursor_colors;
+  bool full_screen;
+
+  /**
+   * The screen edges up to which everything except the map itself -
+   * the InfoBoxes, the gauges, the overlay buttons, the menu, the
+   * compass, the final glide bar - may extend.
+   *
+   * @see infobox_area_stretch
+   */
+  enum InfoBoxAreaStretchEdge : uint8_t {
+    INFOBOX_AREA_STRETCH_TOP = 0x1,
+    INFOBOX_AREA_STRETCH_RIGHT = 0x2,
+    INFOBOX_AREA_STRETCH_BOTTOM = 0x4,
+    INFOBOX_AREA_STRETCH_LEFT = 0x8,
+
+    INFOBOX_AREA_STRETCH_NONE = 0,
+    INFOBOX_AREA_STRETCH_ALL =
+      INFOBOX_AREA_STRETCH_TOP|INFOBOX_AREA_STRETCH_RIGHT|
+      INFOBOX_AREA_STRETCH_BOTTOM|INFOBOX_AREA_STRETCH_LEFT,
+  };
+
+  /**
+   * Bit mask of #InfoBoxAreaStretchEdge: on these edges, the InfoBoxes,
+   * gauges, map overlays and the menu use the whole screen.  On the
+   * others they stay inside the safe area, clear of the display
+   * cutout ("notch") and the system bars.  Stretched edges use the
+   * screen border.
+   *
+   * Each edge is decided separately because the insets move when the
+   * device is rotated: leaving an edge on the safe area costs nothing
+   * in an orientation that has no inset there, but keeps the display
+   * clear of the cutout once it turns up on that edge.
+   *
+   * Only relevant while #full_screen is enabled; without it, the
+   * whole user interface is inside the safe area anyway.
+   */
+  uint8_t infobox_area_stretch;
+
+  /**
+   * Shall the iOS status bar be visible?
+   */
+  enum class StatusBar : uint8_t {
+    /**
+     * Visible while there is room for it above the user interface,
+     * i.e. unless the InfoBox area is stretched to the top screen edge.
+     */
+    AUTO,
+
+    VISIBLE,
+
+    HIDDEN,
+  };
+
+  StatusBar status_bar;
+
+  /**
+   * Resolve #status_bar against #full_screen.
+   */
+  constexpr bool IsStatusBarVisible() const noexcept {
+    switch (status_bar) {
+    case StatusBar::VISIBLE:
+      return true;
+
+    case StatusBar::HIDDEN:
+      return false;
+
+    case StatusBar::AUTO:
+      break;
+    }
+
+    /* without full screen mode the whole user interface is inside the
+       safe area anyway; with it, the status bar would sit on top of
+       the InfoBoxes as soon as they reach the top screen edge */
+    return !full_screen ||
+      (infobox_area_stretch & INFOBOX_AREA_STRETCH_TOP) == 0;
+  }
+
+  /**
+   * Display technology for refresh-sensitive UI.  Defaults to e-ink
+   * on Kobo and LCD on other platforms.
+   */
+  DisplayType display_type;
 
   void SetDefaults();
 };
 
 static_assert(std::is_trivial<DisplaySettings>::value, "type is not trivial");
-
-#endif

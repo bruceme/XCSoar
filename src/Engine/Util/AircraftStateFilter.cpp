@@ -1,31 +1,12 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AircraftStateFilter.hpp"
 #include "Geo/GeoVector.hpp"
 
-#include <assert.h>
+#include <cassert>
 
-AircraftStateFilter::AircraftStateFilter(const double cutoff_wavelength)
+AircraftStateFilter::AircraftStateFilter(const double cutoff_wavelength) noexcept
   :x_diff_filter(0), y_diff_filter(0),
    alt_diff_filter(0),
    x_low_pass(cutoff_wavelength), y_low_pass(cutoff_wavelength),
@@ -33,7 +14,7 @@ AircraftStateFilter::AircraftStateFilter(const double cutoff_wavelength)
    x(0), y(0) {}
 
 void
-AircraftStateFilter::Reset(const AircraftState &state)
+AircraftStateFilter::Reset(const AircraftState &state) noexcept
 {
   last_state = state;
 
@@ -53,22 +34,22 @@ AircraftStateFilter::Reset(const AircraftState &state)
 }
 
 void
-AircraftStateFilter::Update(const AircraftState &state)
+AircraftStateFilter::Update(const AircraftState &state) noexcept
 {
   auto dt = state.time - last_state.time;
 
-  if (dt < 0 || dt > 60) {
+  if (dt.count() < 0 || dt > std::chrono::minutes{1}) {
     Reset(state);
     return;
   }
 
-  if (dt <= 0)
+  if (dt.count() <= 0)
     return;
 
   GeoVector vec(last_state.location, state.location);
 
   constexpr double MACH_1 = 343;
-  if (vec.distance > 1000 || vec.distance / dt > MACH_1) {
+  if (vec.distance > 1000 || vec.distance / dt.count() > MACH_1) {
     Reset(state);
     return;
   }
@@ -84,36 +65,36 @@ AircraftStateFilter::Update(const AircraftState &state)
 }
 
 double
-AircraftStateFilter::GetSpeed() const
+AircraftStateFilter::GetSpeed() const noexcept
 {
   return hypot(v_x, v_y);
 }
 
 Angle
-AircraftStateFilter::GetBearing() const
+AircraftStateFilter::GetBearing() const noexcept
 {
   return Angle::FromXY(v_y, v_x).AsBearing();
 }
 
 bool
-AircraftStateFilter::Design(const double cutoff_wavelength)
+AircraftStateFilter::Design(const FloatDuration cutoff_wavelength) noexcept
 {
   bool ok = true;
-  ok &= x_low_pass.Design(cutoff_wavelength);
-  ok &= y_low_pass.Design(cutoff_wavelength);
-  ok &= alt_low_pass.Design(cutoff_wavelength);
+  ok &= x_low_pass.Design(cutoff_wavelength.count());
+  ok &= y_low_pass.Design(cutoff_wavelength.count());
+  ok &= alt_low_pass.Design(cutoff_wavelength.count());
   assert(ok);
   return ok;
 }
 
 AircraftState
-AircraftStateFilter::GetPredictedState(const double in_time) const
+AircraftStateFilter::GetPredictedState(const FloatDuration in_time) const noexcept
 {
   AircraftState state_next = last_state;
   state_next.ground_speed = GetSpeed();
   state_next.vario = GetClimbRate();
-  state_next.altitude = last_state.altitude + state_next.vario * in_time;
-  state_next.location = GeoVector(state_next.ground_speed * in_time,
+  state_next.altitude = last_state.altitude + state_next.vario * in_time.count();
+  state_next.location = GeoVector(state_next.ground_speed * in_time.count(),
                                   GetBearing()).EndPoint(last_state.location);
   return state_next;
 }

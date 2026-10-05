@@ -1,7 +1,6 @@
-#ifndef JPC_RTC_H
-#define JPC_RTC_H
+#pragma once
 
-#include "Compiler.h"
+#include "util/Compiler.h"
 
 struct jas_matrix;
 
@@ -28,6 +27,4 @@ extern "C" {
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

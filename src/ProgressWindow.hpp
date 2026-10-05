@@ -1,75 +1,79 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_SCREEN_PROGRESS_WINDOW_HXX
-#define XCSOAR_SCREEN_PROGRESS_WINDOW_HXX
-
-#include "Screen/ContainerWindow.hpp"
-#include "Screen/ProgressBar.hpp"
-#include "Screen/Bitmap.hpp"
-#include "Screen/Color.hpp"
+#include "ui/window/ContainerWindow.hpp"
+#include "ui/control/ProgressBar.hpp"
+#include "ui/canvas/Bitmap.hpp"
+#include "ui/canvas/Color.hpp"
 #include "Gauge/LogoView.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
+
+#include <chrono>
 
 /**
  * The XCSoar splash screen with a progress bar.
  */
 class ProgressWindow : public ContainerWindow {
   Color background_color;
+  bool dark_mode;
 
   Bitmap bitmap_progress_border;
 
-#ifndef USE_WINUSER
   Font font;
-#endif
 
   LogoView logo;
 
-  StaticString<128> message;
+  StaticString<512> message;
 
   ProgressBar progress_bar;
 
   unsigned text_height;
 
+  /** Lines reserved above the bar.  At least two, so the splash
+      layout stays put when the message is a single line. */
+  unsigned message_lines = 2;
+
+  unsigned range_min = 0, range_max = 0;
+  /** The default range alone does not mean the job reports progress. */
+  bool have_progress_position = false;
+  std::chrono::steady_clock::time_point rate_start{};
+  unsigned rate_done = 0;
+  bool rate_started = false;
+  /** Smoothed remaining seconds.  Negative until a sample exists. */
+  int shown_secs = -1;
+
+  /** Bytes received, when the caller reports them.  The bar position
+      stays in the caller's own units. */
+  unsigned byte_count = 0;
+  bool have_bytes = false;
+  /** Baseline of the speed sample (bytes, or bar units). */
+  unsigned speed_done = 0;
+  /** Smoothed units per second.  Negative until a sample exists. */
+  int shown_rate = -1;
+
   PixelRect logo_position, message_position;
   PixelRect bottom_position, progress_bar_position;
 
 public:
-  explicit ProgressWindow(ContainerWindow &parent);
+  explicit ProgressWindow(ContainerWindow &parent) noexcept;
 
-  void SetMessage(const TCHAR *text);
+  void SetMessage(const char *text) noexcept;
 
-  void SetRange(unsigned min_value, unsigned max_value);
-  void SetStep(unsigned size);
-  void SetValue(unsigned value);
-  void Step();
+  void SetRange(unsigned min_value, unsigned max_value) noexcept;
+  void SetByteCount(unsigned bytes) noexcept;
+  void SetStep(unsigned size) noexcept;
+  void SetValue(unsigned value) noexcept;
+  void Step() noexcept;
 
 private:
-  void UpdateLayout(PixelRect rc);
+  void UpdateLayout(PixelRect rc) noexcept;
+  void ResetRate() noexcept;
+  void UpdateRate(unsigned done, unsigned total) noexcept;
+  void UpdateBarLabel(unsigned value) noexcept;
 
 protected:
-  virtual void OnResize(PixelSize new_size) override;
-  virtual void OnPaint(Canvas &canvas) override;
+  void OnResize(PixelSize new_size) noexcept override;
+  void OnPaint(Canvas &canvas) noexcept override;
 };
-
-#endif

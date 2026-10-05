@@ -1,71 +1,45 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Dialogs/ComboPicker.hpp"
 #include "Dialogs/ListPicker.hpp"
-#include "Form/List.hpp"
+#include "Form/Form.hpp"
+#include "ui/control/List.hpp"
 #include "Form/DataField/Base.hpp"
 #include "Form/DataField/ComboList.hpp"
-#include "Renderer/TextRowRenderer.hpp"
+#include "Renderer/TextRowListItemRenderer.hpp"
 #include "UIGlobals.hpp"
 #include "Look/DialogLook.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
 
 static const ComboList *ComboListPopup;
 
-class ComboPickerSupport : public ListItemRenderer {
+class ComboPickerSupport final : public TextRowListItemRenderer {
   const ComboList &combo_list;
-  TextRowRenderer row_renderer;
 
 public:
   ComboPickerSupport(const ComboList &_combo_list)
     :combo_list(_combo_list) {}
 
-  unsigned CalculateLayout(const DialogLook &look) {
-    return row_renderer.CalculateLayout(*look.list.font);
-  }
-
-  virtual void OnPaintItem(Canvas &canvas, const PixelRect rc,
-                           unsigned i) override {
+  void OnPaintItem(Canvas &canvas, const PixelRect rc,
+                   unsigned i) noexcept override {
     row_renderer.DrawTextRow(canvas, rc, combo_list[i].display_string.c_str());
   }
 };
 
-static const TCHAR*
+static const char*
 OnItemHelp(unsigned i)
 {
-  if (!(*ComboListPopup)[i].help_text.IsNull())
-    return (*ComboListPopup)[i].help_text.c_str();
-
-  return _T("");
+  return (*ComboListPopup)[i].help_text.c_str();
 }
 
 int
-ComboPicker(const TCHAR *caption,
+ComboPicker(const char *caption,
             const ComboList &combo_list,
-            const TCHAR *help_text,
+            const char *help_text,
             bool enable_item_help,
-            const TCHAR *extra_caption)
+            const char *extra_caption,
+            const char *extra_caption2)
 {
   ComboListPopup = &combo_list;
 
@@ -77,22 +51,35 @@ ComboPicker(const TCHAR *caption,
                     support, false,
                     help_text,
                     enable_item_help ? OnItemHelp : nullptr,
-                    extra_caption);
+                    extra_caption,
+                    extra_caption2);
 }
 
 bool
-ComboPicker(const TCHAR *caption, DataField &df,
-            const TCHAR *help_text)
+ComboPicker(const char *caption, DataField &df,
+            const char *help_text,
+            const char *extra_caption,
+            bool *extra_selected)
 {
+  if (extra_selected != nullptr)
+    *extra_selected = false;
+
   StaticString<256> buffer;
-  const TCHAR *reference = nullptr;
+  const char *reference = nullptr;
 
   while (true) {
     const ComboList combo_list = df.CreateComboList(reference);
     ComboListPopup = &combo_list;
 
     int idx = ComboPicker(caption, combo_list, help_text,
-                          df.GetItemHelpEnabled());
+                          df.GetItemHelpEnabled(),
+                          extra_caption);
+    if (idx == mrExtra) {
+      if (extra_selected != nullptr)
+        *extra_selected = true;
+      return false;
+    }
+
     if (idx < 0)
       return false;
 

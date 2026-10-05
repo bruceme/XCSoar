@@ -1,46 +1,49 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TERRAIN_SETTINGS_HPP
-#define XCSOAR_TERRAIN_SETTINGS_HPP
-
-#include <stdint.h>
+#include <cstdint>
 
 enum class SlopeShading: uint8_t {
   OFF,
   FIXED,
   SUN,
   WIND,
+  TOP_LEFT,
+  COUNT,
 };
 
 enum class Contours: uint8_t {
   OFF,
-  ON
+  MOUNTAINS,
+  HIGHLANDS,
+  LOWLANDS,
+  SUPERFINE,
+  FIXED_256,
+  FIXED_128,
+  FIXED_64,
+  COUNT,
 };
+
+/**
+ * Compute the contour spacing (in height-domain units) for the given
+ * density preset. Adapts to the zoom level via pixel_size.
+ *
+ * @param contours the density preset
+ * @param height_scale the terrain height bit-shift
+ * @param pixel_size geographic size of one screen pixel (meters),
+ * @return contour spacing in height-domain units, or 0 if contours
+ *   are disabled
+ */
+[[gnu::const]]
+unsigned
+ContourSpacing(Contours contours, unsigned height_scale,
+               double pixel_size) noexcept;
 
 struct TerrainRendererSettings {
   /** Number of available color ramps */
-  static constexpr unsigned NUM_RAMPS = 15;
+  static constexpr unsigned NUM_RAMPS = 18;
 
   /** Map will show terrain */
   bool enable;
@@ -81,5 +84,3 @@ struct TerrainRendererSettings {
     return !(*this == other);
   }
 };
-
-#endif

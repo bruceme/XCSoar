@@ -1,41 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_TRAFFIC_LIST_HPP
-#define XCSOAR_FLARM_TRAFFIC_LIST_HPP
+#pragma once
 
 #include "Traffic.hpp"
-#include "NMEA/Validity.hpp"
-#include "Util/TrivialArray.hxx"
+#include "time/Validity.hpp"
+#include "util/TrivialArray.hxx"
 
 #include <type_traits>
 
 /**
  * This class keeps track of the traffic objects received from a
- * FLARM.
+ * FLARM device and injected online traffic merged into the same list.
  */
 struct TrafficList {
-  static constexpr size_t MAX_COUNT = 25;
+  /**
+   * Typical maximum simultaneous PFLAA targets from one FLARM device.
+   */
+  static constexpr size_t DEVICE_MAX_COUNT = 25;
+  static constexpr size_t ONLINE_MAX_COUNT = 64;
+
+  /**
+   * Maximum traffic entries in this list.  Matches the largest online
+   * traffic batch the XCSoar Cloud server may send plus the local
+   * device FLARM traffic that may be merged into it.
+   */
+  static constexpr size_t MAX_COUNT =
+    DEVICE_MAX_COUNT + ONLINE_MAX_COUNT;
+
+  static_assert(MAX_COUNT >= DEVICE_MAX_COUNT + ONLINE_MAX_COUNT,
+                "combined list must hold device and online traffic");
 
   /**
    * Time stamp of the latest modification to this object.
@@ -50,13 +44,18 @@ struct TrafficList {
   /** Flarm traffic information */
   TrivialArray<FlarmTraffic, MAX_COUNT> list;
 
-  void Clear() {
+  constexpr void ClampListSize() noexcept {
+    if (list.size() > MAX_COUNT)
+      list.resize(MAX_COUNT);
+  }
+
+  constexpr void Clear() noexcept {
     modified.Clear();
     new_traffic.Clear();
     list.clear();
   }
 
-  bool IsEmpty() const {
+  constexpr bool IsEmpty() const noexcept {
     return list.empty();
   }
 
@@ -64,25 +63,51 @@ struct TrafficList {
    * Adds data from the specified object, unless already present in
    * this one.
    */
-  void Complement(const TrafficList &add) {
-    // Add unique traffic from 'add' list
-    for (auto &traffic : add.list) {
-      if (FindTraffic(traffic.id) == NULL) {
-        list.append(traffic);
+  constexpr void Complement(const TrafficList &add) noexcept {
+    ClampListSize();
+
+    if (add.modified.Modified(modified))
+      modified = add.modified;
+
+    if (add.new_traffic.Modified(new_traffic))
+      new_traffic = add.new_traffic;
+
+    if (list.empty() && !add.list.empty()) {
+      /* don't bother merging the two lists, we can simply memcpy()
+         it */
+      list = add.list;
+      ClampListSize();
+      return;
+    }
+
+    const unsigned add_count =
+      add.list.size() > MAX_COUNT ? MAX_COUNT : add.list.size();
+    for (unsigned i = 0; i < add_count; ++i) {
+      const FlarmTraffic &traffic = add.list[i];
+      if (FindTraffic(traffic.id) == nullptr) {
+        FlarmTraffic * new_traffic = AllocateTraffic();
+        if (new_traffic == nullptr)
+          return;
+        *new_traffic = traffic;
       }
     }
   }
 
-  void Expire(double clock) {
-    modified.Expire(clock, 300);
-    new_traffic.Expire(clock, 60);
+  constexpr void Expire(TimeStamp clock) noexcept {
+    modified.Expire(clock, std::chrono::minutes(5));
+    new_traffic.Expire(clock, std::chrono::minutes(1));
 
-    for (unsigned i = list.size(); i-- > 0;)
+    ClampListSize();
+
+    for (unsigned i = 0; i < list.size(); ) {
       if (!list[i].Refresh(clock))
         list.quick_remove(i);
+      else
+        ++i;
+    }
   }
 
-  unsigned GetActiveTrafficCount() const {
+  constexpr unsigned GetActiveTrafficCount() const noexcept {
     return list.size();
   }
 
@@ -92,10 +117,12 @@ struct TrafficList {
    * @param id FLARM id
    * @return the FLARM_TRAFFIC pointer, NULL if not found
    */
-  FlarmTraffic *FindTraffic(FlarmId id) {
-    for (auto &traffic : list)
-      if (traffic.id == id)
-        return &traffic;
+  constexpr FlarmTraffic *FindTraffic(FlarmId id) noexcept {
+    ClampListSize();
+
+    for (unsigned i = 0; i < list.size(); ++i)
+      if (list[i].id == id)
+        return &list[i];
 
     return NULL;
   }
@@ -106,10 +133,12 @@ struct TrafficList {
    * @param id FLARM id
    * @return the FLARM_TRAFFIC pointer, NULL if not found
    */
-  const FlarmTraffic *FindTraffic(FlarmId id) const {
-    for (const auto &traffic : list)
-      if (traffic.id == id)
-        return &traffic;
+  constexpr const FlarmTraffic *FindTraffic(FlarmId id) const noexcept {
+    const unsigned n = list.size() > MAX_COUNT ? MAX_COUNT : list.size();
+
+    for (unsigned i = 0; i < n; ++i)
+      if (list[i].id == id)
+        return &list[i];
 
     return NULL;
   }
@@ -120,7 +149,8 @@ struct TrafficList {
    * @param name the name or call sign
    * @return the FLARM_TRAFFIC pointer, NULL if not found
    */
-  FlarmTraffic *FindTraffic(const TCHAR *name) {
+  constexpr FlarmTraffic *
+  FindTraffic(const char *name) noexcept {
     for (auto &traffic : list)
       if (traffic.name.equals(name))
         return &traffic;
@@ -134,7 +164,8 @@ struct TrafficList {
    * @param name the name or call sign
    * @return the FLARM_TRAFFIC pointer, NULL if not found
    */
-  const FlarmTraffic *FindTraffic(const TCHAR *name) const {
+  constexpr const FlarmTraffic *
+  FindTraffic(const char *name) const noexcept {
     for (const auto &traffic : list)
       if (traffic.name.equals(name))
         return &traffic;
@@ -147,7 +178,9 @@ struct TrafficList {
    *
    * @return the FLARM_TRAFFIC pointer, NULL if the array is full
    */
-  FlarmTraffic *AllocateTraffic() {
+  constexpr FlarmTraffic *AllocateTraffic() noexcept {
+    ClampListSize();
+
     return list.full()
       ? NULL
       : &list.append();
@@ -156,7 +189,7 @@ struct TrafficList {
   /**
    * Search for the previous traffic in the ordered list.
    */
-  const FlarmTraffic *PreviousTraffic(const FlarmTraffic *t) const {
+  constexpr const FlarmTraffic *PreviousTraffic(const FlarmTraffic *t) const noexcept {
     return t > list.begin()
       ? t - 1
       : NULL;
@@ -165,7 +198,7 @@ struct TrafficList {
   /**
    * Search for the next traffic in the ordered list.
    */
-  const FlarmTraffic *NextTraffic(const FlarmTraffic *t) const {
+  constexpr const FlarmTraffic *NextTraffic(const FlarmTraffic *t) const noexcept {
     return t + 1 < list.end()
       ? t + 1
       : NULL;
@@ -174,14 +207,14 @@ struct TrafficList {
   /**
    * Search for the first traffic in the ordered list.
    */
-  const FlarmTraffic *FirstTraffic() const {
+  constexpr const FlarmTraffic *FirstTraffic() const noexcept {
     return list.empty() ? NULL : list.begin();
   }
 
   /**
    * Search for the last traffic in the ordered list.
    */
-  const FlarmTraffic *LastTraffic() const {
+  constexpr const FlarmTraffic *LastTraffic() const noexcept {
     return list.empty() ? NULL : list.end() - 1;
   }
 
@@ -189,13 +222,17 @@ struct TrafficList {
    * Finds the most critical alert.  Returns NULL if there is no
    * alert.
    */
-  const FlarmTraffic *FindMaximumAlert() const;
+  [[gnu::pure]]
+  const FlarmTraffic *FindMaximumAlert() const noexcept;
 
-  unsigned TrafficIndex(const FlarmTraffic *t) const {
+  constexpr unsigned TrafficIndex(const FlarmTraffic *t) const noexcept {
     return t - list.begin();
   }
+
+  /**
+   * Is set if traffic is present and closer than 4Km.
+   */
+  bool InCloseRange() const noexcept;
 };
 
 static_assert(std::is_trivial<TrafficList>::value, "type is not trivial");
-
-#endif

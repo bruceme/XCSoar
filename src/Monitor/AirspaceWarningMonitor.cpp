@@ -1,151 +1,309 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AirspaceWarningMonitor.hpp"
 #include "Interface.hpp"
-#include "Components.hpp"
 #include "Asset.hpp"
 #include "Audio/Sound.hpp"
+#include "Form/Button.hpp"
 #include "Dialogs/Airspace/AirspaceWarningDialog.hpp"
-#include "Event/Idle.hpp"
-#include "PageActions.hpp"
+#include "ui/event/Idle.hpp"
+#include "Look/Colors.hpp"
+#include "Look/DialogLook.hpp"
+#include "UIGlobals.hpp"
+#include "Screen/Layout.hpp"
+#include "ui/canvas/AnyCanvas.hpp"
+#include "ui/canvas/Font.hpp"
 #include "Widget/QuestionWidget.hpp"
-#include "Form/ActionListener.hpp"
 #include "Language/Language.hpp"
 #include "Engine/Airspace/AirspaceWarning.hpp"
 #include "Engine/Airspace/AirspaceWarningManager.hpp"
 #include "Engine/Airspace/AbstractAirspace.hpp"
 #include "Airspace/ProtectedAirspaceWarningManager.hpp"
 #include "Formatter/TimeFormatter.hpp"
+#include "Formatter/UserUnits.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
+#include "LogFile.hpp"
+#include "MainWindow.hpp"
+#include "Message.hpp"
+
+#include <exception>
+#include <algorithm>
 
 class AirspaceWarningWidget final
-  : public QuestionWidget, private ActionListener {
-  enum Action {
-    ACK,
-    ACK_DAY,
-    MORE,
-  };
+  : public QuestionWidget {
 
   AirspaceWarningMonitor &monitor;
   ProtectedAirspaceWarningManager &manager;
 
-  const AbstractAirspace &airspace;
+  const ConstAirspacePtr airspace;
   AirspaceWarning::State state;
 
+  /** state and airspace name, e.g. "Near: CTA MARSEILLE 7" */
+  StaticString<192> name_text;
+
+  /** distance and time until the intercept; empty while inside */
+  StaticString<64> details_text;
+
+  /** the message as shown, composed by Compose() */
   StaticString<256> buffer;
 
-  gcc_pure
-  const TCHAR *MakeMessage(const AbstractAirspace &airspace,
-                           AirspaceWarning::State state,
-                           const AirspaceInterceptSolution &solution) {
-    if (state == AirspaceWarning::WARNING_INSIDE)
-      buffer.Format(_T("%s: %s"), _("Inside airspace"), airspace.GetName());
-    else
-      buffer.Format(_T("%s: %s (%s)"), _("Near airspace"), airspace.GetName(),
-                    FormatTimespanSmart(int(solution.elapsed_time),
-                                        2).c_str());
+  /** width available for the message text, known from Prepare() */
+  unsigned message_width = 0;
 
-    return buffer;
+  /**
+   * True when the name plus the current distance/time do not fit on
+   * one line.  Locked after DecideLayout() so later updates (which
+   * only shrink those values) cannot change the banner height.
+   */
+  bool two_lines = false;
+
+  /**
+   * Format the two message parts.  The labels match the Inside / Near
+   * badges of the airspace warning list.
+   */
+  void MakeMessage(const AbstractAirspace &airspace,
+                   AirspaceWarning::State state,
+                   const AirspaceInterceptSolution &solution) noexcept {
+    if (state == AirspaceWarning::WARNING_INSIDE) {
+      name_text.Format("%s: %s", C_("Status", "Inside"), airspace.GetName());
+      details_text.clear();
+      return;
+    }
+
+    name_text.Format("%s: %s", _("Near"), airspace.GetName());
+
+    if (solution.distance > 0)
+      details_text.Format("%s  ",
+                          FormatUserDistanceSmart(solution.distance).c_str());
+    else if (solution.IsValid()) {
+      /* the airspace is right above or below us, so the intercept has
+         no horizontal distance: show the vertical one instead */
+      char relative_altitude[32];
+      FormatRelativeUserAltitude(solution.altitude
+                                 - CommonInterface::Basic().nav_altitude,
+                                 relative_altitude);
+      details_text.Format("%s  ", relative_altitude);
+    } else
+      details_text.clear();
+
+    details_text.AppendFormat("%s",
+                              FormatTimespanSmart(solution.elapsed_time,
+                                                  2).c_str());
+  }
+
+  /**
+   * The bottom area spans the full width, and WndFrame insets the text
+   * by the padding on both sides.
+   */
+  void SetMessageWidth(const PixelRect &rc) noexcept {
+    message_width = rc.GetWidth() - 2 * Layout::GetTextPadding();
+  }
+
+  /**
+   * Decide one vs two lines from the airspace name and the current
+   * distance/time.  Those values shrink as the intercept approaches,
+   * so measuring them once (and locking the result) is enough; a
+   * synthetic "long" timespan was the wrong shape - FormatTimespanSmart
+   * with two tokens is wider for "59 min 59 sec" than for "4 days 3 h".
+   */
+  void DecideLayout() noexcept {
+    if (details_text.empty() || message_width == 0) {
+      two_lines = false;
+      return;
+    }
+
+    AnyCanvas canvas;
+    canvas.Select(UIGlobals::GetDialogLook().text_font);
+
+    StaticString<256> one_line;
+    one_line.Format("%s  %s", name_text.c_str(), details_text.c_str());
+    two_lines = canvas.CalcTextWidth(one_line) > message_width;
+  }
+
+  void Compose() noexcept {
+    if (details_text.empty())
+      buffer = name_text;
+    else if (two_lines)
+      buffer.Format("%s\n%s", name_text.c_str(), details_text.c_str());
+    else
+      buffer.Format("%s  %s", name_text.c_str(), details_text.c_str());
+  }
+
+  /**
+   * Mark the message with the same colours the airspace warning list
+   * uses for its Inside / Near badge.
+   */
+  void UpdateMessageColors() noexcept {
+    if (!HasColors())
+      /* greyscale and e-paper displays: the plain message keeps more
+         contrast than a dithered fill */
+      return;
+
+    /* Black on both fills: 5.7:1 on Inside red and 19.4:1 on Near
+       yellow, whereas white would only reach 3.7:1 on the red. */
+    SetMessageColors(state == AirspaceWarning::WARNING_INSIDE
+                     ? COLOR_AIRSPACE_WARNING_INSIDE
+                     : COLOR_AIRSPACE_WARNING_NEAR,
+                     COLOR_BLACK);
   }
 
 public:
   AirspaceWarningWidget(AirspaceWarningMonitor &_monitor,
                         ProtectedAirspaceWarningManager &_manager,
-                        const AbstractAirspace &_airspace,
+                        ConstAirspacePtr _airspace,
                         AirspaceWarning::State _state,
-                        const AirspaceInterceptSolution &solution)
-    :QuestionWidget(MakeMessage(_airspace, _state, solution), *this),
+                        const AirspaceInterceptSolution &solution) noexcept
+    /* the message depends on the width and is only known in
+       Prepare() */
+    :QuestionWidget(""),
      monitor(_monitor), manager(_manager),
-     airspace(_airspace), state(_state) {
-    AddButton(_("ACK"), ACK);
-    AddButton(_("ACK Day"), ACK_DAY);
-    AddButton(_("More"), MORE);
+     airspace(std::move(_airspace)), state(_state) {
+    MakeMessage(*airspace, state, solution);
+
+    AddButton(_("ACK"), [this](){
+      try {
+        if (state == AirspaceWarning::WARNING_INSIDE)
+          manager.AcknowledgeInside(airspace);
+        else
+          manager.AcknowledgeWarning(airspace);
+      } catch (...) {
+        LogError(std::current_exception(),
+                 "Failed to acknowledge airspace warning");
+        Message::AddMessage(_("Failed to acknowledge airspace warning"));
+        return;
+      }
+
+      monitor.Schedule();
+      CommonInterface::main_window->SetBottomBannerWidget(nullptr);
+    });
+
+    AddButton(_("Ack Day"), [this](){
+      try {
+        manager.AcknowledgeDay(airspace);
+      } catch (...) {
+        LogError(std::current_exception(),
+                 "Failed to acknowledge airspace warning for day");
+        Message::AddMessage(_("Failed to acknowledge airspace warning for day"));
+        return;
+      }
+
+      monitor.Schedule();
+      CommonInterface::main_window->SetBottomBannerWidget(nullptr);
+    });
+
+    AddButton(_("More"), [this](){
+      dlgAirspaceWarningsShowModal(manager);
+    });
+
+    UpdateMessageColors();
   }
 
-  ~AirspaceWarningWidget() {
+  ~AirspaceWarningWidget() noexcept {
     assert(monitor.widget == this);
     monitor.widget = nullptr;
   }
 
-  bool Update(const AbstractAirspace &_airspace,
-              AirspaceWarning::State _state,
-              const AirspaceInterceptSolution &solution) {
-    if (&_airspace != &airspace)
-      return false;
+  /* virtual methods from class Widget */
 
-    state = _state;
-    SetMessage(MakeMessage(airspace, state, solution));
-    return true;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override {
+    SetMessageWidth(rc);
+    DecideLayout();
+    Compose();
+
+    QuestionWidget::Prepare(parent, rc);
+    SetMessage(buffer);
   }
 
-private:
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override;
+  void Move(const PixelRect &rc) noexcept override {
+    SetMessageWidth(rc);
+    DecideLayout();
+    Compose();
+
+    QuestionWidget::Move(rc);
+    SetMessage(buffer);
+  }
+
+  PixelSize GetMinimumSize() const noexcept override {
+    /* QuestionWidget already reserves one text line plus the button
+       row */
+    PixelSize size = QuestionWidget::GetMinimumSize();
+    if (two_lines)
+      size.height += UIGlobals::GetDialogLook().text_font.GetHeight();
+    return size;
+  }
+
+  bool Update(const AbstractAirspace &_airspace,
+              AirspaceWarning::State _state,
+              const AirspaceInterceptSolution &solution) noexcept {
+    if (&_airspace != airspace.get())
+      return false;
+
+    const bool had_details = !details_text.empty();
+
+    state = _state;
+    MakeMessage(*airspace, state, solution);
+
+    /* Inside has no details line; Near may need two.  Recreate when
+       that changes so MainWindow picks up the new height. */
+    if (had_details != !details_text.empty())
+      return false;
+
+    Compose();
+    SetMessage(buffer);
+    UpdateMessageColors();
+    return true;
+  }
 };
 
 void
-AirspaceWarningWidget::OnAction(int id)
+AirspaceWarningMonitor::Reset() noexcept
 {
-  switch ((Action)id) {
-  case ACK:
-    if (state == AirspaceWarning::WARNING_INSIDE)
-      manager.AcknowledgeInside(airspace);
-    else
-      manager.AcknowledgeWarning(airspace);
-    monitor.Schedule();
-    PageActions::RestoreBottom();
-    break;
-
-  case ACK_DAY:
-    manager.AcknowledgeDay(airspace);
-    monitor.Schedule();
-    PageActions::RestoreBottom();
-    break;
-
-  case MORE:
-    dlgAirspaceWarningsShowModal(manager);
-    return;
-  }
-}
-
-void
-AirspaceWarningMonitor::Reset()
-{
+  sound_timer.Cancel();
+  sound_interval_counter = 0;
   const auto &calculated = CommonInterface::Calculated();
 
   last = calculated.airspace_warnings.latest;
 }
 
 void
-AirspaceWarningMonitor::HideWidget()
+AirspaceWarningMonitor::PlayRepetitiveSound() noexcept
 {
-  if (widget != nullptr)
-    PageActions::RestoreBottom();
-  assert(widget == nullptr);
+  const auto &config = CommonInterface::GetComputerSettings().airspace.warnings;
+  if (!config.repetitive_sound || backend_components == nullptr)
+    return;
+  const auto *manager = backend_components->GetAirspaceWarnings();
+  if (manager == nullptr)
+    return;
+  ProtectedAirspaceWarningManager::Lease lease(*manager);
+  FloatDuration closest{1000};
+  bool active = false;
+  for (const auto &warning : *lease.operator->()) {
+    if (!warning.IsActive()) continue;
+    active = true;
+    if (warning.IsInside()) closest = {};
+    else closest = std::min(closest, warning.GetSolution().elapsed_time);
+  }
+  if (!active) { sound_interval_counter = 0; sound_timer.Cancel(); return; }
+  const unsigned interval = ((closest * 3 / config.warning_time) + 1) * 2;
+  if (sound_interval_counter >= interval) {
+    PlayResource("IDR_WAV_BEEPBWEEP");
+    sound_interval_counter = 1;
+  } else ++sound_interval_counter;
 }
 
 void
-AirspaceWarningMonitor::Check()
+AirspaceWarningMonitor::HideWidget() noexcept
+{
+  if (widget == nullptr)
+    return;
+
+  CommonInterface::main_window->SetBottomBannerWidget(nullptr);
+}
+
+void
+AirspaceWarningMonitor::Check() noexcept
 {
   const auto &calculated = CommonInterface::Calculated();
 
@@ -156,7 +314,7 @@ AirspaceWarningMonitor::Check()
 
   last = calculated.airspace_warnings.latest;
 
-  auto *airspace_warnings = GetAirspaceWarnings();
+  auto *airspace_warnings = backend_components->GetAirspaceWarnings();
   if (airspace_warnings == nullptr) {
     HideWidget();
     return;
@@ -171,7 +329,15 @@ AirspaceWarningMonitor::Check()
 
     // un-blank the display, play a sound
     ResetUserIdle();
-    PlayResource(_T("IDR_WAV_BEEPBWEEP"));
+    PlayResource("IDR_WAV_BEEPBWEEP");
+#ifdef HAVE_VIBRATOR
+    PlayHapticFeedback(HapticFeedbackType::ALARM);
+#endif
+
+    if (CommonInterface::GetUISettings().enable_airspace_warning_dialog) {
+      sound_interval_counter = 0;
+      sound_timer.Schedule(std::chrono::milliseconds(500));
+    }
 
     // show airspace warnings dialog
     if (CommonInterface::GetUISettings().enable_airspace_warning_dialog)
@@ -179,21 +345,9 @@ AirspaceWarningMonitor::Check()
     return;
   }
 
-  const AbstractAirspace *airspace = nullptr;
-  AirspaceWarning::State state;
-  AirspaceInterceptSolution solution;
+  const auto w = airspace_warnings->GetTopWarning();
 
-  {
-    const ProtectedAirspaceWarningManager::Lease lease(*airspace_warnings);
-    auto w = lease->begin();
-    if (w != lease->end() && w->IsAckExpired()) {
-      airspace = &w->GetAirspace();
-      state = w->GetWarningState();
-      solution = w->GetSolution();
-    }
-  }
-
-  if (airspace == nullptr) {
+  if (!w || !w->IsActive()) {
     HideWidget();
     return;
   }
@@ -201,18 +355,29 @@ AirspaceWarningMonitor::Check()
   if (CommonInterface::GetUISettings().enable_airspace_warning_dialog) {
     /* show airspace warning */
     if (widget != nullptr) {
-      if (widget->Update(*airspace, state, solution))
+      if (widget->Update(w->GetAirspace(), w->GetWarningState(),
+                         w->GetSolution()))
         return;
 
       HideWidget();
     }
 
     widget = new AirspaceWarningWidget(*this, *airspace_warnings,
-                                       *airspace, state, solution);
-    PageActions::SetCustomBottom(widget);
+                                       w->GetAirspacePtr(),
+                                       w->GetWarningState(),
+                                       w->GetSolution());
+    CommonInterface::main_window->SetBottomBannerWidget(widget);
   }
 
   // un-blank the display, play a sound
   ResetUserIdle();
-  PlayResource(_T("IDR_WAV_BEEPBWEEP"));
+  PlayResource("IDR_WAV_BEEPBWEEP");
+#ifdef HAVE_VIBRATOR
+  PlayHapticFeedback(HapticFeedbackType::ALARM);
+#endif
+
+  if (CommonInterface::GetUISettings().enable_airspace_warning_dialog) {
+    sound_interval_counter = 0;
+    sound_timer.Schedule(std::chrono::milliseconds(500));
+  }
 }

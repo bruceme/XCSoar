@@ -1,32 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_LOCAL_PATH_HPP
-#define XCSOAR_LOCAL_PATH_HPP
-
-#include "Compiler.h"
-
-#include <tchar.h>
+#pragma once
 
 class Path;
 class AllocatedPath;
@@ -38,16 +13,16 @@ namespace File {
 /**
  * Determine the data path.
  *
- * @return true on success, false if no data path could be found
+ * Throws on error.
  */
-bool
+void
 InitialiseDataPath();
 
 /**
  * Release resources obtained by InitialiseDataPath().
  */
 void
-DeinitialiseDataPath();
+DeinitialiseDataPath() noexcept;
 
 /**
  * Create the primary data path;
@@ -56,16 +31,24 @@ void
 CreateDataPath();
 
 /**
- * Overrides the detected primary data path.
+ * Changes the primary data path.  All other data paths found by
+ * InitialiseDataPath() remain.
  */
 void
-SetPrimaryDataPath(Path path);
+SetPrimaryDataPath(Path path) noexcept;
+
+/**
+ * Sets the data path, replacing all data paths found by
+ * InitialiseDataPath().
+ */
+void
+SetSingleDataPath(Path path) noexcept;
 
 /**
  * Returns the absolute path of the primary data directory.
  */
 Path
-GetPrimaryDataPath();
+GetPrimaryDataPath() noexcept;
 
 /**
  * Gives the position of an XCSoar data file within the particular file
@@ -75,34 +58,37 @@ GetPrimaryDataPath();
  * @return The fully qualified path of file.
  */
 AllocatedPath
-LocalPath(Path file);
+LocalPath(Path file) noexcept;
 
 AllocatedPath
-LocalPath(const TCHAR *file);
+LocalPath(const char *file) noexcept;
 
 /**
  * Create a subdirectory of XCSoarData and return its absolute path.
  */
 AllocatedPath
-MakeLocalPath(const TCHAR *name);
+MakeLocalPath(const char *name);
+
+AllocatedPath
+MakeLocalPath(const Path name);
 
 /**
  * Return the portion of the specified path that is relative to the
  * primary data path.  Returns nullptr on failure (if the path is not
  * inside the primary data path).
  */
-gcc_pure
+[[gnu::pure]]
 Path
-RelativePath(Path path);
+RelativePath(Path path) noexcept;
 
 /**
  * Converts a file path by replacing %LOCAL_PATH% with the full pathname to
  * the XCSoarData folder
  * @param filein Pointer to the string to convert
  */
-gcc_pure
+[[gnu::pure]]
 AllocatedPath
-ExpandLocalPath(Path src);
+ExpandLocalPath(Path src) noexcept;
 
 /**
  * Converts a file path from full pathname to a shorter version with the
@@ -110,10 +96,16 @@ ExpandLocalPath(Path src);
  * @param filein Pointer to the string to convert
  * @return the new path or nullptr if the given path cannot be contracted
  */
-gcc_pure
+[[gnu::pure]]
 AllocatedPath
-ContractLocalPath(Path src);
+ContractLocalPath(Path src) noexcept;
 
-void VisitDataFiles(const TCHAR* filter, File::Visitor &visitor);
+void VisitDataFiles(const char* filter, File::Visitor &visitor);
 
-#endif
+[[gnu::pure]]
+Path
+GetCachePath() noexcept;
+
+[[gnu::pure]]
+AllocatedPath
+MakeCacheDirectory(const char *name) noexcept;

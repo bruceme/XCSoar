@@ -1,32 +1,13 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "IGC/IGCParser.hpp"
 #include "IGC/IGCExtensions.hpp"
 #include "IGC/IGCFix.hpp"
 #include "IGC/IGCHeader.hpp"
 #include "IGC/IGCDeclaration.hpp"
-#include "Time/BrokenDate.hpp"
-#include "Time/BrokenTime.hpp"
+#include "time/BrokenDate.hpp"
+#include "time/BrokenTime.hpp"
 #include "TestUtil.hpp"
 
 #include <string.h>
@@ -101,6 +82,24 @@ TestDate()
   ok1(date.year == 1999);
   ok1(date.month == 12);
   ok1(date.day == 31);
+
+  // long-form header is supported
+  ok1(IGCParseDateRecord("HFDTEDATE:170520", date));
+  ok1(date.year == 2020);
+  ok1(date.month == 5);
+  ok1(date.day == 17);
+
+  // long-form header without colon is supported
+  ok1(IGCParseDateRecord("HFDTEDATE170520", date));
+  ok1(date.year == 2020);
+  ok1(date.month == 5);
+  ok1(date.day == 17);
+
+  // header extensions are ignored
+  ok1(IGCParseDateRecord("HFDTEDATE:170520,01", date));
+  ok1(date.year == 2020);
+  ok1(date.month == 5);
+  ok1(date.day == 17);
 }
 
 static void
@@ -140,19 +139,25 @@ TestFix()
   ok1(!IGCParseFix("B1122385163117N00742367EA0049000487", extensions, fix));
   ok1(!IGCParseFix("B1122385103117N00762367EA0049000487", extensions, fix));
 
+  /* FakeGeoidNonZero returns 30 m; B GNSS is ellipsoid, AMSL is GNSS-30 */
+
   ok1(IGCParseFix("B1122385103117N00742367EA0049000487", extensions, fix));
   ok1(fix.time == BrokenTime(11, 22, 38));
   ok1(equals(fix.location, 51.05195, 7.70611667));
   ok1(fix.gps_valid);
   ok1(fix.pressure_altitude == 490);
-  ok1(fix.gps_altitude == 487);
+  ok1(fix.gps_ellipsoid_altitude_available);
+  ok1(fix.gps_ellipsoid_altitude == 487);
+  ok1(fix.gps_altitude == 457);
 
   ok1(IGCParseFix("B1122385103117N00742367EV0049000487", extensions, fix));
   ok1(fix.time == BrokenTime(11, 22, 38));
   ok1(equals(fix.location, 51.05195, 7.70611667));
   ok1(!fix.gps_valid);
   ok1(fix.pressure_altitude == 490);
-  ok1(fix.gps_altitude == 487);
+  ok1(fix.gps_ellipsoid_altitude_available);
+  ok1(fix.gps_ellipsoid_altitude == 487);
+  ok1(fix.gps_altitude == 457);
 
   ok1(!IGCParseFix("B1122385103117N00742367EX0049000487", extensions, fix));
 
@@ -161,7 +166,9 @@ TestFix()
   ok1(fix.time == BrokenTime(11, 22, 43));
   ok1(fix.gps_valid);
   ok1(fix.pressure_altitude == 490);
-  ok1(fix.gps_altitude == 0);
+  ok1(fix.gps_ellipsoid_altitude_available);
+  ok1(fix.gps_ellipsoid_altitude == 0);
+  ok1(fix.gps_altitude == -30);
 
   ok1(IGCParseFix("B1122535103117S00742367WA104900000700000",
                   extensions, fix));
@@ -169,7 +176,9 @@ TestFix()
   ok1(fix.gps_valid);
   ok1(equals(fix.location, -51.05195, -7.70611667));
   ok1(fix.pressure_altitude == 10490);
-  ok1(fix.gps_altitude == 7);
+  ok1(fix.gps_ellipsoid_altitude_available);
+  ok1(fix.gps_ellipsoid_altitude == 7);
+  ok1(fix.gps_altitude == -23);
 }
 
 static void
@@ -250,9 +259,9 @@ TestDeclarationTurnpoint()
   ok1(tp.name.empty());
 }
 
-int main(int argc, char **argv)
+int main()
 {
-  plan_tests(136);
+  plan_tests(148 + 8);
 
   TestHeader();
   TestDate();

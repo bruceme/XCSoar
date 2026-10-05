@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "GlueMapWindow.hpp"
 #include "Items/List.hpp"
@@ -34,12 +14,18 @@ Copyright_License {
 #include "Language/Language.hpp"
 #include "Weather/Features.hpp"
 #include "Weather/Rasp/RaspRenderer.hpp"
+#ifdef HAVE_HTTP
+#include "net/client/tim/Glue.hpp"
+#include "net/client/tim/Thermal.hpp"
+#endif
 #include "Interface.hpp"
 #include "Overlay.hpp"
+#include "OverlayLimits.hpp"
 
 bool
 GlueMapWindow::ShowMapItems(const GeoPoint &location,
-                            bool show_empty_message) const
+                            bool show_empty_message,
+                            bool pointer_in_use) const noexcept
 {
   /* not using MapWindowBlackboard here because this method is called
      by the main thread */
@@ -49,7 +35,12 @@ GlueMapWindow::ShowMapItems(const GeoPoint &location,
   const MoreData &basic = CommonInterface::Basic();
   const DerivedInfo &calculated = CommonInterface::Calculated();
 
-  auto range = visible_projection.DistancePixelsToMeters(Layout::GetHitRadius());
+  int range;
+  if (pointer_in_use)
+    range = visible_projection.DistancePixelsToMeters(Layout::GetHitRadius());
+  else
+    /* FastScale 29 is the radius of the shortest point in the cross hair */
+    range = visible_projection.DistancePixelsToMeters(Layout::FastScale(29));
 
   MapItemList list;
   MapItemListBuilder builder(list, location, range);
@@ -75,11 +66,20 @@ GlueMapWindow::ShowMapItems(const GeoPoint &location,
                                settings.airspace, basic,
                                calculated);
 
-  if (visible_projection.GetMapScale() <= 4000)
+  if (visible_projection.GetMapScale() <= 4000) {
     builder.AddThermals(calculated.thermal_locator, basic, calculated);
 
+#ifdef HAVE_HTTP
+    if (tim_glue != nullptr && computer_settings.weather.enable_tim) {
+      const auto lock = tim_glue->Lock();
+      builder.AddThermals(tim_glue->Get());
+    }
+#endif
+  }
+
   if (waypoints)
-    builder.AddWaypoints(*waypoints);
+    builder.AddWaypoints(*waypoints, route_planner, basic, calculated,
+                         computer_settings);
 
 #ifdef HAVE_NOAA
   if (noaa_store)
@@ -88,22 +88,27 @@ GlueMapWindow::ShowMapItems(const GeoPoint &location,
 
   builder.AddTraffic(basic.flarm.traffic);
 
-#ifdef HAVE_SKYLINES_TRACKING
-  builder.AddSkyLinesTraffic();
-#endif
-
 #ifdef ENABLE_OPENGL
+#ifdef HAVE_HTTP
+  if (!list.full())
+    for (unsigned i = 0; i < MapWindowOverlay::MAX_MAP_OVERLAYS && !list.full(); ++i)
+      if (const auto *map_overlay = GetOverlay(i);
+          map_overlay != nullptr && map_overlay->IsInside(location))
+        list.push_back(new OverlayMapItem(*map_overlay, location));
+#else
   if (!list.full() && overlay && overlay->IsInside(location))
-    list.push_back(new OverlayMapItem(*overlay));
+    list.push_back(new OverlayMapItem(*overlay, location));
+#endif
 #endif
 
   if (!list.full()) {
 #ifndef ENABLE_OPENGL
-    const ScopeLock protect(mutex);
+    const std::lock_guard lock{mutex};
 #endif
 
     if (rasp_renderer && rasp_renderer->IsInside(location))
-      list.push_back(new RaspMapItem(rasp_renderer->GetLabel()));
+      list.push_back(new RaspMapItem(rasp_renderer->GetLabel(),
+                                     rasp_renderer->GetValueAt(location)));
   }
 
   // Sort the list of map items
@@ -121,6 +126,7 @@ GlueMapWindow::ShowMapItems(const GeoPoint &location,
   ShowMapItemListDialog(list,
                         UIGlobals::GetDialogLook(), look, traffic_look,
                         final_glide_bar_renderer.GetLook(), settings,
+                        waypoints,
                         glide_computer != nullptr
                         ? &glide_computer->GetAirspaceWarnings() : nullptr);
   return true;

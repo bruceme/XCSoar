@@ -1,25 +1,7 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
+#include "Radio/TransponderCode.hpp"
 #include "AirspacePrinting.hpp"
 #include "Printing.hpp"
 #include "harness_airspace.hpp"
@@ -29,7 +11,7 @@
 #include "Engine/Airspace/Predicate/AirspacePredicate.hpp"
 #include "Geo/GeoVector.hpp"
 #include "Formatter/AirspaceFormatter.hpp"
-#include "OS/FileUtil.hpp"
+#include "system/FileUtil.hpp"
 
 #include <stdlib.h>
 #include <fstream>
@@ -38,22 +20,21 @@
 static void
 airspace_random_properties(AbstractAirspace& as)
 {
-  AirspaceClass Type = (AirspaceClass)(rand()%14);
+  AirspaceClass asclass = (AirspaceClass)(rand()%14);
   AirspaceAltitude base;
   AirspaceAltitude top;
   base.altitude = rand()%4000;
   top.altitude = base.altitude+rand()%3000;
-  as.SetProperties(_T("hello"), Type, base, top);
+  TransponderCode code = TransponderCode::Parse("1234");
+  as.SetProperties("hello", "Hello2",std::move(code), asclass, AirspaceClass::CLASSE, base, top);
 }
 
 
 bool test_airspace_extra(Airspaces &airspaces) {
   // try adding a null polygon
 
-  AbstractAirspace* as;
   std::vector<GeoPoint> pts;
-  as = new AirspacePolygon(pts);
-  airspaces.Add(as);
+  airspaces.Add(std::make_shared<AirspacePolygon>(pts));
 
   // try clearing now (we haven't called optimise())
 
@@ -65,18 +46,18 @@ void setup_airspaces(Airspaces& airspaces, const GeoPoint& center, const unsigne
   std::ofstream *fin = NULL;
 
   if (verbose) {
-    Directory::Create(Path(_T("output/results")));
+    Directory::Create(Path("output/results"));
     fin = new std::ofstream("output/results/res-bb-in.txt");
   }
 
   for (unsigned i=0; i<n; i++) {
-    AbstractAirspace* as;
+    AirspacePtr as;
     if (rand()%4!=0) {
       GeoPoint c;
       c.longitude = Angle::Degrees(((rand()%1200-600)/1000.0))+center.longitude;
       c.latitude = Angle::Degrees(((rand()%1200-600)/1000.0))+center.latitude;
       double radius(10000.0*(0.2+(rand()%12)/12.0));
-      as = new AirspaceCircle(c,radius);
+      as = std::make_shared<AirspaceCircle>(c,radius);
     } else {
 
       // just for testing, create a random polygon from a convex hull around
@@ -93,7 +74,10 @@ void setup_airspaces(Airspaces& airspaces, const GeoPoint& center, const unsigne
         p.latitude += Angle::Degrees(((rand()%200)/1000.0));
         pts.push_back(p);
       }
-      as = new AirspacePolygon(pts,true);
+
+      auto polygon = std::make_shared<AirspacePolygon>(pts);
+      polygon->MakeConvex();
+      as = std::move(polygon);
     }
     airspace_random_properties(*as);
     airspaces.Add(as);
@@ -188,15 +172,15 @@ public:
 
     AirspaceInterceptSolution solution = Intercept(as, m_state, m_perf);
     if (solution.IsValid()) {
-      *iout << "# intercept " << solution.elapsed_time << " h " << solution.altitude << "\n";
+      *iout << "# intercept " << solution.elapsed_time.count() << " h " << solution.altitude << "\n";
       *iout << solution.location.longitude << " " << solution.location.latitude << " " << "\n\n";
     }
   }
 
-  virtual void Visit(const AbstractAirspace &as) override {
+  void Visit(ConstAirspacePtr as) noexcept override {
     if (do_report) {
-      *yout << as;
-      intersection(as);
+      *yout << *as;
+      intersection(*as);
     }
   }
 };
@@ -239,7 +223,7 @@ public:
       as.Intercept(state, vec.EndPoint(state.location), projection, m_perf);
     if (solution.IsValid()) {
       if (fout) {
-        *fout << "# intercept in " << solution.elapsed_time << " h " << solution.altitude << "\n";
+        *fout << "# intercept in " << solution.elapsed_time.count() << " h " << solution.altitude << "\n";
       }
     }
   }
@@ -249,15 +233,15 @@ public:
   }
 };
 
-void scan_airspaces(const AircraftState state, 
+void scan_airspaces(const AircraftState state,
                     const Airspaces& airspaces,
                     const AirspaceAircraftPerformance& perf,
                     bool do_report,
-                    const GeoPoint &target) 
+                    const GeoPoint &target)
 {
   const double range(20000.0);
 
-  Directory::Create(Path(_T("output/results")));
+  Directory::Create(Path("output/results"));
 
   {
     AirspaceVisitorPrint pvisitor("output/results/res-bb-range.txt",
@@ -283,7 +267,7 @@ void scan_airspaces(const AircraftState state,
     for (const auto &a : airspaces.QueryInside(state))
       pvi.Visit(a.GetAirspace());
   }
-  
+
   {
     AirspaceIntersectionVisitorPrint ivisitor("output/results/res-bb-intersects.txt",
                                               "output/results/res-bb-intersected.txt",
@@ -294,8 +278,8 @@ void scan_airspaces(const AircraftState state,
   }
 
   {
-    const auto *as = FindSoonestAirspace(airspaces, state, perf,
-                                         AirspacePredicateTrue());
+    const auto as = FindSoonestAirspace(airspaces, state, perf,
+                                        [](const auto &){ return true; });
     if (do_report) {
       std::ofstream fout("output/results/res-bb-sortedsoonest.txt");
       if (as) {

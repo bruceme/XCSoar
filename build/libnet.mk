@@ -1,43 +1,19 @@
-# Build rules for the HTTP client library
+# Build rules for the networking library
 
 LIBNET_SOURCES = \
-	$(SRC)/Net/State.cpp \
-	$(SRC)/Net/IPv4Address.cxx \
-	$(SRC)/Net/IPv6Address.cxx \
-	$(SRC)/Net/StaticSocketAddress.cxx \
-	$(SRC)/Net/AllocatedSocketAddress.cxx \
-	$(SRC)/Net/SocketAddress.cxx \
-	$(SRC)/Net/SocketDescriptor.cxx
+	$(SRC)/net/AddressInfo.cxx \
+	$(SRC)/net/HostParser.cxx \
+	$(SRC)/net/Resolver.cxx \
+	$(SRC)/net/SocketError.cxx \
+	$(SRC)/net/State.cpp \
+	$(SRC)/net/ToString.cxx \
+	$(SRC)/net/IPv4Address.cxx \
+	$(SRC)/net/IPv6Address.cxx \
+	$(SRC)/net/StaticSocketAddress.cxx \
+	$(SRC)/net/AllocatedSocketAddress.cxx \
+	$(SRC)/net/SocketAddress.cxx \
+	$(SRC)/net/SocketDescriptor.cxx
 
-HAVE_HTTP := y
-
-LIBNET_SOURCES += \
-	$(SRC)/Net/HTTP/Multi.cpp \
-	$(SRC)/Net/HTTP/Session.cpp \
-	$(SRC)/Net/HTTP/Request.cpp \
-	$(SRC)/Net/HTTP/FormData.cpp \
-	$(SRC)/Net/HTTP/Init.cpp
-
-ifeq ($(TARGET_IS_OSX),y)
-# We use the libcurl which is included in Mac OS X.
-# Mac OS X SDKs contain the required headers / library stubs,
-# but no pkg-config file.
-LIBNET_LDLIBS = -lcurl
-else
-$(eval $(call pkg-config-library,CURL,libcurl))
-
-LIBNET_CPPFLAGS = $(CURL_CPPFLAGS)
-LIBNET_LDADD = $(ZLIB_LDADD)
-LIBNET_LDLIBS = $(CURL_LDLIBS) $(ZLIB_LDLIBS)
-endif
-
-ifeq ($(HAVE_HTTP),y)
-
-LIBNET_SOURCES += \
-	$(SRC)/Net/HTTP/DownloadManager.cpp \
-	$(SRC)/Net/HTTP/ToFile.cpp \
-	$(SRC)/Net/HTTP/ToBuffer.cpp
-
-endif
+LIBNET_DEPENDS = FMT
 
 $(eval $(call link-library,libnet,LIBNET))

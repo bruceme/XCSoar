@@ -1,52 +1,49 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "CompassRenderer.hpp"
 #include "Look/MapLook.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
 #include "Math/Angle.hpp"
 #include "Math/Screen.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scope.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
 #endif
 
-void
-CompassRenderer::Draw(Canvas &canvas, const Angle screen_angle,
-                      const PixelRect rc)
+PixelPoint
+CompassRenderer::GetPosition(const PixelRect rc) noexcept
 {
-  PixelPoint pos(rc.right - Layout::Scale(19),
-                 Layout::Scale(19) + rc.top);
-  Draw(canvas, screen_angle, pos);
+  return {rc.right - int(GetCenterInset()),
+          int(GetCenterInset()) + rc.top};
 }
 
 void
 CompassRenderer::Draw(Canvas &canvas, const Angle screen_angle,
-                      const PixelPoint pos)
+                      const PixelRect rc) noexcept
 {
-  BulkPixelPoint arrow[5] = { { 0, -13 }, { -6, 10 }, { 0, 4 }, { 6, 10 }, { 0, -13 } };
+  Draw(canvas, screen_angle, GetPosition(rc));
+}
+
+unsigned
+CompassRenderer::GetCenterInset() noexcept
+{
+  return Layout::Scale(19);
+}
+
+unsigned
+CompassRenderer::GetGlyphRadius() noexcept
+{
+  return Layout::Scale(13);
+}
+
+void
+CompassRenderer::Draw(Canvas &canvas, const Angle screen_angle,
+                      const PixelPoint pos) noexcept
+{
+  BulkPixelPoint arrow[] = { { 0, -13 }, { -6, 10 }, { 0, 4 }, { 6, 10 } };
 
   canvas.Select(look.compass_pen);
   canvas.Select(look.compass_brush);
@@ -56,14 +53,15 @@ CompassRenderer::Draw(Canvas &canvas, const Angle screen_angle,
 #endif
 
   // North arrow
-  PolygonRotateShift(arrow, ARRAY_SIZE(arrow), pos, -screen_angle);
+  PolygonRotateShift({arrow, ARRAY_SIZE(arrow)}, pos, -screen_angle,
+                     Layout::Scale(100U));
   canvas.DrawPolygon(arrow, ARRAY_SIZE(arrow));
 
   canvas.Select(look.compass_triangle_pen);
   canvas.Select(look.compass_triangle_brush);
 
-  BulkPixelPoint black_triangle[4] = { { 0, -13 }, { 6, 10}, { 0, 4}, { 0, -13 } };
-  PolygonRotateShift(black_triangle, ARRAY_SIZE(black_triangle),
-                     pos, -screen_angle);
+  BulkPixelPoint black_triangle[] = { { 0, -13 }, { 6, 10}, { 0, 4} };
+  PolygonRotateShift(black_triangle, pos, -screen_angle,
+                     Layout::Scale(100U));
   canvas.DrawPolygon(black_triangle, ARRAY_SIZE(black_triangle));
 }

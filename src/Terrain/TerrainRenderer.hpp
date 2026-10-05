@@ -1,36 +1,12 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TERRAIN_RENDERER_HPP
-#define XCSOAR_TERRAIN_RENDERER_HPP
+#pragma once
 
 #include "RasterRenderer.hpp"
-#include "Util/Serial.hpp"
+#include "util/Serial.hpp"
 #include "Terrain/TerrainSettings.hpp"
-
-#ifndef ENABLE_OPENGL
 #include "Projection/CompareProjection.hpp"
-#endif
 
 class Canvas;
 class WindowProjection;
@@ -45,13 +21,13 @@ class TerrainRenderer {
 protected:
   struct TerrainRendererSettings settings;
 
-#ifndef ENABLE_OPENGL
   CompareProjection compare_projection;
-#endif
 
   Angle last_sun_azimuth = Angle::Zero();
 
   const ColorRamp *last_color_ramp = nullptr;
+  double last_projection_scale = 0;
+  unsigned last_contour_spacing = 0;
 
   RasterRenderer raster_renderer;
 
@@ -68,9 +44,8 @@ public:
   void Flush() {
 #ifdef ENABLE_OPENGL
     raster_renderer.Invalidate();
-#else
-    compare_projection.Clear();
 #endif
+    compare_projection.Clear();
   }
 
 public:
@@ -78,9 +53,34 @@ public:
     return settings;
   }
 
+  [[gnu::pure]]
+  bool AreContoursVisible() const noexcept {
+    return raster_renderer.AreContoursVisible();
+  }
+
+  /**
+   * Contour spacing (metres) used for the last generated terrain
+   * image, or 0 if contours were disabled for that render.
+   */
+  [[gnu::pure]]
+  unsigned GetContourSpacing() const noexcept {
+    return last_contour_spacing;
+  }
+
   void SetSettings(const TerrainRendererSettings &_settings) {
     settings = _settings;
   }
+
+#ifdef ENABLE_OPENGL
+  /**
+   * Force a fixed quantisation value, bypassing the idle-based
+   * dynamic adjustment.  Call with q=1 for preview windows that
+   * should always render at full resolution.
+   */
+  void SetQuantisationPixels(unsigned q) noexcept {
+    raster_renderer.SetQuantisationPixels(q);
+  }
+#endif
 
   /**
    * @return true if an image has been renderered and Draw() may be
@@ -93,5 +93,3 @@ public:
     raster_renderer.Draw(canvas, projection);
   }
 };
-
-#endif

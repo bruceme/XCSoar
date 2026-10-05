@@ -1,53 +1,30 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "ui/window/ContainerWindow.hpp"
+#include "ui/window/SolidContainerWindow.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_FORM_HPP
-#define XCSOAR_FORM_FORM_HPP
-
-#include "ActionListener.hpp"
-#include "Screen/ContainerWindow.hpp"
-#include "Screen/SolidContainerWindow.hpp"
-#include "Util/StaticString.hxx"
-
+#include <string>
 #include <functional>
-
-#include <tchar.h>
-
 struct DialogLook;
-class SingleWindow;
+namespace UI { class SingleWindow; }
 class PeriodClock;
 
 enum ModalResult {
   mrOK = 2,
   mrCancel = 3,
+  /** Extra dialog button (e.g. ListPicker download action). */
+  mrExtra = -2,
+  /** Second extra dialog button (e.g. ListPicker "Now" action). */
+  mrExtra2 = -3,
 };
 
 /**
- * A WndForm represents a Window with a titlebar.
- * It is used to display the XML dialogs and MessageBoxes.
+ * A modal dialog.
  */
-class WndForm : public ContainerWindow,
-                public ActionListener
+class WndForm : public ContainerWindow
 {
 public:
   typedef std::function<bool(unsigned)> KeyDownFunction;
@@ -70,7 +47,21 @@ protected:
    */
   bool modeless = false;
 
+  /**
+   * Laid out edge-to-edge on the main window's client area (not only
+   * the safe area).  OnResize keeps that intent instead of inferring
+   * it from the dialog size.
+   */
+  bool fills_client = false;
+
   bool dragging = false;
+
+  /** Retain the requested geometry when a transient overlay reduces space. */
+  bool full_screen = false;
+  PixelSize preferred_size{};
+
+  /** Do not remember sizes imposed by the available dialog area. */
+  bool reinitialising_layout = false;
 
   /** The ClientWindow */
   SolidContainerWindow client_area;
@@ -82,41 +73,47 @@ protected:
   KeyDownFunction key_down_function;
   CharacterFunction character_function;
 
+  /**
+   * If set, invoked from @ref OnResize after the client @ref client_area
+   * is moved, so the dialog can reposition in-dialog controls.
+   */
+  std::function<void()> client_layout_function;
+
   PixelPoint last_drag;
 
-  /**
-   * The OnPaint event is called when the button needs to be drawn
-   * (derived from PaintWindow)
-   */
-  void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 
-  StaticString<256> caption;
+  std::string caption;
 
 public:
   WndForm(const DialogLook &_look);
 
   /**
    * Constructor of the WndForm class
-   * @param _main_window
-   * @param Caption Titlebar text of the Window
+   *
+   * @param caption titlebar text of the dialog
    */
-  WndForm(SingleWindow &_main_window, const DialogLook &_look,
+  WndForm(UI::SingleWindow &_main_window, const DialogLook &_look,
           const PixelRect &rc,
-          const TCHAR *caption=nullptr,
+          const char *caption=nullptr,
           const WindowStyle style = WindowStyle());
 
-  /** Destructor */
-  virtual ~WndForm();
+  /**
+   * Construct a full-screen dialog.
+   */
+  WndForm(UI::SingleWindow &_main_window, const DialogLook &_look,
+          const char *caption=nullptr,
+          const WindowStyle style={}) noexcept;
 
-  void Create(SingleWindow &main_window, const PixelRect &rc,
-              const TCHAR *caption=nullptr,
+  void Create(UI::SingleWindow &main_window, const PixelRect &rc,
+              const char *caption=nullptr,
               const WindowStyle style=WindowStyle());
 
   /**
    * Create a full-screen dialog.
    */
-  void Create(SingleWindow &main_window,
-              const TCHAR *caption=nullptr,
+  void Create(UI::SingleWindow &main_window,
+              const char *caption=nullptr,
               const WindowStyle style=WindowStyle());
 
 protected:
@@ -127,8 +124,41 @@ public:
    * Returns a reference to the main window.  This is used by dialogs
    * when they want to open another dialog.
    */
-  gcc_pure
-  SingleWindow &GetMainWindow();
+  [[gnu::pure]]
+  UI::SingleWindow &GetMainWindow();
+
+  [[gnu::pure]]
+  const UI::SingleWindow &GetMainWindow() const {
+    return const_cast<WndForm *>(this)->GetMainWindow();
+  }
+
+  /**
+   * Does this dialog fill the whole area that is available to
+   * dialogs?  That is the safe area of the main window, shortened
+   * while a warning banner is visible.  It is smaller than the client
+   * area while the display cutout or the system bars are being drawn
+   * over.
+   *
+   * This deliberately hides Window::IsMaximised(), which compares
+   * with the parent's client area and would therefore consider no
+   * dialog maximised in full screen mode.
+   */
+  [[gnu::pure]]
+  bool IsMaximised() const noexcept;
+
+  /**
+   * Does this dialog cover the main window's client area edge to
+   * edge?  Set with #SetFillsClient when the dialog is created that
+   * way (Fly/Simulator, progress).
+   */
+  [[gnu::pure]]
+  bool FillsClient() const noexcept {
+    return fills_client;
+  }
+
+  void SetFillsClient(bool value) noexcept {
+    fills_client = value;
+  }
 
   const DialogLook &GetLook() const {
     return look;
@@ -138,21 +168,28 @@ public:
     return client_area;
   }
 
-  unsigned GetTitleHeight() const {
-    return title_rect.GetHeight();
+  /**
+   * Calculate the dialog size from the desired effective client area
+   * size.
+   */
+  PixelSize ClientAreaToDialogSize(PixelSize s) const noexcept {
+    /* the "2" is the 1 pixel border at each side */
+    return PixelSize(s.width + 2,
+                     s.height + title_rect.GetHeight() + 2);
   }
 
   void SetForceOpen(bool _force) {
     force = _force;
   }
 
-  void SetModalResult(int Value) {
+  virtual void SetModalResult(int Value) noexcept {
     modal_result = Value;
   }
 
-  /** inherited from ActionListener */
-  void OnAction(int id) override {
-    SetModalResult(id);
+  auto MakeModalResultCallback(int value) noexcept {
+    return [this, value](){
+      SetModalResult(value);
+    };
   }
 
   /**
@@ -165,26 +202,22 @@ public:
 
   int ShowModal();
 
-  const TCHAR *GetCaption() const {
+  const char *GetCaption() const {
     return caption.c_str();
   }
 
   /** Set the titlebar text */
-  void SetCaption(const TCHAR *_caption);
+  void SetCaption(const char *_caption);
 
   /** from class Window */
   void OnCreate() override;
-  void OnResize(PixelSize new_size) override;
-  void OnDestroy() override;
+  void OnResize(PixelSize new_size) noexcept override;
+  void OnDestroy() noexcept override;
 
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  void OnCancelMode() override;
-
-#ifdef WIN32
-  bool OnCommand(unsigned id, unsigned code) override;
-#endif
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  void OnCancelMode() noexcept override;
 
   void SetKeyDownFunction(KeyDownFunction function) {
     key_down_function = function;
@@ -198,19 +231,38 @@ public:
     character_function = function;
   }
 
+  void SetClientLayoutFunction(std::function<void()> f) {
+    client_layout_function = std::move(f);
+  }
+
+  void ClearClientLayoutFunction() {
+    client_layout_function = {};
+  }
+
   /**
-   * Reposition window, if possible.  Will be called whenever the
-   * parent window changes.
-   *
-   * @param parent_rc the parent's client rect
+   * Run OnResize() even when the window size did not change.  Used
+   * when only the safe-area insets have changed, so a fullscreen
+   * dialog can move its controls without changing its own size.
    */
-  virtual void ReinitialiseLayout(const PixelRect &parent_rc);
+  void ForceLayout() noexcept {
+    OnResize(GetSize());
+  }
+
+  /**
+   * Fit the window inside the available dialog area.  Restore its
+   * preferred size when a transient overlay disappears.
+   *
+   * @param rc the area available to dialogs.  That is the safe area,
+   * shortened while a warning banner is visible, and it does not
+   * necessarily start at the window's top left corner
+   */
+  virtual void ReinitialiseLayout(const PixelRect &rc) noexcept;
 
 protected:
   /**
    * Assign the initial keyboard focus.
    */
-  virtual void SetDefaultFocus();
+  virtual void SetDefaultFocus() noexcept;
 
   /**
    * This method can intercept a "key down" event before it gets
@@ -218,7 +270,5 @@ protected:
    *
    * @return true if the event has been handled and shall be consumed
    */
-  virtual bool OnAnyKeyDown(unsigned key_code);
+  virtual bool OnAnyKeyDown(unsigned key_code) noexcept;
 };
-
-#endif

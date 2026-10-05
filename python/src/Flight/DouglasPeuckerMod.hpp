@@ -1,29 +1,10 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+// Original code of Douglas-Peucker algorithm by Robert Coup <robert.coup@koordinates.com>
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-  Original code of Douglas-Peucker algorithm by Robert Coup <robert.coup@koordinates.com>
-*/
-
-#ifndef PYTHON_DOUGLASPEUCKERMOD_HPP
-#define PYTHON_DOUGLASPEUCKERMOD_HPP
+#include "time/Stamp.hpp"
 
 #include <vector>
 #include <list>
@@ -99,9 +80,19 @@ private:
    * Calculate a DouglasPeucker-like weight using the temporal
    * distance of a fix to it's adjacent fixes.
    */
-  double DistanceTime(const unsigned time0,
-                       const unsigned time1,
-                       const unsigned time2);
+  [[gnu::pure]]
+  double DistanceTime(unsigned time0,
+                      unsigned time1,
+                      unsigned time2) noexcept;
+
+  [[gnu::pure]]
+  double DistanceTime(TimeStamp time0,
+                      TimeStamp time1,
+                      TimeStamp time2) noexcept {
+    return DistanceTime(std::chrono::duration_cast<std::chrono::duration<unsigned>>(time0.ToDuration()).count(),
+                        std::chrono::duration_cast<std::chrono::duration<unsigned>>(time1.ToDuration()).count(),
+                        std::chrono::duration_cast<std::chrono::duration<unsigned>>(time2.ToDuration()).count());
+  }
 
   /**
    * This computes the appropriate zoom level of a point in terms of it's
@@ -118,9 +109,6 @@ private:
    */
   void Classify(std::vector<IGCFixEnhanced> &fixes,
                 DistQueue &dists,
-                const double abs_max_dist,
                 const unsigned start,
                 const unsigned end);
 };
-
-#endif /* PYTHON_DOUGLASPEUCKERMOD_HPP */

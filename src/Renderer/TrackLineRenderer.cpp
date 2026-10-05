@@ -1,50 +1,32 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TrackLineRenderer.hpp"
 #include "Look/MapLook.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Math/Angle.hpp"
 #include "NMEA/Info.hpp"
 #include "NMEA/Derived.hpp"
 #include "MapSettings.hpp"
 #include "Projection/WindowProjection.hpp"
 #include "Geo/Math.hpp"
+#include "Screen/Layout.hpp"
 
-#define ARC_STEPS 10
+static constexpr unsigned ARC_STEPS = 10;
 static constexpr Angle ARC_SWEEP = Angle::Degrees(135.0);
 static constexpr Angle MIN_RATE = Angle::Degrees(1.0); // degrees/s
 
 void
 TrackLineRenderer::Draw(Canvas &canvas, const Angle screen_angle,
-                        const Angle track_angle, const PixelPoint pos)
+                        const Angle track_angle, const PixelPoint pos) noexcept
 {
   const auto sc = (track_angle - screen_angle).SinCos();
   const auto x = sc.first, y = sc.second;
 
   PixelPoint end;
-  end.x = pos.x + iround(x * 400);
-  end.y = pos.y - iround(y * 400);
+  const int scaled_length = Layout::Scale(400);
+  end.x = pos.x + iround(x * scaled_length);
+  end.y = pos.y - iround(y * scaled_length);
 
   canvas.Select(look.track_line_pen);
   canvas.DrawLine(pos, end);
@@ -56,9 +38,9 @@ TrackLineRenderer::Draw(Canvas &canvas,
                         const PixelPoint pos, const NMEAInfo &basic,
                         const DerivedInfo &calculated,
                         const MapSettings &settings,
-                        bool wind_relative)
+                        bool wind_relative) noexcept
 {
-  if (!basic.track_available || !basic.attitude.IsHeadingUseable())
+  if (!basic.track_available || !basic.attitude.heading_available)
     return;
 
   if (basic.airspeed_available.IsValid() &&
@@ -72,19 +54,19 @@ TrackLineRenderer::Draw(Canvas &canvas,
     return;
 
   if (settings.display_ground_track == DisplayGroundTrack::AUTO &&
-      (basic.track - basic.attitude.heading).AsDelta().AbsoluteDegrees() < 5)
+      (basic.track - basic.attitude.heading).AsDelta().Absolute() < Angle::Degrees(5))
     return;
 
   TrackLineRenderer::Draw(canvas, projection.GetScreenAngle(), basic.track, pos);
 }
 
-void
+inline void
 TrackLineRenderer::DrawProjected(Canvas &canvas,
                                  const WindowProjection &projection,
                                  const NMEAInfo &basic,
                                  const DerivedInfo &calculated,
-                                 const MapSettings &settings,
-                                 bool wind_relative)
+                                 [[maybe_unused]] const MapSettings &settings,
+                                 bool wind_relative) noexcept
 {
   // projection.GetMapScale() <= 6000;
 
@@ -107,7 +89,7 @@ TrackLineRenderer::DrawProjected(Canvas &canvas,
 
   BulkPixelPoint pts[ARC_STEPS+1];
   pts[0] = projection.GeoToScreen(loc);
-  int i = 1;
+  unsigned i = 1;
 
   while (i <= ARC_STEPS) {
     GeoVector v(basic.true_airspeed*dt, heading);

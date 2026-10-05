@@ -15,6 +15,7 @@ LOOK_SOURCES := \
 	$(SRC)/Look/OverlayLook.cpp \
 	$(SRC)/Look/TopographyLook.cpp \
 	$(SRC)/Look/WindArrowLook.cpp \
+	$(SRC)/Look/NextArrowLook.cpp \
 	$(SRC)/Look/ThermalBandLook.cpp \
 	$(SRC)/Look/TraceHistoryLook.cpp \
 	$(SRC)/Look/AirspaceLook.cpp \
@@ -36,6 +37,6 @@ LOOK_SOURCES := \
 	$(SRC)/Look/WaveLook.cpp \
 	$(SRC)/Look/ClimbPercentLook.cpp
 
-LOOK_CPPFLAGS_INTERNAL = $(SCREEN_CPPFLAGS)
+LOOK_DEPENDS = SCREEN
 
 $(eval $(call link-library,liblook,LOOK))

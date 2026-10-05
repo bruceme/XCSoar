@@ -1,27 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Profile/ProfileKeys.hpp"
+#include "Profile/Keys.hpp"
 #include "Profile/Profile.hpp"
 #include "Form/DataField/Enum.hpp"
 #include "Interface.hpp"
@@ -31,14 +11,20 @@ Copyright_License {
 #include "UIGlobals.hpp"
 #include "UtilsSettings.hpp"
 
+using namespace std::chrono;
+
 enum ControlIndex {
   AutoMcMode,
-  BlockSTF,
-  EnableNavBaroAltitude,
-  EnableExternalTriggerCruise,
-  AverEffTime,
-  PredictWindDrift,
   WaveAssistant,
+  SPACER_GLIDE,
+  BlockSTF,
+  PredictWindDrift,
+  EnableNavBaroAltitude,
+  AverEffTime,
+  SPACER_MODE,
+  EnableExternalTriggerCruise,
+  CruiseToCirclingModeSwitchThreshold,
+  CirclingToCruiseModeSwitchThreshold,
 };
 
 class GlideComputerConfigPanel final : public RowFormWidget {
@@ -46,12 +32,13 @@ public:
   GlideComputerConfigPanel()
     :RowFormWidget(UIGlobals::GetDialogLook()) {}
 
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 };
 
 void
-GlideComputerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+GlideComputerConfigPanel::Prepare(ContainerWindow &parent,
+                                  const PixelRect &rc) noexcept
 {
   const ComputerSettings &settings_computer = CommonInterface::GetComputerSettings();
   const TaskBehaviour &task_behaviour = settings_computer.task;
@@ -59,19 +46,27 @@ GlideComputerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   RowFormWidget::Prepare(parent, rc);
 
   static constexpr StaticEnumChoice auto_mc_list[] = {
-    { (unsigned)TaskBehaviour::AutoMCMode::FINALGLIDE, N_("Final glide"),
-      N_("Adjusts MC for fastest arrival.  For OLC sprint tasks, the MacCready is adjusted in "
+    { TaskBehaviour::AutoMCMode::FINALGLIDE, N_("Final glide"),
+      N_("Adjusts MC for the fastest arrival. For contest sprint tasks, the MacCready is adjusted in "
           "order to cover the greatest distance in the remaining time and reach the finish height.") },
-    { (unsigned)TaskBehaviour::AutoMCMode::CLIMBAVERAGE, N_("Trending average climb"),
+    { TaskBehaviour::AutoMCMode::CLIMBAVERAGE, N_("Trending average climb"),
       N_("Sets MC to the trending average climb rate based on all climbs.") },
-    { (unsigned)TaskBehaviour::AutoMCMode::BOTH, N_("Both"),
+    { TaskBehaviour::AutoMCMode::BOTH, N_("Both"),
       N_("Uses trending average during task, then fastest arrival when in final glide mode.") },
-    { 0 }
+    nullptr
   };
 
   AddEnum(_("Auto MC mode"),
           _("This option defines which auto MacCready algorithm is used."),
           auto_mc_list, (unsigned)settings_computer.task.auto_mc_mode);
+
+  AddBoolean(_("Wave assistant"),
+             _("Enable detection and display of wave lift. "
+               "When enabled, wave sources are identified and shown on the map."),
+             settings_computer.wave.enabled);
+
+  AddSpacer();
+  SetExpertRow(SPACER_GLIDE);
 
   AddBoolean(_("Block speed to fly"),
              _("If enabled, the command speed in cruise is set to the MacCready speed to fly in "
@@ -81,26 +76,25 @@ GlideComputerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
              settings_computer.features.block_stf_enabled);
   SetExpertRow(BlockSTF);
 
+  AddBoolean(_("Predict wind drift"),
+             _("Account for wind drift for the predicted circling duration. This reduces the arrival height for legs with head wind."),
+             task_behaviour.glide.predict_wind_drift);
+  SetExpertRow(PredictWindDrift);
+
   AddBoolean(_("Nav. by baro altitude"),
              _("When enabled and if connected to a barometric altimeter, barometric altitude is "
                  "used for all navigation functions. Otherwise GPS altitude is used."),
              settings_computer.features.nav_baro_altitude_enabled);
   SetExpertRow(EnableNavBaroAltitude);
 
-  AddBoolean(_("Flap forces cruise"),
-             _("When Vega variometer is connected and this option is true, the positive flap "
-                 "setting switches the flight mode between circling and cruise."),
-             settings_computer.circling.external_trigger_cruise_enabled);
-  SetExpertRow(EnableExternalTriggerCruise);
-
   static constexpr StaticEnumChoice aver_eff_list[] = {
-    { ae15seconds, _T("15 s"), N_("Preferred period for paragliders.") },
-    { ae30seconds, _T("30 s") },
-    { ae60seconds, _T("60 s") },
-    { ae90seconds, _T("90 s"), N_("Preferred period for gliders.") },
-    { ae2minutes, _T("2 min") },
-    { ae3minutes, _T("3 min") },
-    { 0 }
+    { ae15seconds, "15 s", N_("Preferred period for paragliders.") },
+    { ae30seconds, "30 s" },
+    { ae60seconds, "60 s" },
+    { ae90seconds, "90 s", N_("Preferred period for gliders.") },
+    { ae2minutes, "2 min" },
+    { ae3minutes, "3 min" },
+    nullptr
   };
 
   AddEnum(_("GR average period"),
@@ -109,17 +103,30 @@ GlideComputerConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
           aver_eff_list, settings_computer.average_eff_time);
   SetExpertRow(AverEffTime);
 
-  AddBoolean(_("Predict wind drift"),
-             _("Account for wind drift for the predicted circling duration. This reduces the arrival height for legs with head wind."),
-             task_behaviour.glide.predict_wind_drift);
-  SetExpertRow(PredictWindDrift);
+  AddSpacer();
+  SetExpertRow(SPACER_MODE);
 
-  AddBoolean(_("Wave assistant"), nullptr,
-             settings_computer.wave.enabled);
+  AddBoolean(_("Flap forces cruise"),
+             _("When Vega variometer is connected and this option is true, the positive flap "
+                 "setting switches the flight mode between circling and cruise."),
+             settings_computer.circling.external_trigger_cruise_enabled);
+  SetExpertRow(EnableExternalTriggerCruise);
+
+  AddDuration(_("Cruise/Circling period"),
+              _("How many seconds of turning before changing from cruise to circling mode."),
+              seconds{2}, seconds{30}, seconds{1},
+              settings_computer.circling.cruise_to_circling_mode_switch_threshold);
+  SetExpertRow(CruiseToCirclingModeSwitchThreshold);
+
+  AddDuration(_("Circling/Cruise period"),
+              _("How many seconds of flying straight before changing from circling to cruise mode."),
+              seconds{2}, seconds{30}, seconds{1},
+              settings_computer.circling.circling_to_cruise_mode_switch_threshold);
+  SetExpertRow(CirclingToCruiseModeSwitchThreshold);
 }
 
 bool
-GlideComputerConfigPanel::Save(bool &_changed)
+GlideComputerConfigPanel::Save(bool &_changed) noexcept
 {
   bool changed = false;
 
@@ -128,32 +135,38 @@ GlideComputerConfigPanel::Save(bool &_changed)
 
   changed |= SaveValueEnum(AutoMcMode, ProfileKeys::AutoMcMode, settings_computer.task.auto_mc_mode);
 
+  changed |= SaveValue(WaveAssistant, ProfileKeys::WaveAssistant,
+                       settings_computer.wave.enabled);
+
   changed |= SaveValue(BlockSTF, ProfileKeys::BlockSTF,
                        settings_computer.features.block_stf_enabled);
 
+  changed |= SaveValue(PredictWindDrift, ProfileKeys::PredictWindDrift,
+                       task_behaviour.glide.predict_wind_drift);
+
   changed |= SaveValue(EnableNavBaroAltitude, ProfileKeys::EnableNavBaroAltitude,
                        settings_computer.features.nav_baro_altitude_enabled);
-
-  changed |= SaveValue(EnableExternalTriggerCruise, ProfileKeys::EnableExternalTriggerCruise,
-                       settings_computer.circling.external_trigger_cruise_enabled);
 
   if (SaveValueEnum(AverEffTime, ProfileKeys::AverEffTime,
                     settings_computer.average_eff_time))
     require_restart = changed = true;
 
-  changed |= SaveValue(PredictWindDrift, ProfileKeys::PredictWindDrift,
-                       task_behaviour.glide.predict_wind_drift);
+  changed |= SaveValue(EnableExternalTriggerCruise, ProfileKeys::EnableExternalTriggerCruise,
+                       settings_computer.circling.external_trigger_cruise_enabled);
 
-  changed |= SaveValue(WaveAssistant, ProfileKeys::WaveAssistant,
-                       settings_computer.wave.enabled);
+  changed |= SaveValue(CruiseToCirclingModeSwitchThreshold, ProfileKeys::CruiseToCirclingModeSwitchThreshold,
+                       settings_computer.circling.cruise_to_circling_mode_switch_threshold);
+
+  changed |= SaveValue(CirclingToCruiseModeSwitchThreshold, ProfileKeys::CirclingToCruiseModeSwitchThreshold,
+                       settings_computer.circling.circling_to_cruise_mode_switch_threshold);
 
   _changed |= changed;
 
   return true;
 }
 
-Widget *
+std::unique_ptr<Widget>
 CreateGlideComputerConfigPanel()
 {
-  return new GlideComputerConfigPanel();
+  return std::make_unique<GlideComputerConfigPanel>();
 }

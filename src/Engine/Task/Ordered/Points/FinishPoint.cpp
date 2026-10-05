@@ -1,62 +1,44 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FinishPoint.hpp"
 #include "Task/TaskBehaviour.hpp"
 
 #include <stdlib.h>
-#include <assert.h>
+#include <cassert>
 
-FinishPoint::FinishPoint(ObservationZonePoint* _oz, WaypointPtr && wp,
+FinishPoint::FinishPoint(std::unique_ptr<ObservationZonePoint> &&_oz, WaypointPtr && wp,
                          const TaskBehaviour& tb,
                          const FinishConstraints &_constraints,
                          bool boundary_scored)
-  :OrderedTaskPoint(TaskPointType::FINISH, _oz, std::move(wp), boundary_scored),
+  :OrderedTaskPoint(TaskPointType::FINISH, std::move(_oz), std::move(wp),
+                    boundary_scored),
    safety_height(tb.safety_height_arrival),
    constraints(_constraints)
 {
 }
 
 void
-FinishPoint::SetTaskBehaviour(const TaskBehaviour &tb)
+FinishPoint::SetTaskBehaviour(const TaskBehaviour &tb) noexcept
 {
   safety_height = tb.safety_height_arrival;
 }
 
 void
-FinishPoint::Reset()
+FinishPoint::Reset() noexcept
 {
   OrderedTaskPoint::Reset();
   fai_finish_height = 0;
 }
 
 bool
-FinishPoint::EntryPrecondition() const
+FinishPoint::EntryPrecondition() const noexcept
 {
   return GetPrevious() != NULL && GetPrevious()->HasEntered();
 }
 
 double
-FinishPoint::GetElevation() const
+FinishPoint::GetElevation() const noexcept
 {
   const auto nominal_elevation = GetBaseElevation() + safety_height;
 
@@ -71,14 +53,15 @@ FinishPoint::GetElevation() const
 }
 
 void
-FinishPoint::SetOrderedTaskSettings(const OrderedTaskSettings &otb)
+FinishPoint::SetOrderedTaskSettings(const OrderedTaskSettings &otb) noexcept
 {
   OrderedTaskPoint::SetOrderedTaskSettings(otb);
   constraints = otb.finish_constraints;
 }
 
 void
-FinishPoint::SetNeighbours(OrderedTaskPoint *_prev, OrderedTaskPoint *_next)
+FinishPoint::SetNeighbours(OrderedTaskPoint *_prev,
+                           OrderedTaskPoint *_next) noexcept
 {
   assert(_next == NULL);
   // should not ever have an outbound leg
@@ -92,7 +75,7 @@ FinishPoint::SetFaiFinishHeight(const double height)
 }
 
 bool
-FinishPoint::IsInSector(const AircraftState &state) const
+FinishPoint::IsInSector(const AircraftState &state) const noexcept
 {
   if (!OrderedTaskPoint::IsInSector(state))
     return false;
@@ -114,7 +97,7 @@ FinishPoint::InInHeightLimit(const AircraftState &state) const
 
 bool
 FinishPoint::CheckEnterTransition(const AircraftState &ref_now,
-                                  const AircraftState &ref_last) const
+                                  const AircraftState &ref_last) const noexcept
 {
   const bool now_in_height = InInHeightLimit(ref_now);
   const bool last_in_height = InInHeightLimit(ref_last);

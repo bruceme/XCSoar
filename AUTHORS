@@ -1,5 +1,7 @@
-XCSoar Glide Computer - http://www.xcsoar.org/
-Copyright (C) 2000-2015 The XCSoar Project
+SPDX-License-Identifier: GPL-2.0-or-later
+
+XCSoar Glide Computer - https://xcsoar.org/
+Copyright (C) 2000-2025 The XCSoar Project
 
 The following people and organizations have contributed code to XCSoar:
 
@@ -30,6 +32,7 @@ The following people and organizations have contributed code to XCSoar:
  Roman Stoklasa <rstoki@gmail.com>
  Mateusz Pusz <mateusz.pusz@gmail.com>
  Google Inc., incl. Tom Stepleton <stepleton@google.com>
+ Igor Nazarenko <igor.n.nazarenko@gmail.com>
  James Ward <jamesward22@gmail.com>
  Santiago Berca <santiberca@yahoo.com.ar>
  Winfried Simon <winfried.simon@googlemail.com>
@@ -56,11 +59,39 @@ The following people and organizations have contributed code to XCSoar:
  Bruno de Lacheisserie <bruno.de.lacheisserie@gmail.com>
  Peter F Bradshaw <pfb@exadios.com>
  Stefan Schumann <stefan.schumann@posteo.de>
+ Roel Baardman <roel.baardman@gmail.com>
+ Jetsada Machom <zinuzoid@gmail.com>
+ Nicolas Massart <nmassart@gmail.com>
+ Uwe Augustin <info@flapsonline.de>
+ Ronald Niederhagen <ronald_niederhagen@freenet.de>
+ Keith Laidlaw <laidlaw1546@gmail.com>
+ Tim Stuhler <thermalmap@stuhler.de>
+ Dave Spragg <dave.spragg@gmail.com>
+ Jiri Maier <jiri.maier.x@gmail.com>
+ Remco Derksen <remco@viperlook.com>
+ Eric Gardem <ericcarden72@gmail.com>
+ Andreas Lüthi <andreas.luethi@gmx.net>
+ Andres Totorica <andrestotorica@gmail.com>
+ Petr Styblo <styblope@gmail.com>
+ Stefan Will <stefan.will@gmail.com>
+ Winfried Simon <winfried.simon@gmail.com>
+ Jörg Schuon <schuongf@hotmail.com>
+ Ulisse Perusin <uli.peru@gmail.com>
+ Moritz Finke <abzicht@gmail.com>
+ Lasse Edslev <lasse2905@gmail.com>
+ Wolfgang Drescher <drescher.wolfgang@gmail.com>
+ Piotr Gertz <piotr@piopawlu.net>
+ Yorick Reum <xcsoar@yorickreum.de>
+ kobedegeest <kobedegeest@gmail.com>
+ B-4pt <bapt80@proton.me>
+ Dominic Spreitz <dominic@spreitz.de>
+ Kai Horstmann <horstmannkai@hotmail.com>
 
 Documentation:
 
  Daniel Audier <osteocool@yahoo.fr>
  Monika Brinkert <moni@sunpig.de>
+ Sébastien Celles <s.celles@gmail.com>
  Kevin Ford <ford@math.uiuc.edu>
  Claus-W. Häbel <c-wh@online.de>
  Stefan Murry <smurry@ao-inc.com>
@@ -221,25 +252,23 @@ vi (Vietnamese):
 zh_CN (Simplified Chinese)
  Li Zhuohuan <zixia@zixia.net>
 
+zh_Hang (Traditional Chinese)
+ rab77@163.com
+
 *Contributions attributed to the LK8000 project (http://www.lk8000.it/)
 
-Libraries and code segments are included from the following projects:
- JasPer
- http://www.ece.uvic.ca/~mdadams/jasper/
-
- zziplib
- http://zziplib.sourceforge.net/
-
- shapelib
- http://shapelib.maptools.org/
+Libraries and code segments are included from the following projects.
+Those whose licence requires its own copyright and permission notice
+are listed in THIRD_PARTY_NOTICES.txt instead, with the licence text
+and the directory they occupy:
+ Boost C++ libraries
+ https://www.boost.org/
 
  Flightgear
  http://www.flightgear.org/~curt
 
  Polygon interior code
  http://softsurfer.com/Archive/algorithm_0103/algorithm_0103.htm
-
- Volkslogger code by Garrecht Ingenieurgesellschaft
 
  Algorithms from Aviation Formulary
  http://williams.best.vwh.net/avform.htm
@@ -256,3 +285,6 @@ Libraries and code segments are included from the following projects:
  IMIAPI code by Juraj Rojko from IMI-Gliding
 
  Circling wind analyser by André Somers (Cumulus)
+
+ Icons from:
+   * oNline Web Fonts http://www.onlinewebfonts.com

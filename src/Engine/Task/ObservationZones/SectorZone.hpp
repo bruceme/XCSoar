@@ -1,28 +1,7 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef SECTORZONE_HPP
-#define SECTORZONE_HPP
+#pragma once
 
 #include "CylinderZone.hpp"
 
@@ -47,23 +26,24 @@ class SectorZone: public CylinderZone
   Angle end_radial;
 
 protected:
-  SectorZone(Shape _shape, bool _can_start_through_top,
-             bool _arc_boundary,
-             const GeoPoint &loc,
-             const double _radius = 10000.0,
-             const Angle _start_radial = Angle::Zero(),
-             const Angle _end_radial = Angle::FullCircle())
+  constexpr SectorZone(Shape _shape, bool _can_start_through_top,
+                       bool _arc_boundary,
+                       const GeoPoint &loc,
+                       const double _radius = 10000.0,
+                       const Angle _start_radial = Angle::Zero(),
+                       const Angle _end_radial = Angle::FullCircle()) noexcept
     :CylinderZone(_shape, _can_start_through_top, loc, _radius),
      arc_boundary(_arc_boundary),
      start_radial(_start_radial), end_radial(_end_radial) {}
 
-  SectorZone(const SectorZone &other, const GeoPoint &reference)
+public:
+  constexpr SectorZone(const SectorZone &other,
+                       const GeoPoint &reference) noexcept
     :CylinderZone((const CylinderZone &)other, reference),
      arc_boundary(other.arc_boundary),
      sector_start(other.sector_start), sector_end(other.sector_end),
      start_radial(other.start_radial), end_radial(other.end_radial) {}
 
-public:
   /**
    * Constructor
    *
@@ -76,7 +56,7 @@ public:
    */
   SectorZone(const GeoPoint &loc, const double _radius = 10000.0,
              const Angle _start_radial = Angle::Zero(),
-             const Angle _end_radial = Angle::FullCircle())
+             const Angle _end_radial = Angle::FullCircle()) noexcept
     :CylinderZone(Shape::SECTOR, true, loc, _radius),
      arc_boundary(true),
      start_radial(_start_radial), end_radial(_end_radial)
@@ -89,21 +69,21 @@ public:
    *
    * @param x Angle (deg) of radial
    */
-  void SetStartRadial(const Angle x);
+  void SetStartRadial(const Angle x) noexcept;
 
   /**
    * Set end angle (most clockwise) of sector
    *
    * @param x Angle (deg) of radial
    */
-  void SetEndRadial(const Angle x);
+  void SetEndRadial(const Angle x) noexcept;
 
   /**
    * Get start radial property value
    *
    * @return Angle (deg) of radial
    */
-  Angle GetStartRadial() const {
+  constexpr Angle GetStartRadial() const noexcept {
     return start_radial;
   }
 
@@ -112,7 +92,7 @@ public:
    *
    * @return Angle (deg) of radial
    */
-  Angle GetEndRadial() const {
+  constexpr Angle GetEndRadial() const noexcept {
     return end_radial;
   }
 
@@ -121,7 +101,7 @@ public:
    * 
    * @return Location of extreme point on start radial
    */
-  const GeoPoint& GetSectorStart() const {
+  constexpr const GeoPoint &GetSectorStart() const noexcept {
     return sector_start;
   }
 
@@ -130,7 +110,7 @@ public:
    * 
    * @return Location of extreme point on end radial
    */
-  const GeoPoint& GetSectorEnd() const {
+  constexpr const GeoPoint &GetSectorEnd() const noexcept {
     return sector_end;
   }
 
@@ -140,7 +120,7 @@ protected:
    * sector_start and sector_end etc.
    *
    */
-  void UpdateSector();
+  void UpdateSector() noexcept;
 
   /**
    * Test whether an angle is inside the sector limits
@@ -149,26 +129,36 @@ protected:
    *
    * @return True if that is within the start/end radials
    */
-  gcc_pure
-  bool IsAngleInSector(const Angle that) const;
+  [[gnu::pure]]
+  bool IsAngleInSector(const Angle that) const noexcept;
 
 public:
   /* virtual methods from class ObservationZone */
-  bool IsInSector(const GeoPoint &location) const override;
-  OZBoundary GetBoundary() const override;
-  double ScoreAdjustment() const override;
+  bool IsInSector(const GeoPoint &location) const noexcept override;
+  OZBoundary GetBoundary() const noexcept override;
+  double ScoreAdjustment() const noexcept override;
 
   /* virtual methods from class ObservationZonePoint */
-  bool Equals(const ObservationZonePoint &other) const override;
-  ObservationZonePoint *Clone(const GeoPoint &_reference) const override {
-    return new SectorZone(*this, _reference);
+
+  /**
+   * A sector covers only part of the circle, so the rim point
+   * CylinderZone returns can fall outside it.
+   *
+   * \todo implement the sector geometry
+   */
+  GeoPoint GetNearestPoint(const FlatProjection &,
+                           const GeoPoint &) const noexcept override {
+    return GeoPoint::Invalid();
+  }
+
+  bool Equals(const ObservationZonePoint &other) const noexcept override;
+  std::unique_ptr<ObservationZonePoint> Clone(const GeoPoint &_reference) const noexcept override {
+    return std::make_unique<SectorZone>(*this, _reference);
   }
 
   /* virtual methods from class CylinderZone */
-  void SetRadius(double new_radius) override {
+  void SetRadius(double new_radius) noexcept override {
     CylinderZone::SetRadius(new_radius);
     UpdateSector();
   }
 };
-
-#endif

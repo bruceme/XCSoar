@@ -1,32 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_UNITS_FORMATTER_HPP
-#define XCSOAR_UNITS_FORMATTER_HPP
+#pragma once
 
 #include "Units/Unit.hpp"
 
-#include <tchar.h>
+#include <cstddef>
 
 class AtmosphericPressure;
 
@@ -39,7 +18,7 @@ class AtmosphericPressure;
  * @param include_unit include the unit into the string?
  */
 void
-FormatAltitude(TCHAR *buffer, double value, Unit unit,
+FormatAltitude(char *buffer, double value, Unit unit,
                bool include_unit = true);
 
 /**
@@ -51,19 +30,19 @@ FormatAltitude(TCHAR *buffer, double value, Unit unit,
  * @param include_unit include the unit into the string?
  */
 void
-FormatMass(TCHAR *buffer, double value, Unit unit,
+FormatMass(char *buffer, double value, Unit unit,
            bool include_unit = true);
 
 /**
  * Converts a wing loading into a formatted string
  * @param buffer buffer string to write to (pointer)
- * @param size Size of the buffer
+ * @param buffer_size size of the buffer in bytes
  * @param value the wing loading
  * @param unit the wing loading unit (e.g. kg/m2, ...)
  * @param include_unit include the unit into the string?
  */
 void
-FormatWingLoading(TCHAR *buffer, double value, Unit unit,
+FormatWingLoading(char *buffer, size_t buffer_size, double value, Unit unit,
                   bool include_unit = true);
 
 /**
@@ -75,7 +54,7 @@ FormatWingLoading(TCHAR *buffer, double value, Unit unit,
  * @param include_unit include the unit into the string?
  */
 void
-FormatRelativeAltitude(TCHAR *buffer, double value, Unit unit,
+FormatRelativeAltitude(char *buffer, double value, Unit unit,
                        bool include_unit = true);
 
 /**
@@ -88,7 +67,7 @@ FormatRelativeAltitude(TCHAR *buffer, double value, Unit unit,
  * @param precision the number of decimal places
  */
 void
-FormatDistance(TCHAR *buffer, double value, const Unit unit,
+FormatDistance(char *buffer, double value, const Unit unit,
                bool include_unit = true, int precision = 0);
 
 /**
@@ -103,7 +82,7 @@ FormatDistance(TCHAR *buffer, double value, const Unit unit,
  * @return the unit used for output formatting
  */
 Unit
-FormatSmallDistance(TCHAR *buffer, double value, Unit unit,
+FormatSmallDistance(char *buffer, double value, Unit unit,
                     bool include_unit = true, int precision = 0);
 
 /**
@@ -117,7 +96,7 @@ FormatSmallDistance(TCHAR *buffer, double value, Unit unit,
  * @return the unit used for output formatting
  */
 Unit
-FormatDistanceSmart(TCHAR *buffer, double value, Unit unit,
+FormatDistanceSmart(char *buffer, double value, Unit unit,
                     bool include_unit = true,
                     double small_unit_threshold = 0,
                     double precision_threshold = 100);
@@ -132,7 +111,7 @@ FormatDistanceSmart(TCHAR *buffer, double value, Unit unit,
  * @param precision if true shows one decimal place if the speed is low
  */
 void
-FormatSpeed(TCHAR *buffer, double value, const Unit unit,
+FormatSpeed(char *buffer, double value, const Unit unit,
             bool include_unit = true, bool precision = false);
 
 /**
@@ -142,7 +121,7 @@ FormatSpeed(TCHAR *buffer, double value, const Unit unit,
  * @param include_sign include the sign into the string?
  * @return the format
  */
-const TCHAR* GetVerticalSpeedFormat(Unit unit, bool include_unit = false,
+const char* GetVerticalSpeedFormat(Unit unit, bool include_unit = false,
                                     bool include_sign = true);
 
 /**
@@ -163,7 +142,7 @@ GetVerticalSpeedStep(Unit unit);
  * @param include_sign include the sign into the string?
  */
 void
-FormatVerticalSpeed(TCHAR *buffer, double value, Unit unit,
+FormatVerticalSpeed(char *buffer, double value, Unit unit,
                     bool include_unit = true, bool include_sign = true);
 
 /**
@@ -175,7 +154,7 @@ FormatVerticalSpeed(TCHAR *buffer, double value, Unit unit,
  * @param include_unit include the unit into the string?
  */
 void
-FormatTemperature(TCHAR *buffer, double value, Unit unit,
+FormatTemperature(char *buffer, double value, Unit unit,
                   bool include_unit = true);
 
 /**
@@ -186,7 +165,7 @@ FormatTemperature(TCHAR *buffer, double value, Unit unit,
  * @param unit the pressure unit (e.g. meters, feet, ...)
  * @param include_unit include the unit into the string?
  */
-void FormatPressure(TCHAR *buffer, AtmosphericPressure value, Unit unit,
+void FormatPressure(char *buffer, AtmosphericPressure value, Unit unit,
                     bool include_unit = true);
 
 /**
@@ -194,7 +173,7 @@ void FormatPressure(TCHAR *buffer, AtmosphericPressure value, Unit unit,
  * @param unit the pressure unit
  * @return the format
  */
-const TCHAR* GetPressureFormat(Unit unit, bool include_unit = false);
+const char* GetPressureFormat(Unit unit, bool include_unit = false);
 
 /**
  * Give the basic step size for pressure editing
@@ -203,5 +182,3 @@ const TCHAR* GetPressureFormat(Unit unit, bool include_unit = false);
  */
 double
 GetPressureStep(Unit unit);
-
-#endif

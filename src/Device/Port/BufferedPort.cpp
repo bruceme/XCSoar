@@ -1,142 +1,99 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BufferedPort.hpp"
-#include "Time/TimeoutClock.hpp"
+#include "Device/Error.hpp"
+#include "time/TimeoutClock.hpp"
+#include "Operation/Cancelled.hpp"
 
 #include <algorithm>
 
-#include <assert.h>
-
-BufferedPort::BufferedPort(PortListener *_listener, DataHandler &_handler)
-  :Port(_listener, _handler),
-   running(false), closing(false)
-{
-}
-
-void
-BufferedPort::BeginClose()
-{
-  ScopeLock protect(mutex);
-  closing = true;
-  cond.signal();
-}
-
-void
-BufferedPort::EndClose()
-{
-}
+#include <cassert>
 
 void
 BufferedPort::Flush()
 {
-  ScopeLock protect(mutex);
+  const std::lock_guard lock{mutex};
   buffer.Clear();
 }
 
 bool
 BufferedPort::StopRxThread()
 {
-  ScopeLock protect(mutex);
+  const std::lock_guard lock{mutex};
   running = false;
 
-  cond.broadcast();
+  cond.notify_all();
   return true;
 }
 
 bool
 BufferedPort::StartRxThread()
 {
-  ScopeLock protect(mutex);
+  const std::lock_guard lock{mutex};
   if (!running) {
     running = true;
     buffer.Clear();
   }
 
-  cond.broadcast();
+  cond.notify_all();
   return true;
 }
 
-int
-BufferedPort::Read(void *dest, size_t length)
+std::size_t
+BufferedPort::Read(std::span<std::byte> dest)
 {
-  assert(!closing);
   assert(!running);
 
-  ScopeLock protect(mutex);
+  const std::lock_guard lock{mutex};
 
   auto r = buffer.Read();
-  if (r.size == 0)
-    return -1;
-
-  size_t nbytes = std::min(length, r.size);
-  std::copy_n(r.data, nbytes, (uint8_t *)dest);
-  buffer.Consume(nbytes);
-  return nbytes;
-}
-
-Port::WaitResult
-BufferedPort::WaitRead(unsigned timeout_ms)
-{
-  TimeoutClock timeout(timeout_ms);
-  ScopeLock protect(mutex);
-
-  while (buffer.empty()) {
-    if (running)
-      return WaitResult::CANCELLED;
-
-    int remaining_ms = timeout.GetRemainingSigned();
-    if (remaining_ms <= 0)
-      return WaitResult::TIMEOUT;
-
-    cond.timed_wait(mutex, remaining_ms);
-  }
-
-  return WaitResult::READY;
+  if (r.size() > dest.size())
+    r = r.first(dest.size());
+  std::copy(r.begin(), r.end(), dest.data());
+  buffer.Consume(r.size());
+  return r.size();
 }
 
 void
-BufferedPort::DataReceived(const void *data, size_t length)
+BufferedPort::WaitRead(std::chrono::steady_clock::duration _timeout)
+{
+  TimeoutClock timeout(_timeout);
+  std::unique_lock lock{mutex};
+
+  while (buffer.empty()) {
+    if (running)
+      throw OperationCancelled{};
+
+    auto remaining = timeout.GetRemainingSigned();
+    if (remaining.count() <= 0)
+      throw DeviceTimeout{"Timeout"};
+
+    cond.wait_for(lock, remaining);
+  }
+}
+
+bool
+BufferedPort::DataReceived(std::span<const std::byte> s) noexcept
 {
   if (running) {
-    handler.DataReceived(data, length);
+    return handler.DataReceived(s);
   } else {
-    const uint8_t *p = (const uint8_t *)data;
-
-    ScopeLock protect(mutex);
+    const std::lock_guard lock{mutex};
 
     buffer.Shift();
     auto r = buffer.Write();
-    if (r.size == 0)
+    if (r.empty())
       /* the buffer is already full, discard excess data */
-      return;
+      return true;
 
     /* discard excess data */
-    size_t nbytes = std::min(length, r.size);
+    const std::size_t nbytes = std::min(s.size(), r.size());
 
-    std::copy_n(p, nbytes, r.data);
+    std::copy_n(s.begin(), nbytes, r.begin());
     buffer.Append(nbytes);
 
-    cond.broadcast();
+    cond.notify_all();
+    return true;
   }
 }

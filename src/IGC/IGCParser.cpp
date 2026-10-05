@@ -1,37 +1,21 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "IGCParser.hpp"
 #include "IGCHeader.hpp"
 #include "IGCFix.hpp"
 #include "IGCExtensions.hpp"
+#include "Geo/Geoid.hpp"
 #include "IGCDeclaration.hpp"
-#include "Time/BrokenDate.hpp"
-#include "Time/BrokenTime.hpp"
-#include "Util/CharUtil.hxx"
-#include "Util/StringAPI.hxx"
+#include "time/BrokenDate.hpp"
+#include "time/BrokenTime.hpp"
+#include "util/CharUtil.hxx"
+#include "util/StringAPI.hxx"
+#include "util/StringCompare.hxx"
 
 #include <stdlib.h>
+
+using std::string_view_literals::operator""sv;
 
 /**
  * Character table for base-36.
@@ -91,10 +75,16 @@ IGCParseHeader(const char *line, IGCHeader &header)
 bool
 IGCParseDateRecord(const char *line, BrokenDate &date)
 {
-  if (memcmp(line, "HFDTE", 5) != 0)
+  line = StringAfterPrefix(line, "HFDTE");
+  if (line == nullptr)
     return false;
 
-  line += 5;
+  if (auto date = StringAfterPrefix(line, "DATE"sv))
+    line = date;
+
+  if (line[0] == ':') {
+    line += 1;
+  }
 
   char *endptr;
   unsigned long value = strtoul(line, &endptr, 10);
@@ -152,6 +142,9 @@ IGCParseExtensions(const char *buffer, IGCExtensions &extensions)
     buffer += 2;
 
     if (!CheckThreeAlphaNumeric(buffer))
+      return false;
+
+    if (extensions.full())
       return false;
 
     IGCExtension &x = extensions.append();
@@ -240,11 +233,16 @@ IGCParseFix(const char *buffer, const IGCExtensions &extensions, IGCFix &fix)
   else
     return false;
 
-  fix.gps_altitude = gps_altitude;
-  fix.pressure_altitude = pressure_altitude;
-
   if (!IGCParseLocation(buffer + 7, fix.location))
     return false;
+
+  // B-records report WGS 84 ellipsoid altitude, convert to AMSL
+  fix.gps_ellipsoid_altitude = gps_altitude;
+  fix.gps_ellipsoid_altitude_available = true;
+  double geoid_separation = EGM96::LookupSeparation(fix.location);
+  fix.gps_altitude = gps_altitude - static_cast<int>(geoid_separation);
+
+  fix.pressure_altitude = pressure_altitude;
 
   fix.time = time;
 

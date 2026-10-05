@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/Eye.hpp"
 #include "Device/Driver.hpp"
@@ -29,6 +9,8 @@ Copyright_License {
 #include "Units/System.hpp"
 #include "Atmosphere/Pressure.hpp"
 #include "Math/Util.hpp"
+
+using std::string_view_literals::operator""sv;
 
 class EyeDevice : public AbstractDevice {
 public:
@@ -40,7 +22,6 @@ public:
 
 protected:
   static bool ReadAcceleration(NMEAInputLine &line, AccelerationState &value_r);
-  static bool ReadSpeedVector(NMEAInputLine &line, SpeedVector &value_r);
 };
 
 bool
@@ -50,18 +31,17 @@ EyeDevice::ParseNMEA(const char *_line, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(_line);
-  char type[16];
-  line.Read(type, 16);
 
-  if (StringIsEqual(type, "$PEYA"))
+  const auto type = line.ReadView();
+  if (type == "$PEYA"sv)
     return PEYA(line, info);
-  else if (StringIsEqual(type, "$PEYI"))
+  else if (type == "$PEYI"sv)
     return PEYI(line, info);
   else
     return false;
 }
 
-bool
+inline bool
 EyeDevice::PEYA(NMEAInputLine &line, NMEAInfo &info)
 {
   double value;
@@ -84,8 +64,7 @@ EyeDevice::PEYA(NMEAInputLine &line, NMEAInfo &info)
 
   // Direction from were the wind blows [°] (0 - 359)
   // Wind speed [km/h]
-  SpeedVector wind;
-  if (ReadSpeedVector(line, wind))
+  if (SpeedVector wind; line.ReadSpeedVectorKPH(wind))
     info.ProvideExternalWind(wind);
 
   // True air speed [km/h] (i.e. 183)
@@ -99,13 +78,13 @@ EyeDevice::PEYA(NMEAInputLine &line, NMEAInfo &info)
   // Outside Air Temperature (?C) (i.e. +15.2)
   if (line.ReadChecked(value)) {
     info.temperature = Temperature::FromCelsius(value);
-    info.temperature_available = true;
+    info.temperature_available.Update(info.clock);
   }
 
   // Relative humidity [%] (i.e. 095)
   if (line.ReadChecked(value)) {
     info.humidity = value;
-    info.humidity_available = true;
+    info.humidity_available.Update(info.clock);
   }
 
   // Condensation altitude [m*1'000] (i.e. 1650)
@@ -115,7 +94,7 @@ EyeDevice::PEYA(NMEAInputLine &line, NMEAInfo &info)
   return true;
 }
 
-bool
+inline bool
 EyeDevice::PEYI(NMEAInputLine &line, NMEAInfo &info)
 {
   double value;
@@ -146,8 +125,8 @@ EyeDevice::PEYI(NMEAInputLine &line, NMEAInfo &info)
   line.Skip();
 
   // Bear to true North [°] (0° – 359°) (i.e. 248)
-  if (line.ReadChecked(value)) {
-    info.attitude.heading = Angle::Degrees(value);
+  if (Angle heading; line.ReadBearing(heading)) {
+    info.attitude.heading = heading;
     info.attitude.heading_available.Update(info.clock);
   }
 
@@ -157,23 +136,7 @@ EyeDevice::PEYI(NMEAInputLine &line, NMEAInfo &info)
   return true;
 }
 
-bool
-EyeDevice::ReadSpeedVector(NMEAInputLine &line, SpeedVector &value_r)
-{
-  double bearing, norm;
-
-  bool bearing_valid = line.ReadChecked(bearing);
-  bool norm_valid = line.ReadChecked(norm);
-
-  if (bearing_valid && norm_valid) {
-    value_r.bearing = Angle::Degrees(bearing);
-    value_r.norm = Units::ToSysUnit(norm, Unit::KILOMETER_PER_HOUR);
-    return true;
-  } else
-    return false;
-}
-
-bool
+inline bool
 EyeDevice::ReadAcceleration(NMEAInputLine &line, AccelerationState &value_r)
 {
   double x, y, z;
@@ -185,19 +148,19 @@ EyeDevice::ReadAcceleration(NMEAInputLine &line, AccelerationState &value_r)
   if (!x_valid || !y_valid || !z_valid)
     return false;
 
-  value_r.ProvideGLoad(SpaceDiagonal(x, y, z), true);
+  value_r.ProvideGLoad(SpaceDiagonal(x, y, z));
   return true;
 }
 
 static Device *
-EyeCreateOnPort(gcc_unused const DeviceConfig &config, gcc_unused Port &com_port)
+EyeCreateOnPort(const DeviceConfig &, Port &)
 {
   return new EyeDevice();
 }
 
 const struct DeviceRegister eye_driver = {
-  _T("EYE"),
-  _T("EYE sensor-box (experimental)"),
+  "EYE",
+  "EYE sensor-box (experimental)",
   0,
   EyeCreateOnPort,
 };

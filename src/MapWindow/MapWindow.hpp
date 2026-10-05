@@ -1,34 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MAP_WINDOW_HPP
-#define XCSOAR_MAP_WINDOW_HPP
+#pragma once
 
 #include "Projection/MapWindowProjection.hpp"
 #include "Renderer/AirspaceRenderer.hpp"
-#include "Screen/DoubleBufferWindow.hpp"
+#include "ui/window/DoubleBufferWindow.hpp"
 #ifndef ENABLE_OPENGL
-#include "Screen/BufferCanvas.hpp"
+#include "ui/canvas/BufferCanvas.hpp"
 #endif
 #include "Renderer/LabelBlock.hpp"
 #include "Screen/StopWatch.hpp"
@@ -37,7 +16,8 @@ Copyright_License {
 #include "Renderer/BackgroundRenderer.hpp"
 #include "Renderer/WaypointRenderer.hpp"
 #include "Renderer/TrailRenderer.hpp"
-#include "Compiler.h"
+#include "Renderer/TurnBackMarkerRenderer.hpp"
+#include "OverlayLimits.hpp"
 #include "Weather/Features.hpp"
 #include "Tracking/SkyLines/Features.hpp"
 
@@ -62,6 +42,8 @@ class MapOverlay;
 namespace SkyLinesTracking {
   struct Data;
 }
+
+namespace TIM { class Glue; }
 
 class MapWindow :
   public DoubleBufferWindow,
@@ -108,6 +90,19 @@ protected:
    * the DrawThread has finished drawing the new projection.
    */
   MapWindowProjection buffer_projection;
+
+  /**
+   * Protects #published_projection.  Held only for a short copy into
+   * or out of that field; never across Render().
+   */
+  mutable Mutex frame_projection_mutex;
+
+  /**
+   * Coherent projection snapshot published by the UI thread after
+   * UpdateScreenBounds().  The DrawThread copies this into
+   * #render_projection at the start of each frame.
+   */
+  MapWindowProjection published_projection;
 #endif
 
   /**
@@ -117,7 +112,7 @@ protected:
    */
   MapWindowProjection render_projection;
 
-  const Waypoints *waypoints = nullptr;
+  Waypoints *waypoints = nullptr;
   TopographyStore *topography = nullptr;
   CachedTopographyRenderer *topography_renderer = nullptr;
 
@@ -133,7 +128,11 @@ protected:
   std::unique_ptr<RaspRenderer> rasp_renderer;
 
 #ifdef ENABLE_OPENGL
+#if defined(HAVE_HTTP)
+  std::unique_ptr<MapOverlay> overlay[MapWindowOverlay::MAX_MAP_OVERLAYS];
+#else
   std::unique_ptr<MapOverlay> overlay;
+#endif
 #endif
 
   const TrafficLook &traffic_look;
@@ -145,6 +144,7 @@ protected:
   AirspaceLabelRenderer airspace_label_renderer;
 
   TrailRenderer trail_renderer;
+  TurnBackMarkerRenderer turn_back_marker_renderer;
 
   ProtectedTaskManager *task = nullptr;
   const ProtectedRoutePlanner *route_planner = nullptr;
@@ -158,7 +158,28 @@ protected:
   const SkyLinesTracking::Data *skylines_data = nullptr;
 #endif
 
+#ifdef HAVE_HTTP
+  const TIM::Glue *tim_glue = nullptr;
+#endif
+
   bool compass_visible = true;
+
+  /**
+   * Width at the right edge of the map covered by the overlay buttons
+   * (menu, quick menu, zoom).  HUD items in the top right corner are
+   * moved left by this amount so the buttons do not hide them.
+   */
+  unsigned top_right_margin = 0;
+
+  /**
+   * Margins that keep the HUD elements clear of the areas covered by
+   * system UI (display cutout, status bar, home indicator) while the
+   * map itself uses the whole screen.
+   *
+   * @see GetHudRect(), DisplaySettings::infobox_area_stretch
+   */
+  unsigned hud_margin_left = 0, hud_margin_top = 0;
+  unsigned hud_margin_right = 0, hud_margin_bottom = 0;
 
 #ifndef ENABLE_OPENGL
   /**
@@ -186,126 +207,187 @@ protected:
 
 public:
   MapWindow(const MapLook &look,
-            const TrafficLook &traffic_look);
-  virtual ~MapWindow();
+            const TrafficLook &traffic_look) noexcept;
+  virtual ~MapWindow() noexcept;
 
   /**
    * Is the rendered map following the user's aircraft (i.e. near it)?
    */
-  bool IsNearSelf() const {
+  bool IsNearSelf() const noexcept {
     return follow_mode == FOLLOW_SELF;
   }
 
-  bool IsPanning() const {
+  bool IsPanning() const noexcept {
     return follow_mode == FOLLOW_PAN;
   }
 
-  void SetWaypoints(const Waypoints *_waypoints) {
+  void SetWaypoints(Waypoints *_waypoints) noexcept {
     waypoints = _waypoints;
-    waypoint_renderer.set_way_points(waypoints);
+    waypoint_renderer.SetWaypoints(waypoints);
   }
 
-  void SetTask(ProtectedTaskManager *_task) {
+  void SetTask(ProtectedTaskManager *_task) noexcept {
     task = _task;
   }
 
-  void SetRoutePlanner(const ProtectedRoutePlanner *_route_planner) {
+  void SetRoutePlanner(const ProtectedRoutePlanner *_route_planner) noexcept {
     route_planner = _route_planner;
   }
 
-  void SetGlideComputer(GlideComputer *_gc);
+  void SetGlideComputer(GlideComputer *_gc) noexcept;
 
-  void SetAirspaces(Airspaces *airspaces) {
+  /**
+   * Keep the HUD elements this far away from the window borders.
+   * The projection origin follows #GetHudRect(); #GlueMapWindow
+   * republishes it when these margins change.
+   *
+   * @see GetHudRect()
+   */
+  virtual void SetHudMargins(unsigned left, unsigned top,
+                             unsigned right, unsigned bottom) noexcept;
+
+  /**
+   * The part of the given rectangle in which the HUD elements
+   * (compass, map scale, final glide bar, ...) may be drawn.  This is
+   * the whole rectangle unless the map extends into areas covered by
+   * system UI.
+   */
+  [[gnu::pure]]
+  PixelRect GetHudRect(PixelRect rc) const noexcept {
+    rc.left += int(hud_margin_left);
+    rc.top += int(hud_margin_top);
+    rc.right -= int(hud_margin_right);
+    rc.bottom -= int(hud_margin_bottom);
+    return rc;
+  }
+
+  [[gnu::pure]]
+  PixelRect GetHudRect() const noexcept {
+    return GetHudRect(GetClientRect());
+  }
+
+  void SetAirspaces(Airspaces *airspaces) noexcept {
     airspace_renderer.SetAirspaces(airspaces);
     airspace_label_renderer.SetAirspaces(airspaces);
   }
 
-  void SetTopography(TopographyStore *_topography);
-  void SetTerrain(RasterTerrain *_terrain);
+  void SetTopography(TopographyStore *_topography) noexcept;
+  void SetTerrain(RasterTerrain *_terrain) noexcept;
 
-  const std::shared_ptr<RaspStore> &GetRasp() const {
+  const std::shared_ptr<RaspStore> &GetRasp() const noexcept {
     return rasp_store;
   }
 
-  void SetRasp(const std::shared_ptr<RaspStore> &_rasp_store);
+  void SetRasp(const std::shared_ptr<RaspStore> &_rasp_store) noexcept;
 
 #ifdef ENABLE_OPENGL
-  void SetOverlay(std::unique_ptr<MapOverlay> &&_overlay);
+  void SetOverlay(std::unique_ptr<MapOverlay> &&_overlay) noexcept;
 
-  const MapOverlay *GetOverlay() const {
+#if defined(HAVE_HTTP)
+  void SetOverlay(unsigned index, std::unique_ptr<MapOverlay> &&_overlay) noexcept;
+
+  const MapOverlay *GetOverlay(unsigned index) const noexcept {
+    return index < MapWindowOverlay::MAX_MAP_OVERLAYS
+      ? overlay[index].get()
+      : nullptr;
+  }
+#endif
+
+  const MapOverlay *GetOverlay() const noexcept {
+#if defined(HAVE_HTTP)
+    return GetOverlay(0);
+#else
     return overlay.get();
+#endif
   }
 #endif
 
 #ifdef HAVE_NOAA
-  void SetNOAAStore(NOAAStore *_noaa_store) {
+  void SetNOAAStore(NOAAStore *_noaa_store) noexcept {
     noaa_store = _noaa_store;
   }
 #endif
 
 #ifdef HAVE_SKYLINES_TRACKING
-  void SetSkyLinesData(const SkyLinesTracking::Data *_data) {
+  void SetSkyLinesData(const SkyLinesTracking::Data *_data) noexcept {
     skylines_data = _data;
   }
 #endif
 
-  void FlushCaches();
+#ifdef HAVE_HTTP
+  void SetThermalInfoMap(const TIM::Glue *_tim) noexcept {
+    tim_glue = _tim;
+  }
+#endif
+
+  void FlushCaches() noexcept;
 
   using MapWindowBlackboard::ReadBlackboard;
 
   void ReadBlackboard(const MoreData &nmea_info,
                       const DerivedInfo &derived_info,
                       const ComputerSettings &settings_computer,
-                      const MapSettings &settings_map);
+                      const MapSettings &settings_map) noexcept;
 
-  const MapWindowProjection &VisibleProjection() const {
+  const MapWindowProjection &VisibleProjection() const noexcept {
     return visible_projection;
   }
 
-  gcc_pure
-  GeoPoint GetLocation() const {
+  [[gnu::pure]]
+  GeoPoint GetLocation() const noexcept {
     return visible_projection.IsValid()
       ? visible_projection.GetGeoLocation()
       : GeoPoint::Invalid();
   }
 
-  void SetLocation(const GeoPoint location) {
+  void SetLocation(const GeoPoint location) noexcept {
     visible_projection.SetGeoLocation(location);
   }
 
-  void UpdateScreenBounds() {
+  void UpdateScreenBounds() noexcept {
     visible_projection.UpdateScreenBounds();
+#ifndef ENABLE_OPENGL
+    PublishFrameProjection();
+#endif
   }
 
 protected:
-  void DrawBestCruiseTrack(Canvas &canvas, PixelPoint aircraft_pos) const;
-  void DrawTrackBearing(Canvas &canvas,
-                        PixelPoint aircraft_pos, bool circling) const;
-  void DrawCompass(Canvas &canvas, const PixelRect &rc) const;
-  void DrawWind(Canvas &canvas, const PixelPoint &Orig,
-                           const PixelRect &rc) const;
-  void DrawWaypoints(Canvas &canvas);
-
-  void DrawTrail(Canvas &canvas, PixelPoint aircraft_pos,
-                 unsigned min_time, bool enable_traildrift = false);
-  virtual void RenderTrail(Canvas &canvas, PixelPoint aircraft_pos);
-  virtual void RenderTrackBearing(Canvas &canvas, PixelPoint aircraft_pos);
-
-#ifdef HAVE_SKYLINES_TRACKING
-  void DrawSkyLinesTraffic(Canvas &canvas) const;
+#ifndef ENABLE_OPENGL
+  /**
+   * Publish a coherent copy of #visible_projection for the DrawThread.
+   * Call only after UpdateScreenBounds() (or equivalent) so bounds match
+   * location/scale/angle/origin.
+   */
+  void PublishFrameProjection() noexcept;
 #endif
 
-  void DrawTeammate(Canvas &canvas) const;
-  void DrawContest(Canvas &canvas);
-  void DrawTask(Canvas &canvas);
-  void DrawRoute(Canvas &canvas);
-  void DrawTaskOffTrackIndicator(Canvas &canvas);
-  void DrawWaves(Canvas &canvas);
-  virtual void DrawThermalEstimate(Canvas &canvas) const;
+  void DrawBestCruiseTrack(Canvas &canvas, PixelPoint aircraft_pos) const noexcept;
+  void DrawTrackBearing(Canvas &canvas,
+                        PixelPoint aircraft_pos, bool circling) const noexcept;
+  void DrawCompass(Canvas &canvas, const PixelRect &rc) const noexcept;
+  void DrawWind(Canvas &canvas, const PixelPoint &Orig,
+                           const PixelRect &rc) const noexcept;
+  void DrawWaypoints(Canvas &canvas) noexcept;
 
-  void DrawGlideThroughTerrain(Canvas &canvas) const;
-  void DrawTerrainAbove(Canvas &canvas);
-  void DrawFLARMTraffic(Canvas &canvas, PixelPoint aircraft_pos) const;
+  void DrawTrail(Canvas &canvas, PixelPoint aircraft_pos,
+                 TimeStamp min_time, bool enable_traildrift = false) noexcept;
+  virtual void RenderTrail(Canvas &canvas, PixelPoint aircraft_pos) noexcept;
+  virtual void RenderTrackBearing(Canvas &canvas, PixelPoint aircraft_pos) noexcept;
+
+
+  void DrawTeammate(Canvas &canvas) const noexcept;
+  void DrawDistanceRings(Canvas &canvas) const noexcept;
+  void DrawContest(Canvas &canvas) noexcept;
+  void DrawTask(Canvas &canvas) noexcept;
+  void DrawRoute(Canvas &canvas) noexcept;
+  void DrawTaskOffTrackIndicator(Canvas &canvas) noexcept;
+  void DrawWaves(Canvas &canvas) noexcept;
+  virtual void DrawThermalEstimate(Canvas &canvas) const noexcept;
+
+  void DrawGlideThroughTerrain(Canvas &canvas) const noexcept;
+  void DrawTerrainAbove(Canvas &canvas) noexcept;
+  void DrawFLARMTraffic(Canvas &canvas, PixelPoint aircraft_pos) const noexcept;
+  void DrawGLinkTraffic(Canvas &canvas) const noexcept;
 
   // thread, main functions
   /**
@@ -313,80 +395,90 @@ protected:
    * @param canvas The drawing canvas
    * @param rc The area to draw in
    */
-  virtual void Render(Canvas &canvas, const PixelRect &rc);
+  virtual void Render(Canvas &canvas, const PixelRect &rc) noexcept;
 
-  unsigned UpdateTopography(unsigned max_update=1024);
+  unsigned UpdateTopography(unsigned max_update=1024) noexcept;
 
   /**
    * @return true if UpdateTerrain() should be called again
    */
-  bool UpdateTerrain();
+  bool UpdateTerrain() noexcept;
 
-  void UpdateAll() {
+  void UpdateAll() noexcept {
     UpdateTopography();
     UpdateTerrain();
   }
 
 protected:
   /* virtual methods from class Window */
-  virtual void OnCreate() override;
-  virtual void OnDestroy() override;
-  virtual void OnResize(PixelSize new_size) override;
-  virtual void OnPaint(Canvas& canvas) override;
+  void OnCreate() override;
+  void OnDestroy() noexcept override;
+  void OnResize(PixelSize new_size) noexcept override;
 
-  /* virtual methods from class DoubleBufferWindow */
-  virtual void OnPaintBuffer(Canvas& canvas) override;
+#ifndef ENABLE_OPENGL
+  void OnPaint(Canvas& canvas) noexcept override;
+#endif
+
+  /* methods from class DoubleBufferWindow */
+  void OnPaintBuffer(Canvas& canvas) noexcept override;
 
 private:
   /**
    * Renders the terrain background
    * @param canvas The drawing canvas
    */
-  void RenderTerrain(Canvas &canvas);
+  void RenderTerrain(Canvas &canvas) noexcept;
 
-  void RenderRasp(Canvas &canvas);
+  void RenderRasp(Canvas &canvas) noexcept;
 
-  void RenderTerrainAbove(Canvas &canvas, bool working);
+  void RenderTerrainAbove(Canvas &canvas, bool working) noexcept;
 
   /**
    * Renders the topography
    * @param canvas The drawing canvas
    */
-  void RenderTopography(Canvas &canvas);
+  void RenderTopography(Canvas &canvas) noexcept;
+
   /**
    * Renders the topography labels
    * @param canvas The drawing canvas
    */
-  void RenderTopographyLabels(Canvas &canvas);
+  void RenderTopographyLabels(Canvas &canvas) noexcept;
 
-  void RenderOverlays(Canvas &canvas);
+  void RenderOverlays(Canvas &canvas) noexcept;
 
   /**
    * Renders the final glide shading
    * @param canvas The drawing canvas
    */
-  void RenderFinalGlideShading(Canvas &canvas);
+  void RenderFinalGlideShading(Canvas &canvas) noexcept;
+
+  /**
+   * Draw the Turn Back Marker (TBM) on the track line
+   * @param canvas The drawing canvas
+   */
+  void DrawTurnBackMarker(Canvas &canvas) const noexcept;
+
   /**
    * Renders the airspace
    * @param canvas The drawing canvas
    */
-  void RenderAirspace(Canvas &canvas);
+  void RenderAirspace(Canvas &canvas) noexcept;
 
   /**
    * Renders the NOAA stations
    * @param canvas The drawing canvas
    */
-  void RenderNOAAStations(Canvas &canvas);
+  void RenderNOAAStations(Canvas &canvas) noexcept;
+
   /**
    * Render final glide through terrain marker
    * @param canvas The drawing canvas
    */
-  void RenderGlide(Canvas &canvas);
+  void RenderGlide(Canvas &canvas) noexcept;
 
 public:
-  void SetMapScale(const double x) {
+  void SetMapScale(const double x) noexcept {
     visible_projection.SetMapScale(x);
   }
 };
-
-#endif

@@ -1,45 +1,25 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_SCREEN_STOP_WATCH_HPP
-#define XCSOAR_SCREEN_STOP_WATCH_HPP
+#pragma once
 
 #ifdef STOP_WATCH
 
-#include "Util/StaticArray.hxx"
+#include "util/StaticArray.hxx"
 #include "LogFile.hpp"
 
 #ifdef HAVE_POSIX
 #include <time.h>
-#include <stdint.h>
+#include <cstdint>
 #else /* !HAVE_POSIX */
-#include <windows.h>
+#include <processthreadsapi.h>
+#include <profileapi.h>
 #endif /* !HAVE_POSIX */
 
 #endif /* STOP_WATCH */
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/System.hpp"
+#include "ui/opengl/System.hpp"
 #endif
 
 /**
@@ -139,7 +119,7 @@ public:
       const Marker &start = markers[i];
       const Marker &end = markers[i + 1];
 
-      LogFormat("StopWatch '%s': clock=%lu cpu=%lu", start.text,
+      LogFormat("StopWatch %s: clock=%lu cpu=%lu", start.text,
                 (unsigned long)(end.clock - start.clock),
                 (unsigned long)(end.cpu - start.cpu));
     }
@@ -155,9 +135,7 @@ public:
 
 #else /* !STOP_WATCH */
 public:
-  void Mark(const char *text) {}
+  void Mark([[maybe_unused]] const char *text) {}
   void Finish() {}
 #endif /* !STOP_WATCH */
 };
-
-#endif

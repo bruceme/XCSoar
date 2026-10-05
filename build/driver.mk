@@ -50,6 +50,13 @@ LX_SOURCES = \
 	$(DRIVER_SRC_DIR)/LX/LXN.cpp \
 	$(DRIVER_SRC_DIR)/LX/Register.cpp
 
+LX_EOS_SOURCES = \
+	$(DRIVER_SRC_DIR)/LX_EOS/LXEosDevice.cpp \
+	$(DRIVER_SRC_DIR)/LX_EOS/LXEosRegister.cpp \
+	$(DRIVER_SRC_DIR)/LX_EOS/LXEosParser.cpp \
+	$(DRIVER_SRC_DIR)/LX_EOS/LXEosDeclare.cpp \
+	$(DRIVER_SRC_DIR)/LX_EOS/LXEosDownload.cpp
+
 FLARM_SOURCES = \
 	$(DRIVER_SRC_DIR)/FLARM/Device.cpp \
 	$(DRIVER_SRC_DIR)/FLARM/Register.cpp \
@@ -79,6 +86,7 @@ BLUEFLY_SOURCES = \
 	$(DRIVER_SRC_DIR)/BlueFly/Misc.cpp \
 	$(DRIVER_SRC_DIR)/BlueFly/Parser.cpp \
 	$(DRIVER_SRC_DIR)/BlueFly/Settings.cpp \
+	$(DRIVER_SRC_DIR)/BlueFly/Logger.cpp \
 	$(DRIVER_SRC_DIR)/BlueFly/Register.cpp
 
 XCTRACER_SOURCES = \
@@ -87,7 +95,14 @@ XCTRACER_SOURCES = \
 
 THERMALEXPRESS_SOURCES = \
 	$(DRIVER_SRC_DIR)/ThermalExpress/Driver.cpp
- 
+
+STRATUX_SOURCES = \
+	$(DRIVER_SRC_DIR)/Stratux/Driver.cpp
+
+GDL90_SOURCES = \
+	$(DRIVER_SRC_DIR)/GDL90/GDL90Driver.cpp \
+	$(DRIVER_SRC_DIR)/GDL90/Register.cpp
+
 DRIVER_SOURCES = \
 	$(SRC)/Device/Driver.cpp \
 	$(SRC)/Device/Register.cpp \
@@ -95,17 +110,24 @@ DRIVER_SOURCES = \
 	$(CAI302_SOURCES) \
 	$(IMI_SOURCES) \
 	$(LX_SOURCES) \
+	$(LX_EOS_SOURCES) \
 	$(FLARM_SOURCES) \
 	$(FLYTEC_SOURCES) \
 	$(VEGA_SOURCES) \
 	$(BLUEFLY_SOURCES) \
 	$(XCTRACER_SOURCES) \
 	$(THERMALEXPRESS_SOURCES) \
+	$(STRATUX_SOURCES) \
+	$(GDL90_SOURCES) \
 	$(DRIVER_SRC_DIR)/AltairPro.cpp \
 	$(DRIVER_SRC_DIR)/BorgeltB50.cpp \
+	$(DRIVER_SRC_DIR)/XCVario.cpp \
 	$(DRIVER_SRC_DIR)/CaiGpsNav.cpp \
 	$(DRIVER_SRC_DIR)/CaiLNav.cpp \
 	$(DRIVER_SRC_DIR)/Condor.cpp \
+	$(DRIVER_SRC_DIR)/Condor3UDP.cpp \
+	$(DRIVER_SRC_DIR)/Condor3Spectate.cpp \
+	$(SRC)/Device/Port/SpectateFilePort.cpp \
 	$(DRIVER_SRC_DIR)/CProbe.cpp \
 	$(DRIVER_SRC_DIR)/EW.cpp \
 	$(DRIVER_SRC_DIR)/EWMicroRecorder.cpp \
@@ -125,6 +147,12 @@ DRIVER_SOURCES = \
 	$(DRIVER_SRC_DIR)/Vaulter.cpp \
 	$(DRIVER_SRC_DIR)/KRT2.cpp \
 	$(DRIVER_SRC_DIR)/AirControlDisplay.cpp \
-	$(DRIVER_SRC_DIR)/ATR833.cpp
+	$(DRIVER_SRC_DIR)/Larus.cpp \
+	$(DRIVER_SRC_DIR)/LoEFGREN.cpp \
+	$(DRIVER_SRC_DIR)/LX160.cpp \
+	$(DRIVER_SRC_DIR)/ATR833/Device.cpp \
+	$(DRIVER_SRC_DIR)/ATR833/Register.cpp
+
+DRIVER_DEPENDS = TIME LIBNMEA GEO OPERATION UNITS FMT PROFILE FLARM GLIDE JSON
 
 $(eval $(call link-library,driver,DRIVER))

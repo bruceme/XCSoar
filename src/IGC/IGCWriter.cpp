@@ -1,34 +1,16 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "IGC/IGCWriter.hpp"
-#include "IGCString.hpp"
 #include "Generator.hpp"
+#include "IGCString.hpp"
+#include "Geo/Geoid.hpp"
 #include "NMEA/Info.hpp"
 #include "Version.hpp"
-#include "OS/Path.hpp"
+#include "system/Path.hpp"
+#include "util/SpanCast.hxx"
 
-#include <assert.h>
+#include <cassert>
 
 IGCWriter::IGCWriter(Path path)
   :file(path,
@@ -43,9 +25,9 @@ IGCWriter::IGCWriter(Path path)
 }
 
 void
-IGCWriter::CommitLine(char *line)
+IGCWriter::CommitLine(std::string_view line)
 {
-  buffered.Write(line);
+  buffered.Write(AsBytes(line));
   buffered.Write('\n');
 
   grecord.AppendRecordToBuffer(line);
@@ -57,43 +39,44 @@ IGCWriter::WriteLine(const char *line)
   assert(strchr(line, '\r') == NULL);
   assert(strchr(line, '\n') == NULL);
 
-  char *const dest = BeginLine();
-  char *const end = dest + MAX_IGC_BUFF - 1;
+  char *const dest = buffer.data();
+  char *const end = dest + buffer.size();
 
   char *p = CopyIGCString(dest, end, line);
-  *p = '\0';
 
-  CommitLine(dest);
+  CommitLine(std::string_view(dest, p - dest));
 }
 
 void
-IGCWriter::WriteLine(const char *a, const TCHAR *b)
+IGCWriter::WriteLine(const char *a, const char *b)
 {
   size_t a_length = strlen(a);
-  assert(a_length < MAX_IGC_BUFF);
+  assert(a_length < buffer.size());
 
-  char *const dest = BeginLine();
-  char *const end = dest + MAX_IGC_BUFF - 1, *p = dest;
+  char *const dest = buffer.data();
+  char *const end = dest + buffer.size(), *p = dest;
 
   p = std::copy_n(a, a_length, p);
   p = CopyIGCString(p, end, b);
-  *p = '\0';
 
-  CommitLine(dest);
+  CommitLine(std::string_view(dest, p - dest));
 }
 
 void
 IGCWriter::WriteHeader(const BrokenDateTime &date_time,
-                       const TCHAR *pilot_name, const TCHAR *aircraft_model,
-                       const TCHAR *aircraft_registration,
-                       const TCHAR *competition_id,
-                       const char *logger_id, const TCHAR *driver_name,
+                       const char *pilot_name,
+                       const char *copilot_name,
+                       const char *aircraft_model,
+                       const char *aircraft_registration,
+                       const char *competition_id,
+                       const char *logger_id, const char *driver_name,
                        bool simulator)
 {
   /*
    * HFDTE141203  <- should be UTC, same as time in filename
    * HFFXA100
    * HFPLTPILOT:JOHN WHARINGTON
+   * HFCM2CREW2: LISA HAMMOND
    * HFGTYGLIDERTYPE:LS 3
    * HFGIDGLIDERID:VH-WUE
    * HFDTM100GPSDATUM:WGS-1984
@@ -123,6 +106,7 @@ IGCWriter::WriteHeader(const BrokenDateTime &date_time,
     WriteLine(GetHFFXARecord());
 
   WriteLine("HFPLTPILOTINCHARGE:", pilot_name);
+  WriteLine("HFCM2CREW2:", copilot_name);
   WriteLine("HFGTYGLIDERTYPE:", aircraft_model);
   WriteLine("HFGIDGLIDERID:", aircraft_registration);
   WriteLine("HFCIDCOMPETITIONID:", competition_id);
@@ -156,7 +140,7 @@ IGCWriter::EndDeclaration()
 }
 
 void
-IGCWriter::AddDeclaration(const GeoPoint &location, const TCHAR *id)
+IGCWriter::AddDeclaration(const GeoPoint &location, const char *id)
 {
   char c_record[64];
   FormatIGCTaskTurnPoint(c_record, location, id);
@@ -164,7 +148,7 @@ IGCWriter::AddDeclaration(const GeoPoint &location, const TCHAR *id)
 }
 
 void
-IGCWriter::LoggerNote(const TCHAR *text)
+IGCWriter::LoggerNote(const char *text)
 {
   WriteLine("LPLT", text);
 }
@@ -173,8 +157,8 @@ IGCWriter::LoggerNote(const TCHAR *text)
  * Applies range checks to the specified altitude value and converts
  * it to an integer suitable for printing in the IGC file.
  */
-static int
-NormalizeIGCAltitude(int value)
+static constexpr int
+NormalizeIGCAltitude(int value) noexcept
 {
   if (value < -9999)
     /* for negative values, there are only 4 characters left (after
@@ -202,10 +186,21 @@ IGCWriter::LogPoint(const IGCFix &fix, int epe, int satellites)
 
   p = FormatIGCLocation(p, fix.location);
 
+  // B-records require WGS 84 ellipsoid altitude
+  int ellipsoid_altitude;
+  if (fix.gps_ellipsoid_altitude_available)
+    ellipsoid_altitude = fix.gps_ellipsoid_altitude;
+  else if (fix.gps_valid) {
+    double geoid_separation = EGM96::LookupSeparation(fix.location);
+    ellipsoid_altitude = fix.gps_altitude +
+      static_cast<int>(geoid_separation);
+  } else
+    ellipsoid_altitude = 0;
+
   sprintf(p, "%c%05d%05d%03d%02d",
           fix.gps_valid ? 'A' : 'V',
           NormalizeIGCAltitude(fix.pressure_altitude),
-          NormalizeIGCAltitude(fix.gps_altitude),
+          NormalizeIGCAltitude(ellipsoid_altitude),
           epe, satellites);
 
   WriteLine(b_record);
@@ -216,7 +211,9 @@ void
 IGCWriter::LogPoint(const NMEAInfo& gps_info)
 {
   if (fix.Apply(gps_info))
-    LogPoint(fix, (int)GetEPE(gps_info.gps), GetSIU(gps_info.gps));
+    LogPoint(fix,
+             gps_info.location_available ? (int)GetEPE(gps_info.gps) : 0,
+             GetSIU(gps_info.gps));
 }
 
 void

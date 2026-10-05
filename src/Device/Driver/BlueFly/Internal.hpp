@@ -1,38 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_BLUEFLYVARIO_INTERNAL_HPP
-#define XCSOAR_BLUEFLYVARIO_INTERNAL_HPP
+#pragma once
 
 #include "Device/Driver.hpp"
 #include "Math/KalmanFilter1d.hpp"
-#include "NMEA/Info.hpp"
-#include "Thread/Mutex.hpp"
-#include "Thread/Cond.hxx"
+#include "thread/Mutex.hxx"
+#include "thread/Cond.hxx"
 
-#include <assert.h>
+#include <cassert>
+#include <cmath>
+#include <string_view>
 
-struct StringView;
+struct NMEAInfo;
 
 class BlueFlyDevice : public AbstractDevice {
 public:
@@ -44,16 +24,40 @@ public:
     static constexpr unsigned VOLUME_MAX = 1000;
     static constexpr unsigned VOLUME_MULTIPLIER = 1000;
 
+    bool audio_when_connected;
+    static const char AUDIO_WHEN_CONNECTED_NAME[];
+
+    double lift_threshold;
+    static const char LIFT_THRESHOLD_NAME[];
+
+    double lift_off_threshold;
+    static const char LIFT_OFF_THRESHOLD_NAME[];
+
+    double sink_threshold;
+    static const char SINK_THRESHOLD_NAME[];
+
+    double sink_off_threshold;
+    static const char SINK_OFF_THRESHOLD_NAME[];
+
+    static constexpr unsigned THRESHOLD_MULTIPLIER = 100;
+    static constexpr double THRESHOLD_MAX = 10;
+
     unsigned output_mode;
     static const char OUTPUT_MODE_NAME[];
-    static constexpr unsigned OUTPUT_MODE_MAX = 3;
+    static constexpr unsigned OUTPUT_MODE_MAX = 6;
 
-    gcc_const
+    unsigned output_frequency;
+    static const char OUTPUT_FREQUENCY_NAME[];
+    static constexpr unsigned OUTPUT_FREQUENCY_MIN = 1;
+    static constexpr unsigned OUTPUT_FREQUENCY_MAX = 50;
+
+    [[gnu::const]]
     static unsigned ExportVolume(double value) {
-      assert(value >= 0);
-      unsigned v = unsigned(value * VOLUME_MULTIPLIER);
-
-      assert(v <= VOLUME_MAX);
+      if (value < 0)
+        value = 0;
+      unsigned v = unsigned(std::lround(value * VOLUME_MULTIPLIER));
+      if (v > VOLUME_MAX)
+        v = VOLUME_MAX;
       return v;
     }
 
@@ -61,7 +65,41 @@ public:
       return ExportVolume(volume);
     }
 
-    gcc_const
+    [[gnu::const]]
+    static unsigned ExportBoolean(bool value) {
+      return value ? 1 : 0;
+    }
+
+    unsigned ExportAudioWhenConnected() const {
+      return ExportBoolean(audio_when_connected);
+    }
+
+    [[gnu::const]]
+    static unsigned ExportThreshold(double value) {
+      if (value < 0)
+        value = 0;
+      if (value > THRESHOLD_MAX)
+        value = THRESHOLD_MAX;
+      return unsigned(std::lround(value * THRESHOLD_MULTIPLIER));
+    }
+
+    unsigned ExportLiftThreshold() const {
+      return ExportThreshold(lift_threshold);
+    }
+
+    unsigned ExportLiftOffThreshold() const {
+      return ExportThreshold(lift_off_threshold);
+    }
+
+    unsigned ExportSinkThreshold() const {
+      return ExportThreshold(sink_threshold);
+    }
+
+    unsigned ExportSinkOffThreshold() const {
+      return ExportThreshold(sink_off_threshold);
+    }
+
+    [[gnu::const]]
     static unsigned ExportOutputMode(unsigned value) {
       assert(value <= OUTPUT_MODE_MAX);
       return value;
@@ -71,7 +109,20 @@ public:
       return ExportOutputMode(output_mode);
     }
 
-    void Parse(StringView name, unsigned long value);
+    [[gnu::const]]
+    static unsigned ExportOutputFrequency(unsigned value) {
+      if (value < OUTPUT_FREQUENCY_MIN)
+        return OUTPUT_FREQUENCY_MIN;
+      if (value > OUTPUT_FREQUENCY_MAX)
+        return OUTPUT_FREQUENCY_MAX;
+      return value;
+    }
+
+    unsigned ExportOutputFrequency() const {
+      return ExportOutputFrequency(output_frequency);
+    }
+
+    void Parse(std::string_view name, unsigned long value);
 };
 
 private:
@@ -86,11 +137,13 @@ private:
 
   bool ParseBAT(const char *content, NMEAInfo &info);
   bool ParsePRS(const char *content, NMEAInfo &info);
+  bool ParseTMP(const char *content, NMEAInfo &info);
   bool ParseBFV(const char *content, NMEAInfo &info);
   bool ParseBST(const char *content, NMEAInfo &info);
   bool ParseSET(const char *content, NMEAInfo &info);
 
-  bool WriteDeviceSetting(const char *name, int value, OperationEnvironment &env);
+  void WriteDeviceSetting(const char *name, int value,
+                          OperationEnvironment &env);
 
 public:
   explicit BlueFlyDevice(Port &_port);
@@ -100,11 +153,8 @@ public:
    * Request the current settings configuration from the BlueFly Vario.
    * The BlueFly Vario will send the values, but this method will not
    * wait for that.
-   *
-   * @return true if sending the command has succeeded (it does not
-   * indicate whether the BlueFly Vario has understood and processed it)
    */
-  bool RequestSettings(OperationEnvironment &env);
+  void RequestSettings(OperationEnvironment &env);
 
   /**
    * Wait for the BlueFly Vario to send its settings.
@@ -117,7 +167,8 @@ public:
   /**
    * Copy the available settings to the caller.
    */
-  void GetSettings(BlueFlySettings &settings_r);
+  [[gnu::pure]]
+  BlueFlySettings GetSettings() noexcept;
 
   /**
    * Write settings to the BlueFly Vario.
@@ -131,6 +182,8 @@ public:
   /* virtual methods from class Device */
   void LinkTimeout() override;
   bool ParseNMEA(const char *line, struct NMEAInfo &info) override;
+  bool ReadFlightList(RecordedFlightList &flight_list,
+                      OperationEnvironment &env) override;
+  bool DownloadFlight(const RecordedFlightInfo &flight, Path path,
+                      OperationEnvironment &env) override;
 };
-
-#endif

@@ -1,59 +1,36 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "NMEA/Checksum.hpp"
+#include "util/CharUtil.hxx"
+#include "util/HexString.hpp"
 
 #include <cassert>
 #include <cstring>
-#include <cstdlib>
 #include <cstdio>
-#include <stdint.h>
+#include <cstdint>
 
 bool
-VerifyNMEAChecksum(const char *p)
+VerifyNMEAChecksum(std::string_view sentence) noexcept
 {
-  assert(p != NULL);
-
-  const char *asterisk = strrchr(p, '*');
-  if (asterisk == NULL)
+  const auto asterisk = sentence.rfind('*');
+  if (asterisk == sentence.npos)
     return false;
 
-  const char *checksum_string = asterisk + 1;
-  char *endptr;
-  unsigned long ReadCheckSum2 = strtoul(checksum_string, &endptr, 16);
-  if (endptr == checksum_string || *endptr != 0 || ReadCheckSum2 >= 0x100)
+  const auto field = sentence.substr(asterisk + 1);
+  if (field.size() != 2 || !IsHexDigit(field[0]) || !IsHexDigit(field[1]))
     return false;
 
-  uint8_t ReadCheckSum = (unsigned char)ReadCheckSum2;
-  uint8_t CalcCheckSum = NMEAChecksum(p, asterisk - p);
-
-  return CalcCheckSum == ReadCheckSum;
+  const auto received = ParseHexString<1>(field)[0];
+  return std::byte{NMEAChecksum(sentence.substr(0, asterisk))} == received;
 }
 
 void
-AppendNMEAChecksum(char *p)
+AppendNMEAChecksum(char *p) noexcept
 {
-  assert(p != NULL);
+  assert(p != nullptr);
 
-  sprintf(p + strlen(p), "*%02X", NMEAChecksum(p));
+  const std::size_t length = strlen(p);
+
+  sprintf(p + length, "*%02X", NMEAChecksum({p, length}));
 }

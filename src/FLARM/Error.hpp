@@ -1,38 +1,14 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_ERROR_HPP
-#define XCSOAR_FLARM_ERROR_HPP
-
-#include "NMEA/Validity.hpp"
-#include "Compiler.h"
+#include "time/Validity.hpp"
+#include "util/StaticString.hxx"
 
 #include <type_traits>
-
-#include <stdint.h>
-#include <tchar.h>
-
-#ifdef WIN32
+#include <cstdint>
+#ifdef _WIN32
 #undef NO_ERROR
 #endif
 
@@ -47,18 +23,46 @@ struct FlarmError {
     FATAL_PROBLEM = 0x03,
   };
 
-  enum Code : uint8_t {
+  enum Code : uint16_t {
     FIRMWARE_TIMEOUT = 0x11,
+    FIRMWARE_UPDATE_ERROR = 0x12,
     POWER = 0x21,
+    UI = 0x22,
+    AUDIO = 0x23,
+    ADC = 0x24,
+    SDCARD = 0x25,
+    USB = 0x26,
+    LED = 0x27,
+    EEPROM = 0x28,
+    GENERAL = 0x29,
+    TRANSPONDER_ADSB = 0x2a,
+    EEPROM2 = 0x2b,
+    GPIO = 0x2c,
     GPS_COMMUNICATION = 0x31,
     GPS_CONFIGURATION = 0x32,
+    GPS_ANTENNA = 0x33,
     RF_COMMUNICATION = 0x41,
+    ID_SAME = 0x42,
+    ID_WRONG = 0x43,
     COMMUNICATION = 0x51,
     FLASH_MEMORY = 0x61,
     PRESSURE_SENSOR = 0x71,
     OBSTACLE_DATABASE = 0x81,
+    OBSTACLE_DATABASE_EXPIRED = 0x82,
     FLIGHT_RECORDER = 0x91,
-    TRANSPONDER_RECEIVER = 0xa1,
+    ENL = 0x93,
+    RANGE_ANALYZER = 0x94,
+    CONFIGURATION_ERROR = 0xa1,
+    INVALID_OBSTACLE_LICENSE = 0xb1,
+    INVALID_IGC_LICENSE = 0xb2,
+    INVALID_AUD_LICENSE = 0xb3,
+    INVALID_ENL_LICENSE = 0xb4,
+    INVALID_RFB_LICENSE = 0xb5,
+    INVALID_TIS_LICENSE = 0xb6,
+    GENERIC = 0x100,
+    FLASH_FS = 0x101,
+    FAILURE_UPDATING_DISPLAY = 0x110,
+    DEVICE_OUTSIDE_REGION = 0x120,
     OTHER = 0xf1,
   };
 
@@ -67,26 +71,31 @@ struct FlarmError {
   Severity severity;
   Code code;
 
-  bool IsWarning() const {
+  /** Device-provided error description (PFLAE v7+, max 40 chars) */
+  StaticString<41> message;
+
+  constexpr bool IsWarning() const noexcept {
     return severity >= REDUCED_FUNCTIONALITY;
   }
 
-  bool IsError() const {
+  constexpr bool IsError() const noexcept {
     return severity >= FATAL_PROBLEM;
   }
 
-  void Clear() {
+  constexpr void Clear() noexcept {
     available.Clear();
+    message.clear();
   }
 
-  void Complement(const FlarmError &add) {
+  constexpr void Complement(const FlarmError &add) noexcept {
     if (available.Complement(add.available)) {
       severity = add.severity;
       code = add.code;
+      message = add.message;
     }
   }
 
-  void Expire(gcc_unused double clock) {
+  constexpr void Expire([[maybe_unused]] TimeStamp clock) noexcept {
     /* no expiry; this object will be cleared only when the device
        connection is lost */
   }
@@ -96,28 +105,26 @@ struct FlarmError {
    * The caller is responsible for calling gettext() on the return
    * value.
    */
-  gcc_const
-  static const TCHAR *ToString(Severity severity);
+  [[gnu::const]]
+  static const char *ToString(Severity severity) noexcept;
 
   /**
    * Returns a human-readable translatable string for the given value.
    * The caller is responsible for calling gettext() on the return
    * value.
    */
-  gcc_const
-  static const TCHAR *ToString(Code code);
+  [[gnu::const]]
+  static const char *ToString(Code code) noexcept;
 
-  gcc_pure
-  const TCHAR *GetSeverityString() const {
+  [[gnu::pure]]
+  const char *GetSeverityString() const noexcept {
     return ToString(severity);
   }
 
-  gcc_pure
-  const TCHAR *GetCodeString() const {
+  [[gnu::pure]]
+  const char *GetCodeString() const noexcept {
     return ToString(code);
   }
 };
 
 static_assert(std::is_trivial<FlarmError>::value, "type is not trivial");
-
-#endif

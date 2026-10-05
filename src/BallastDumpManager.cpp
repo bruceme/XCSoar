@@ -1,31 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BallastDumpManager.hpp"
 #include "Engine/GlideSolvers/GlidePolar.hpp"
+#include "time/Cast.hxx"
 
 void
-BallastDumpManager::Start()
+BallastDumpManager::Start() noexcept
 {
   assert(!IsEnabled());
   enabled = true;
@@ -35,14 +16,14 @@ BallastDumpManager::Start()
 }
 
 void
-BallastDumpManager::Stop()
+BallastDumpManager::Stop() noexcept
 {
   assert(IsEnabled());
   enabled = false;
 }
 
 void
-BallastDumpManager::SetEnabled(bool _enabled)
+BallastDumpManager::SetEnabled(bool _enabled) noexcept
 {
   if (_enabled && !IsEnabled())
     Start();
@@ -51,7 +32,8 @@ BallastDumpManager::SetEnabled(bool _enabled)
 }
 
 bool
-BallastDumpManager::Update(GlidePolar &glide_polar, unsigned dump_time)
+BallastDumpManager::Update(GlidePolar &glide_polar,
+                           unsigned dump_time) noexcept
 {
   assert(IsEnabled());
 
@@ -61,26 +43,34 @@ BallastDumpManager::Update(GlidePolar &glide_polar, unsigned dump_time)
     return false;
   }
 
-  // Milliseconds since last ballast_clock.Update() call
-  int dt = ballast_clock.Elapsed();
+  const auto dt = ballast_clock.ElapsedUpdate();
 
-  // Update ballast_clock for the next call to BallastDumpManager::Update()
-  ballast_clock.Update();
+  auto ballast_litres = glide_polar.GetBallastLitres();
+  const double max_ballast = glide_polar.GetMaxBallast();
 
-  // How many percent of the max. ballast do we dump in one millisecond
-  auto percent_per_millisecond = 1. / (1000 * dump_time);
+  if (max_ballast > 0) {
+    double ballast_fraction = glide_polar.GetBallastFraction();
+    ballast_fraction -= ToFloatSeconds(dt) / dump_time;
 
-  // Calculate the new ballast percentage
-  auto ballast = glide_polar.GetBallast() - dt * percent_per_millisecond;
+    if (ballast_fraction < 0) {
+      Stop();
+      glide_polar.SetBallastLitres(0);
+      return false;
+    }
 
-  // Check if the plane is dry now
-  if (ballast < 0) {
-    Stop();
-    glide_polar.SetBallastLitres(0);
-    return false;
+    glide_polar.SetBallastFraction(ballast_fraction);
+  } else {
+    /* Without max_ballast, use proportional decay with a threshold
+       to ensure the dump terminates (pure exponential never reaches 0) */
+    ballast_litres -= ballast_litres * ToFloatSeconds(dt) / dump_time;
+
+    if (ballast_litres < 0.5) {
+      Stop();
+      glide_polar.SetBallastLitres(0);
+      return false;
+    }
+
+    glide_polar.SetBallastLitres(ballast_litres);
   }
-
-  // Set new ballast
-  glide_polar.SetBallast(ballast);
   return true;
 }

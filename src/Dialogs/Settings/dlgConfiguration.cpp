@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Dialogs/Dialogs.h"
 #include "Dialogs/Message.hpp"
@@ -28,15 +8,14 @@ Copyright_License {
 #include "Dialogs/WidgetDialog.hpp"
 #include "Look/DialogLook.hpp"
 #include "UIGlobals.hpp"
+#include "ui/event/KeyCode.hpp"
 #include "Form/TabMenuDisplay.hpp"
 #include "Form/TabMenuData.hpp"
 #include "Form/CheckBox.hpp"
 #include "Form/Button.hpp"
-#include "Form/LambdaActionListener.hpp"
 #include "Screen/Layout.hpp"
 #include "Profile/Profile.hpp"
-#include "LogFile.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 #include "Panels/ConfigPanel.hpp"
 #include "Panels/PagesConfigPanel.hpp"
 #include "Panels/UnitsConfigPanel.hpp"
@@ -53,8 +32,11 @@ Copyright_License {
 #include "Panels/SafetyFactorsConfigPanel.hpp"
 #include "Panels/RouteConfigPanel.hpp"
 #include "Panels/InterfaceConfigPanel.hpp"
+#include "Panels/DisplayConfigPanel.hpp"
 #include "Panels/LayoutConfigPanel.hpp"
 #include "Panels/GaugesConfigPanel.hpp"
+#include "Panels/MapOverlaysConfigPanel.hpp"
+#include "Panels/TrafficConfigPanel.hpp"
 #include "Panels/VarioConfigPanel.hpp"
 #include "Panels/TaskRulesConfigPanel.hpp"
 #include "Panels/TaskDefaultsConfigPanel.hpp"
@@ -64,26 +46,49 @@ Copyright_License {
 #include "Language/Language.hpp"
 #include "Audio/Features.hpp"
 #include "UtilsSettings.hpp"
+#include "net/http/Features.hpp"
 
-#ifdef HAVE_PCM_PLAYER
-#include "Panels/AudioVarioConfigPanel.hpp"
+#ifdef HAVE_HTTP
+#include "Panels/NOTAMConfigPanel.hpp"
 #endif
 
-#ifdef HAVE_VOLUME_CONTROLLER
+#ifdef HAVE_PCM_PLAYER
 #include "Panels/AudioConfigPanel.hpp"
 #endif
 
+#include "Tracking/Features.hpp"
+#ifdef HAVE_SKYLINES_TRACKING
+#include "Panels/SkyLinesConfigPanel.hpp"
+#endif
+#ifdef HAVE_LIVETRACK24
+#include "Panels/LiveTrack24ConfigPanel.hpp"
+#endif
 #ifdef HAVE_TRACKING
-#include "Panels/TrackingConfigPanel.hpp"
+#include "Panels/CloudConfigPanel.hpp"
 #endif
 
-#include "Panels/CloudConfigPanel.hpp"
-
-#ifdef HAVE_PCMET
+#ifdef HAVE_HTTP
 #include "Panels/WeatherConfigPanel.hpp"
 #endif
+#include "Panels/RaspConfigPanel.hpp"
+#ifdef HAVE_PCMET
+#include "Panels/PCMetConfigPanel.hpp"
+#endif
+#ifdef HAVE_HTTP
+#include "Panels/XCThermConfigPanel.hpp"
+#endif
+#ifdef HAVE_HTTP
+#include "Panels/SkySightConfigPanel.hpp"
+#endif
 
-#include <assert.h>
+#include "Panels/WeGlideConfigPanel.hpp"
+#include "Panels/NetworkConfigPanel.hpp"
+
+#if defined(__linux__) && !defined(__ANDROID__) && !defined(KOBO)
+#include "Panels/SystemdConfigPanel.hpp"
+#endif
+
+#include <cassert>
 
 static unsigned current_page;
 
@@ -96,63 +101,91 @@ static constexpr TabMenuPage files_pages[] = {
 };
 
 static constexpr TabMenuPage map_pages[] = {
-  { N_("Orientation"), CreateMapDisplayConfigPanel },
-  { N_("Elements"), CreateSymbolsConfigPanel },
-  { N_("Waypoints"), CreateWaypointDisplayConfigPanel },
-  { N_("Terrain"), CreateTerrainDisplayConfigPanel },
   { N_("Airspace"), CreateAirspaceConfigPanel },
+  { N_("Elements"), CreateSymbolsConfigPanel },
+#ifdef HAVE_HTTP
+  { NC_("Setting", "NOTAM"), CreateNOTAMConfigPanel },
+#endif
+  { N_("Orientation"), CreateMapDisplayConfigPanel },
+  { N_("Overlays"), CreateMapOverlaysConfigPanel },
+  { N_("Terrain"), CreateTerrainDisplayConfigPanel },
+  { N_("Waypoints"), CreateWaypointDisplayConfigPanel },
   { nullptr, nullptr }
 };
 
 static constexpr TabMenuPage computer_pages[] = {
-  { N_("Safety Factors"), CreateSafetyFactorsConfigPanel },
   { N_("Glide Computer"), CreateGlideComputerConfigPanel },
-  { N_("Wind"), CreateWindConfigPanel },
   { N_("Route"), CreateRouteConfigPanel },
-  { N_("Scoring"), CreateScoringConfigPanel },
+  { N_("Safety Factors"), CreateSafetyFactorsConfigPanel },
+  { N_("Wind"), CreateWindConfigPanel },
   { nullptr, nullptr }
 };
 
 static constexpr TabMenuPage gauge_pages[] = {
-  { N_("FLARM, Other"), CreateGaugesConfigPanel },
-  { N_("Vario"), CreateVarioConfigPanel },
-#ifdef HAVE_PCM_PLAYER
-  { N_("Audio Vario"), CreateAudioVarioConfigPanel },
-#endif
+  { N_("Thermal Assistant"), CreateGaugesConfigPanel },
+  { N_("Traffic"), CreateTrafficConfigPanel },
   { nullptr, nullptr }
 };
 
 static constexpr TabMenuPage task_pages[] = {
+  { N_("Scoring"), CreateScoringConfigPanel },
   { N_("Task Rules"), CreateTaskRulesConfigPanel },
   { N_("Turnpoint Types"), CreateTaskDefaultsConfigPanel },
   { nullptr, nullptr }
 };
 
 static constexpr TabMenuPage look_pages[] = {
-  { N_("Language, Input"), CreateInterfaceConfigPanel },
-  { N_("Screen Layout"), CreateLayoutConfigPanel },
-  { N_("Pages"), CreatePagesConfigPanel },
   { N_("InfoBox Sets"), CreateInfoBoxesConfigPanel },
+  { N_("Layout"), CreateLayoutConfigPanel },
+  { N_("Pages"), CreatePagesConfigPanel },
+  { N_("Vario"), CreateVarioConfigPanel },
+  { nullptr, nullptr }
+};
+
+static constexpr TabMenuPage weather_pages[] = {
+#ifdef HAVE_PCMET
+  { "Flugwetter (pc_met)", CreatePCMetConfigPanel },
+#endif
+  { "RASP", CreateRaspConfigPanel },
+#ifdef HAVE_HTTP
+  { "SkySight", CreateSkySightConfigPanel },
+  { N_("Thermal Information Map"), CreateWeatherConfigPanel },
+  { "XC Therm", CreateXCThermConfigPanel },
+#endif
+  { nullptr, nullptr }
+};
+
+static constexpr TabMenuPage online_pages[] = {
+#ifdef HAVE_LIVETRACK24
+  { "LiveTrack24", CreateLiveTrack24ConfigPanel },
+#endif
+#ifdef HAVE_SKYLINES_TRACKING
+  { "SkyLines", CreateSkyLinesConfigPanel },
+#endif
+  { "WeGlide", CreateWeGlideConfigPanel },
+#ifdef HAVE_TRACKING
+  { "XCSoar Cloud", CreateCloudConfigPanel },
+#endif
   { nullptr, nullptr }
 };
 
 static constexpr TabMenuPage setup_pages[] = {
+#ifdef HAVE_PCM_PLAYER
+  /* Before Units: audio vario deadband uses vertical-speed units. */
+  { N_("Audio"), CreateAudioConfigPanel },
+#endif
+  { N_("Language, Input"), CreateInterfaceConfigPanel },
   { N_("Logger"), CreateLoggerConfigPanel },
   { N_("Units"), CreateUnitsConfigPanel },
   // Important: all pages after Units in this list must not have data fields that are
   // unit-dependent because they will be saved after their units may have changed.
   // ToDo: implement API that controls order in which pages are saved
-  { N_("Time"), CreateTimeConfigPanel },
-#ifdef HAVE_TRACKING
-  { N_("Tracking"), CreateTrackingConfigPanel },
+  { N_("Network"), CreateNetworkConfigPanel },
+  { N_("Screen"), CreateDisplayConfigPanel },
+#if defined(__linux__) && !defined(__ANDROID__) && !defined(KOBO)
+  { N_("System Services"), CreateSystemdConfigPanel },
 #endif
-  { _T("XCSoar Cloud"), CreateCloudConfigPanel },
-#ifdef HAVE_PCMET
-  { _T("Weather"), CreateWeatherConfigPanel },
-#endif
-#ifdef HAVE_VOLUME_CONTROLLER
-  { N_("Audio"), CreateAudioConfigPanel },
-#endif
+  { NC_("Setting", "Time"), CreateTimeConfigPanel },
   { nullptr, nullptr }
 };
 
@@ -161,17 +194,18 @@ static constexpr TabMenuGroup main_menu_captions[] = {
   { N_("Map Display"), map_pages },
   { N_("Glide Computer"), computer_pages },
   { N_("Gauges"), gauge_pages },
-  { N_("Task Defaults"), task_pages },
+  { N_("Task"), task_pages },
   { N_("Look"), look_pages },
-  { N_("Setup"), setup_pages },
+  { N_("Weather"), weather_pages },
+  { NC_("Menu", "Services"), online_pages },
+  { NC_("Menu", "Setup"), setup_pages },
 };
 
-class ConfigurationExtraButtons final
-  : public NullWidget, ActionListener {
-  enum Buttons {
-    EXPERT,
-  };
+static void
+OnUserLevel(bool expert) noexcept;
 
+class ConfigurationExtraButtons final
+  : public NullWidget {
   struct Layout {
     PixelRect expert, button2, button1;
 
@@ -218,22 +252,31 @@ public:
 
 protected:
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override {
+  PixelSize GetMinimumSize() const noexcept override {
+    return {
+      CheckBoxControl::GetMinimumWidth(look,
+                                       ::Layout::GetMaximumControlHeight(),
+                                       _("Expert")),
+      ::Layout::GetMaximumControlHeight() * 3,
+    };
+  }
+
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override {
     Layout layout(rc);
+
+    expert.CreateInDialogForm(parent, look, _("Expert"), layout.expert,
+                              [](bool value){ OnUserLevel(value); });
 
     WindowStyle style;
     style.Hide();
     style.TabStop();
 
-    expert.Create(parent, look, _("Expert"),
-                  layout.expert, style, *this, EXPERT);
-
-    button2.Create(parent, look.button, _T(""), layout.button2, style);
-    button1.Create(parent, look.button, _T(""), layout.button1, style);
+    button2.Create(parent, look.button, "", layout.button2, style);
+    button1.Create(parent, look.button, "", layout.button1, style);
   }
 
-  virtual void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     Layout layout(rc);
 
     expert.SetState(CommonInterface::GetUISettings().dialog.expert);
@@ -250,41 +293,29 @@ protected:
       button1.Move(layout.button1);
   }
 
-  virtual void Hide() override {
+  void Hide() noexcept override {
     expert.FastHide();
     button2.FastHide();
     button1.FastHide();
   }
 
-  virtual void Move(const PixelRect &rc) override {
+  void Move(const PixelRect &rc) noexcept override {
     Layout layout(rc);
     expert.Move(layout.expert);
     button2.Move(layout.button2);
     button1.Move(layout.button1);
   }
-
-private:
-  void OnExpertClicked();
-
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override {
-    switch (id) {
-    case EXPERT:
-      OnExpertClicked();
-      break;
-    }
-  }
 };
 
 void
-ConfigPanel::BorrowExtraButton(unsigned i, const TCHAR *caption,
-                               ActionListener &listener, int id)
+ConfigPanel::BorrowExtraButton(unsigned i, const char *caption,
+                               std::function<void()> callback) noexcept
 {
   ConfigurationExtraButtons &extra =
     (ConfigurationExtraButtons &)pager->GetExtra();
   Button &button = extra.GetButton(i);
   button.SetCaption(caption);
-  button.SetListener(listener, id);
+  button.SetCallback(std::move(callback));
   button.Show();
 }
 
@@ -298,24 +329,20 @@ ConfigPanel::ReturnExtraButton(unsigned i)
 }
 
 static void
-OnUserLevel(CheckBoxControl &control)
+OnUserLevel(bool expert) noexcept
 {
-  const bool expert = control.GetState();
   CommonInterface::SetUISettings().dialog.expert = expert;
-  Profile::Set(ProfileKeys::UserLevel, expert);
+
+  /* Keep Profile I/O out of this checkbox callback (pager is mid-
+     relayout). Persist UserLevel when the dialog closes instead. */
 
   /* force layout update */
   pager->PagerWidget::Move(pager->GetPosition());
 }
 
-inline void
-ConfigurationExtraButtons::OnExpertClicked()
-{
-  OnUserLevel(expert);
-}
-
 /**
- * close dialog from menu page.  from content, goes to menu page
+ * Close on the menu page commits (mrOK).  On a settings page, return
+ * to the menu (Back).
  */
 static void
 OnCloseClicked(WidgetDialog &dialog)
@@ -331,58 +358,87 @@ OnPageFlipped(WidgetDialog &dialog, TabMenuDisplay &menu)
 {
   menu.OnPageFlipped();
 
-  TCHAR buffer[128];
-  const TCHAR *caption = menu.GetCaption(buffer, ARRAY_SIZE(buffer));
+  char buffer[128];
+  const char *caption = menu.GetCaption(buffer, ARRAY_SIZE(buffer));
   if (caption == nullptr)
     caption = _("Configuration");
   dialog.SetCaption(caption);
+
+  pager->SetCloseButtonCaption(pager->GetCurrentIndex() == 0
+                               ? _("Close")
+                               : _("Back"));
 }
 
 void dlgConfigurationShowModal()
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
+  WidgetDialog dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+                      look, _("Configuration"));
 
-  auto on_close = MakeLambdaActionListener([&dialog](unsigned id) {
-      OnCloseClicked(dialog);
-    });
+  pager = new ArrowPagerWidget(look.button,
+                               [&dialog](){ OnCloseClicked(dialog); },
+                               std::make_unique<ConfigurationExtraButtons>(look));
 
-  pager = new ArrowPagerWidget(on_close, look.button,
-                               new ConfigurationExtraButtons(look));
+  auto _menu = std::make_unique<TabMenuDisplay>(*pager, look);
+  auto &menu = *_menu;
+  pager->Add(std::make_unique<CreateWindowWidget>([&_menu](ContainerWindow &parent,
+                                                           const PixelRect &rc,
+                                                           WindowStyle style) {
+    style.TabStop();
+    _menu->Create(parent, rc, style);
+    return std::move(_menu);
+  }));
 
-  TabMenuDisplay *menu = new TabMenuDisplay(*pager, look);
-  pager->Add(new CreateWindowWidget([menu](ContainerWindow &parent,
-                                           const PixelRect &rc,
-                                           WindowStyle style) {
-                                      style.TabStop();
-                                      menu->Create(parent, rc, style);
-                                      return menu;
-                                    }));
-
-  menu->InitMenu(main_menu_captions, ARRAY_SIZE(main_menu_captions));
+  menu.InitMenu(main_menu_captions, ARRAY_SIZE(main_menu_captions));
 
   /* restore last selected menu item */
-  menu->SetCursor(current_page);
+  menu.SetCursor(current_page);
 
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Configuration"), pager);
+  pager->SetPageFlippedCallback([&dialog, &menu](){
+    OnPageFlipped(dialog, menu);
+  });
 
-  pager->SetPageFlippedCallback([&dialog, menu](){
-      OnPageFlipped(dialog, *menu);
-    });
+  dialog.FinishPreliminary(pager);
 
-  dialog.ShowModal();
+  /* Esc on a settings panel returns to the menu (same as Back);
+     on the menu itself, leave Esc to cancel the dialog. */
+  dialog.SetKeyDownFunction([&dialog](unsigned key_code) {
+    if (key_code != KEY_ESCAPE || pager->GetCurrentIndex() == 0)
+      return false;
+
+    OnCloseClicked(dialog);
+    return true;
+  });
+
+  const int result = dialog.ShowModal();
 
   /* save page number for next time this dialog is opened */
-  current_page = menu->GetCursor();
+  current_page = menu.GetCursor();
 
-  bool changed = false;
-  pager->Save(changed);
-  if (changed) {
+  /* Persist Expert only on OK. Missing UserLevel means beginner —
+     write "1" when enabling Expert; remove the key when returning to
+     beginner (do not leave UserLevel=0 cruft) (#1793). */
+  bool expert_changed = false;
+  if (result == mrOK) {
+    const bool expert = CommonInterface::GetUISettings().dialog.expert;
+    if (expert) {
+      bool profile_expert = false;
+      Profile::Get(ProfileKeys::UserLevel, profile_expert);
+      if (!profile_expert) {
+        Profile::Set(ProfileKeys::UserLevel, true);
+        expert_changed = true;
+      }
+    } else if (Profile::Exists(ProfileKeys::UserLevel)) {
+      Profile::Remove(ProfileKeys::UserLevel);
+      expert_changed = true;
+    }
+  }
+
+  if (dialog.GetChanged() || expert_changed) {
     Profile::Save();
-    LogDebug(_T("Configuration: Changes saved"));
     if (require_restart)
-      ShowMessageBox(_("Changes to configuration saved.  Restart XCSoar to apply changes."),
-                  _T(""), MB_OK);
+      ShowMessageBox(_("Changes to configuration saved. Restart XCSoar to apply changes."),
+                  "", MB_OK);
   }
 }

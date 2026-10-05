@@ -1,76 +1,21 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "PowerFeatures.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
+#if defined(HAVE_BATTERY) && !defined(ANDROID)
 
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+namespace Power {
 
-#ifndef XCSOAR_HARDWARE_BATTERY_H
-#define XCSOAR_HARDWARE_BATTERY_H
+/* note: this function is not implemented on Android, because a JNI
+   callback will update the global variable there */
 
-#if defined(ANDROID) || defined(KOBO) || defined(ENABLE_SDL)
-#define HAVE_BATTERY
+[[gnu::pure]]
+struct Info
+GetInfo() noexcept;
 
-namespace Power
-{
-  namespace Battery{
-    enum batterystatus {
-      LOW,
-      HIGH,
-      CRITICAL,
-      CHARGING,
-      NOBATTERY,
-      UNKNOWN
-    };
+} // namespace Power
 
-    extern unsigned Temperature;
-    extern unsigned RemainingPercent;
-    extern bool RemainingPercentValid;
-    extern batterystatus Status;
-  };
-  namespace External{
-    enum externalstatus{
-      OFF,
-      ON,
-      UNKNOWN
-    };
-
-    extern externalstatus Status;
-  };
-
-}
-
-#ifdef ANDROID
-
-static inline void
-UpdateBatteryInfo()
-{
-  /* nothing to do, this is updated by Android callbacks */
-}
-
-#else
-
-void
-UpdateBatteryInfo();
-
-#endif
-
-#endif /* !HAVE_BATTERY */
-
-#endif
+#endif /* HAVE_BATTERY */

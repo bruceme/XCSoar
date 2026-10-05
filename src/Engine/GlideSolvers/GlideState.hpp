@@ -1,30 +1,11 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef GLIDESTATE_HPP
-#define GLIDESTATE_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "Geo/SpeedVector.hpp"
 #include "Geo/GeoVector.hpp"
-#include "Compiler.h"
+#include "time/FloatDuration.hxx"
 
 struct AircraftState;
 class TaskPoint;
@@ -72,7 +53,7 @@ public:
   GlideState(const GeoVector &vector, const double htarget,
              double altitude, const SpeedVector wind);
 
-  gcc_pure
+  [[gnu::pure]]
   static GlideState Remaining(const TaskPoint &tp,
                               const AircraftState &aircraft,
                               double min_h);
@@ -93,7 +74,7 @@ public:
    *
    * @return Average cross-country speed (m/s)
    */
-  gcc_pure
+  [[gnu::pure]]
   double CalcAverageSpeed(double v_eff) const;
 
   /**
@@ -104,8 +85,6 @@ public:
    *
    * @return Distance (m) of drift
    */
-  gcc_pure
-  double DriftedDistance(double climb_time) const;
+  [[gnu::pure]]
+  double DriftedDistance(FloatDuration climb_time) const;
 };
-
-#endif

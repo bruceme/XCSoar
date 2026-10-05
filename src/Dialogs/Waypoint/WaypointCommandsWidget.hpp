@@ -1,42 +1,24 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_WAYPOINT_COMMANDS_WIDGET_HPP
-#define XCSOAR_WAYPOINT_COMMANDS_WIDGET_HPP
-
+#include "WaypointDialogs.hpp"
 #include "Widget/RowFormWidget.hpp"
-#include "Form/ActionListener.hpp"
 #include "Engine/Waypoint/Ptr.hpp"
 
 class WndForm;
+class Waypoints;
 class ProtectedTaskManager;
 
 /**
  * A Widget that shows a few commands for a Waypoint.
  */
 class WaypointCommandsWidget final
-  : public RowFormWidget, ActionListener {
+  : public RowFormWidget {
   WndForm *const form;
+
+  Waypoints *const waypoints;
 
   const WaypointPtr waypoint;
 
@@ -44,20 +26,43 @@ class WaypointCommandsWidget final
 
   const bool allow_edit;
 
+  const WaypointDetailsNesting nesting;
+
+  bool has_freq;
+  enum Buttons {
+    REPLACE_IN_TASK,
+    INSERT_IN_TASK,
+    APPEND_TO_TASK,
+    REMOVE_FROM_TASK,
+	SET_NEW_HOME,
+	PAN_WAYPOINT,
+	SET_ACTIVE_FREQUENCY,
+	SET_STANDBY_FREQUENCY,
+	EDIT,
+  };
+
+  Button *replace_button, *insert_button, *append_button, *remove_button,
+         *home_button, *pan_button,
+         *set_active_button, *set_standby_button, *edit_button;
+
+  /**
+   * Mark a parent browse-search as committed and close this form (no-op if
+   * #form is null).
+   */
+  void CommitParentSearchAndCloseForm() noexcept;
+
 public:
   WaypointCommandsWidget(const DialogLook &look, WndForm *_form,
+                         Waypoints *_waypoints,
                          WaypointPtr _waypoint,
-                         ProtectedTaskManager *_task_manager,
-                         bool _allow_edit)
+                         ProtectedTaskManager *_task_manager, bool _allow_edit,
+                         const WaypointDetailsNesting &_nesting) noexcept
     :RowFormWidget(look), form(_form),
+     waypoints(_waypoints),
      waypoint(std::move(_waypoint)), task_manager(_task_manager),
-     allow_edit(_allow_edit) {}
-
-  /* methods from ActionListener */
-  void OnAction(int id) override;
-
+     allow_edit(_allow_edit), nesting(_nesting) {}
+  void UpdateButtons();
   /* methods from Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  
 };
-
-#endif

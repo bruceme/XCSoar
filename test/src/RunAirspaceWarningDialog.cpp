@@ -1,80 +1,68 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_DIALOG
 #define ENABLE_MAIN_WINDOW
+#define ENABLE_LOOK
 
-#include "Main.hpp"
-#include "Interface.hpp"
+#include "ActionInterface.hpp"
+#include "Airspace/AirspaceGlue.hpp"
+#include "Airspace/AirspaceWarningManager.hpp"
+#include "Airspace/ProtectedAirspaceWarningManager.hpp"
+#include "Components.hpp"
 #include "Dialogs/Airspace/Airspace.hpp"
 #include "Dialogs/Airspace/AirspaceWarningDialog.hpp"
 #include "Dialogs/DialogSettings.hpp"
-#include "UIGlobals.hpp"
-#include "Profile/Profile.hpp"
-#include "Airspace/ProtectedAirspaceWarningManager.hpp"
-#include "Airspace/AirspaceParser.hpp"
-#include "Airspace/AirspaceWarningManager.hpp"
 #include "Engine/Airspace/Airspaces.hpp"
-#include "ResourceLoader.hpp"
-#include "IO/FileLineReader.hpp"
-#include "IO/ConfiguredFile.hpp"
+#include "Interface.hpp"
 #include "LocalPath.hpp"
-#include "Components.hpp"
+#include "Main.hpp"
 #include "Operation/Operation.hpp"
+#include "Profile/Profile.hpp"
+#include "Repository/FileType.hpp"
+#include "ResourceLoader.hpp"
+#include "UIGlobals.hpp"
+#include "io/BufferedReader.hxx"
+#include "io/ConfiguredFile.hpp"
+#include "io/FileReader.hxx"
 
 #include <memory>
-#include <tchar.h>
 #include <stdio.h>
-
-void VisitDataFiles(const TCHAR* filter, File::Visitor &visitor) {}
 
 InterfaceBlackboard CommonInterface::Private::blackboard;
 
 ProtectedAirspaceWarningManager *airspace_warnings;
 
 void
-dlgAirspaceDetails(const AbstractAirspace &the_airspace,
-                   ProtectedAirspaceWarningManager *airspace_warnings)
+dlgAirspaceDetails([[maybe_unused]] ConstAirspacePtr the_airspace,
+                   [[maybe_unused]] ProtectedAirspaceWarningManager *airspace_warnings)
+{
+}
+
+void
+ActionInterface::SetActiveFrequency([[maybe_unused]] const RadioFrequency freq,
+                                    [[maybe_unused]] const char * freq_name,
+                                    [[maybe_unused]] bool to_devices) noexcept
 {
 }
 
 static void
 LoadFiles(Airspaces &airspace_database)
 {
-  NullOperationEnvironment operation;
-
-  auto reader = OpenConfiguredTextFile(ProfileKeys::AirspaceFile,
-                                       Charset::AUTO);
-  if (reader) {
-    AirspaceParser parser(airspace_database);
-    parser.Parse(*reader, operation);
-    airspace_database.Optimise();
+  NullOperationEnvironment test_operation_environment;
+  const auto paths = Profile::GetMultiplePaths(ProfileKeys::AirspaceFileList,
+                                               GetFileTypePatterns(FileType::AIRSPACE));
+  for (auto it = paths.begin(); it < paths.end(); it++) {
+    ParseAirspaceFile(airspace_database, *it, test_operation_environment);
   }
+  airspace_database.Optimise();
 }
 
 static void
-Main()
+Main([[maybe_unused]] TestMainWindow &main_window)
 {
+  CommonInterface::Private::blackboard.SetUISettings().SetDefaults();
+
   Airspaces airspace_database;
 
   AirspaceWarningConfig airspace_warning_config;
@@ -91,7 +79,7 @@ Main()
 
   AirspaceInterceptSolution ais;
   for (unsigned i = 0; i < 5 && it != range.end(); ++i, ++it)
-    airspace_warning.GetWarning(it->GetAirspace())
+    airspace_warning.GetWarning(it->GetAirspacePtr())
       .UpdateSolution((AirspaceWarning::State)i, ais);
 
   dlgAirspaceWarningsShowModal(*airspace_warnings);

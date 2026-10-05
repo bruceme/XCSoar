@@ -1,15 +1,20 @@
 ifeq ($(TARGET_IS_PI),y)
 # auto-enable EGL on the Raspberry Pi.
 EGL ?= y
-else ifeq ($(TARGET_HAS_MALI),y)
+ENABLE_MESA_KMS = y
+else ifeq ($(TARGET_IS_CUBIE),y)
 # auto-enable EGL on the Cubieboard.
 EGL ?= y
+ENABLE_MESA_KMS = y
 else ifeq ($(ENABLE_MESA_KMS),y)
 # if Mesa KMS is explicitly enabled, we also need to enable EGL
 EGL ?= y
-else ifneq ($(HAVE_WIN32)$(TARGET_IS_DARWIN)$(TARGET_IS_KOBO),nnn)
-# Windows uses GDI
-# Mac OS X and iOS use SDL
+else ifeq ($(TARGET_IS_DARWIN),y)
+# macOS uses SDL with OpenGL/ANGLE (not EGL directly)
+# SDL handles OpenGL context creation and will use ANGLE libraries if available
+EGL = n
+else ifneq ($(HAVE_WIN32)$(TARGET_IS_KOBO),nn)
+# Windows uses SDL + ANGLE
 # Kobo uses software renderer on /dev/fb0
 EGL = n
 else ifeq ($(OPENGL),n)
@@ -21,19 +26,18 @@ EGL = n
 else ifeq ($(TARGET),ANDROID)
 # Android uses EGL
 EGL = y
-else ifeq ($(GLES2),y)
-# use EGL if GLES2 was chosen explicitly
-EGL = y
 else
-# default to GLX/X11
-EGL ?= n
+# UNIX/X11 OpenGL uses EGL + OpenGL ES
+EGL = y
 endif
 
 ifeq ($(EGL),y)
 
 OPENGL = y
 
-ifneq ($(TARGET),ANDROID)
+ifeq ($(TARGET),ANDROID)
+LIBPNG = y
+else
 FREETYPE = y
 LIBPNG = y
 LIBJPEG = y
@@ -44,23 +48,9 @@ ENABLE_SDL = n
 EGL_CPPFLAGS =
 EGL_FEATURE_CPPFLAGS = -DUSE_EGL
 
-ifeq ($(TARGET_IS_PI),y)
-EGL_LDLIBS = -lbrcmEGL
-else
 EGL_LDLIBS = -lEGL
-endif
 
-ifeq ($(TARGET_IS_PI),y)
-# Raspberry Pi detected
-EGL_FEATURE_CPPFLAGS += -DUSE_VIDEOCORE
-EGL_CPPFLAGS += -isystem $(PI)/opt/vc/include -isystem $(PI)/opt/vc/include/interface/vcos/pthreads
-EGL_CPPFLAGS += -isystem $(PI)/opt/vc/include/interface/vmcs_host/linux
-EGL_LDLIBS += -L$(PI)/opt/vc/lib -lvchostif -lvchiq_arm -lvcos -lbcm_host
-USE_CONSOLE = y
-else ifeq ($(TARGET_HAS_MALI),y)
-EGL_FEATURE_CPPFLAGS += -DHAVE_MALI
-USE_CONSOLE = y
-else ifeq ($(ENABLE_MESA_KMS),y)
+ifeq ($(ENABLE_MESA_KMS),y)
 $(eval $(call pkg-config-library,DRM,libdrm))
 $(eval $(call pkg-config-library,GBM,gbm))
 EGL_FEATURE_CPPFLAGS += -DMESA_KMS

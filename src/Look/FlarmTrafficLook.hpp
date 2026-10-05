@@ -1,33 +1,12 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef FLARM_TRAFFIC_WINDOW_LOOK_HPP
-#define FLARM_TRAFFIC_WINDOW_LOOK_HPP
-
-#include "Screen/Color.hpp"
-#include "Screen/Pen.hpp"
-#include "Screen/Brush.hpp"
-#include "Screen/Font.hpp"
+#include "ui/canvas/Color.hpp"
+#include "ui/canvas/Pen.hpp"
+#include "ui/canvas/Brush.hpp"
+#include "ui/canvas/Font.hpp"
 
 struct TrafficLook;
 
@@ -39,6 +18,13 @@ struct FlarmTrafficLook {
   Color selection_color;
   Color background_color;
   Color radar_color;
+  Color safe_above_color;
+  Color safe_below_color;
+  Color warning_in_altitude_range_color;
+  Color team_color_green;
+  Color team_color_blue;
+  Color team_color_yellow;
+  Color team_color_magenta;
 
   Brush warning_brush;
   Brush alarm_brush;
@@ -50,6 +36,9 @@ struct FlarmTrafficLook {
   Brush team_brush_blue;
   Brush team_brush_yellow;
   Brush team_brush_magenta;
+  Brush safe_above_brush;
+  Brush safe_below_brush;
+  Brush warning_in_altitude_range_brush;
 
   Pen warning_pen;
   Pen alarm_pen;
@@ -70,6 +59,15 @@ struct FlarmTrafficLook {
   Font info_values_font, info_units_font, info_labels_font, call_sign_font;
 
   void Initialise(const TrafficLook &other, bool small, bool inverse = false);
-};
 
-#endif
+  /**
+   * Reload pens and fonts after #Layout::Initialise() (DPI / resize).
+   */
+  void ReinitialiseLayout() noexcept;
+
+private:
+  bool small;
+  bool inverse;
+
+  void InitialisePensAndFonts() noexcept;
+};

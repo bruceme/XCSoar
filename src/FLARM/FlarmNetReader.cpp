@@ -1,37 +1,14 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlarmNetReader.hpp"
 #include "FlarmNetRecord.hpp"
 #include "FlarmNetDatabase.hpp"
-#include "Util/StringUtil.hpp"
-#include "Util/CharUtil.hxx"
-#include "IO/LineReader.hpp"
-#include "IO/FileLineReader.hpp"
-
-#ifndef _UNICODE
-#include "Util/UTF8.hpp"
-#endif
+#include "util/CharUtil.hxx"
+#include "util/StringStrip.hxx"
+#include "io/LineReader.hpp"
+#include "io/FileLineReader.hpp"
+#include "util/UTF8.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,15 +21,12 @@ Copyright_License {
  * @param res Pointer to be written in
  */
 static void
-LoadString(const char *bytes, size_t length, TCHAR *res, size_t res_size)
+LoadString(const char *bytes, size_t length, char *res, [[maybe_unused]] size_t res_size)
 {
   const char *const end = bytes + length * 2;
-
-#ifndef _UNICODE
   const char *const limit = res + res_size - 2;
-#endif
 
-  TCHAR *p = res;
+  char *p = res;
 
   char tmp[3];
   tmp[2] = 0;
@@ -64,24 +38,18 @@ LoadString(const char *bytes, size_t length, TCHAR *res, size_t res_size)
     /* FLARMNet files are ISO-Latin-1, which is kind of short-sighted */
 
     const unsigned char ch = (unsigned char)strtoul(tmp, NULL, 16);
-#ifdef _UNICODE
-    /* Latin-1 can be converted to WIN32 wchar_t by casting */
-    *p++ = ch;
-#else
-    /* convert to UTF-8 on all other platforms */
+
+    /* convert to UTF-8 */
 
     if (p >= limit)
       break;
 
     p = Latin1ToUTF8(ch, p);
-#endif
   }
 
   *p = 0;
 
-#ifndef _UNICODE
   assert(ValidateUTF8(res));
-#endif
 
   // Trim the string of any additional spaces
   StripRight(res);
@@ -106,18 +74,27 @@ LoadRecord(FlarmNetRecord &record, const char *line)
   if (strlen(line) < 172)
     return false;
 
-  LoadString(line, 6, record.id);
+  char id_buf[16];
+  LoadString(line, 6, id_buf, sizeof(id_buf));
+  record.id = FlarmId::Parse(id_buf, nullptr);
+
   LoadString(line + 12, 21, record.pilot);
   LoadString(line + 54, 21, record.airfield);
   LoadString(line + 96, 21, record.plane_type);
   LoadString(line + 138, 7, record.registration);
   LoadString(line + 152, 3, record.callsign);
-  LoadString(line + 158, 7, record.frequency);
+
+  StaticString<LatinBufferSize(8)> freq_text;
+  LoadString(line + 158, 7, freq_text);
+  char freq_ascii[16];
+  char *freq_end = CopyASCII(freq_ascii, sizeof(freq_ascii) - 1, freq_text);
+  *freq_end = '\0';
+  record.frequency = RadioFrequency::Parse(std::string_view(freq_ascii));
 
   // Terminate callsign string on first whitespace
-  for (TCHAR *i = record.callsign.buffer(); *i != _T('\0'); ++i)
+  for (char *i = record.callsign.buffer(); *i != '\0'; ++i)
     if (IsWhitespaceFast(*i))
-      *i = _T('\0');
+      *i = '\0';
 
   return true;
 }
@@ -147,6 +124,6 @@ FlarmNetReader::LoadFile(Path path, FlarmNetDatabase &database)
 try {
   FileLineReaderA file(path);
   return LoadFile(file, database);
-} catch (const std::runtime_error &e) {
+} catch (...) {
   return 0;
 }

@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Printing.hpp"
 #include "Engine/Task/TaskManager.hpp"
@@ -34,7 +15,7 @@
 #include "Engine/Task/ObservationZones/Boundary.hpp"
 #include "Engine/GlideSolvers/GlideResult.hpp"
 #include "Geo/Math.hpp"
-#include "OS/FileUtil.hpp"
+#include "system/FileUtil.hpp"
 
 #include <fstream>
 
@@ -51,10 +32,10 @@ operator<<(std::ostream &f, const GlideResult &gl)
   f << "#    VOpt                " <<  gl.v_opt << " (m/s)\n";
   f << "#    HeightClimb         " <<  gl.height_climb << " (m)\n";
   f << "#    HeightGlide         " <<  gl.height_glide << " (m)\n";
-  f << "#    TimeElapsed         " <<  gl.time_elapsed << " (s)\n";
-  f << "#    TimeVirtual         " <<  gl.time_virtual << " (s)\n";
-  if (gl.time_elapsed > 0) {
-    f << "#    Vave remaining      " <<  gl.vector.distance/gl.time_elapsed << " (m/s)\n";
+  f << "#    TimeElapsed         " <<  gl.time_elapsed.count() << " (s)\n";
+  f << "#    TimeVirtual         " <<  gl.time_virtual.count() << " (s)\n";
+  if (gl.time_elapsed.count() > 0) {
+    f << "#    Vave remaining      " <<  gl.vector.distance/gl.time_elapsed.count() << " (m/s)\n";
   }
   f << "#    EffectiveWindSpeed  " <<  gl.effective_wind_speed << " (m/s)\n";
   f << "#    EffectiveWindAngle  " <<  gl.effective_wind_angle << " (deg)\n";
@@ -80,10 +61,10 @@ operator<<(std::ostream &f, const DistanceStat &ds)
 static std::ostream &
 operator<<(std::ostream &f, const ElementStat &es)
 {
-  f << "#  Time started " << es.time_started << " (s)\n";
-  f << "#  Time elapsed " << es.time_elapsed << " (s)\n";
-  f << "#  Time remaining " << es.time_remaining_now << " (s)\n";
-  f << "#  Time planned " << es.time_planned << " (s)\n";
+  f << "#  Time started " << es.time_started.ToDuration().count() << " (s)\n";
+  f << "#  Time elapsed " << es.time_elapsed.count() << " (s)\n";
+  f << "#  Time remaining " << es.time_remaining_now.count() << " (s)\n";
+  f << "#  Time planned " << es.time_planned.count() << " (s)\n";
   f << "#  Gradient " << es.gradient << "\n";
   f << "#  Remaining: \n";
   f << es.remaining;
@@ -184,7 +165,8 @@ PrintHelper::orderedtaskpoint_print(std::ostream& f,
   if (item==0) {
     taskpoint_print(f,tp,state);
     orderedtaskpoint_print_boundary(f,tp,state);
-    f << "# Entered " << tp.GetEnteredState().time << "\n";
+    f << "# Entered " << tp.GetEnteredState().time.ToDuration().count() << "\n";
+    f << "# Exited " << tp.GetExitedState().time.ToDuration().count() << "\n";
     f << "# Bearing travelled " << tp.GetVectorTravelled().bearing << "\n";
     f << "# Distance travelled " << tp.GetVectorTravelled().distance << "\n";
     f << "# Bearing remaining " << tp.GetVectorRemaining(state.location).bearing << "\n";
@@ -198,7 +180,7 @@ PrintHelper::orderedtaskpoint_print(std::ostream& f,
 void 
 PrintHelper::orderedtaskpoint_print_boundary(std::ostream& f, 
                                              const OrderedTaskPoint& tp,
-                                             const AircraftState &state) 
+                                            [[maybe_unused]]  const AircraftState &state) 
 {
   f << "#   Boundary points\n";
   for (const auto &i : tp.GetBoundary())
@@ -209,7 +191,7 @@ PrintHelper::orderedtaskpoint_print_boundary(std::ostream& f,
 void 
 PrintHelper::sampledtaskpoint_print_samples(std::ostream& f,
                                             const ScoredTaskPoint &tp,
-                                            const AircraftState &state) 
+                                            [[maybe_unused]] const AircraftState &state) 
 {
   const unsigned n= tp.GetSearchPoints().size();
   f << "#   Search points\n";
@@ -225,7 +207,7 @@ PrintHelper::sampledtaskpoint_print_samples(std::ostream& f,
 
 void 
 PrintHelper::taskpoint_print(std::ostream& f, const TaskPoint& tp,
-                             const AircraftState &state) 
+                             [[maybe_unused]] const AircraftState &state) 
 {
   f << "# Task point \n";
   f << "#   Location " << tp.GetLocation().longitude << "," <<
@@ -235,9 +217,9 @@ PrintHelper::taskpoint_print(std::ostream& f, const TaskPoint& tp,
 
 void
 PrintHelper::abstracttask_print(const AbstractTask &task,
-                                const AircraftState &state)
+                                [[maybe_unused]] const AircraftState &state)
 {
-  Directory::Create(Path(_T("output/results")));
+  Directory::Create(Path("output/results"));
   std::ofstream fs("output/results/res-stats-all.txt");
 
   const auto &stats = task.GetStats();
@@ -299,7 +281,7 @@ PrintHelper::orderedtask_print(const OrderedTask &task,
                                const AircraftState &state)
 {
   abstracttask_print(task, state);
-  if (!task.CheckTask())
+  if (IsError(task.CheckTask()))
     return;
 
   std::ofstream fi("output/results/res-isolines.txt");

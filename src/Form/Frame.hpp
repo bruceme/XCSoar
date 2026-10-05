@@ -1,82 +1,83 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_FRAME_HPP
-#define XCSOAR_FORM_FRAME_HPP
-
-#include "Screen/PaintWindow.hpp"
-#include "Screen/Color.hpp"
+#include "ui/window/PaintWindow.hpp"
+#include "ui/canvas/Color.hpp"
 #include "Renderer/TextRenderer.hpp"
-#include "Util/tstring.hpp"
 
-#include <tchar.h>
+#include <optional>
+#include <string>
 
 struct DialogLook;
+class Font;
 
 class WndFrame : public PaintWindow {
   const DialogLook &look;
 
-  Color caption_color;
+  Color text_color;
+
+  std::optional<Color> background_color;
+
+  /**
+   * The font used to render the text.  Defaults to the dialog look's
+   * regular text font; override with SetFont() (e.g. for a bold heading).
+   */
+  const Font *font;
 
   TextRenderer text_renderer;
 
-  tstring text;
+  std::string text;
+
+  bool top_separator = false;
 
 public:
-  explicit WndFrame(const DialogLook &look);
+  explicit WndFrame(const DialogLook &look) noexcept;
 
   WndFrame(ContainerWindow &parent, const DialogLook &look,
            PixelRect rc,
-           const WindowStyle style=WindowStyle());
+           const WindowStyle style=WindowStyle()) noexcept;
 
-  const DialogLook &GetLook() const {
+  const DialogLook &GetLook() const noexcept {
     return look;
   }
 
-  void SetAlignCenter();
-  void SetVAlignCenter();
+  void SetAlignCenter() noexcept;
+  void SetVAlignCenter() noexcept;
 
-  void SetText(const TCHAR *_text);
-
-  const TCHAR *GetCaption() const {
+  const char *GetText() const noexcept {
     return text.c_str();
   }
 
-  void SetCaption(const TCHAR *_text) {
-    SetText(_text);
+  void SetText(const char *_text) noexcept;
+
+  void SetTextColor(const Color &color) noexcept {
+    text_color = color;
+  }
+
+  /**
+   * Fill the frame with this colour instead of the look's background,
+   * e.g. to mark a message as a warning.
+   */
+  void SetBackgroundColor(const Color &color) noexcept {
+    background_color = color;
+  }
+
+  void SetFont(const Font &_font) noexcept {
+    font = &_font;
     text_renderer.InvalidateLayout();
+    Invalidate();
   }
 
-  void SetCaptionColor(const Color &color) {
-    caption_color = color;
+  void SetTopSeparator(bool value = true) noexcept {
+    top_separator = value;
   }
 
-  gcc_pure
-  unsigned GetTextHeight() const;
+  [[gnu::pure]]
+  unsigned GetTextHeight() const noexcept;
 
 protected:
   /** from class PaintWindow */
-  void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 };
-
-#endif

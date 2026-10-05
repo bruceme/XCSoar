@@ -1,50 +1,31 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "NanoDeclare.hpp"
+#include "LXNavDeclare.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/Util/NMEAWriter.hpp"
 #include "Device/Util/NMEAReader.hpp"
 #include "Device/Declaration.hpp"
 #include "IGC/Generator.hpp"
-#include "Time/TimeoutClock.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "Geo/GeoPoint.hpp"
+#include "time/TimeoutClock.hpp"
+#include "time/BrokenDateTime.hpp"
 #include "Operation/Operation.hpp"
-#include "Util/ConvertString.hpp"
 
 static bool
 NanoWriteDecl(Port &port, OperationEnvironment &env, PortNMEAReader &reader,
               unsigned row, unsigned n_rows,
               const char *content)
 {
-  NarrowString<256> buffer;
+  StaticString<256> buffer;
   buffer.Format("$PLXVC,DECL,W,%u,%u,%s", row, n_rows, content);
 
-  if (!PortWriteNMEA(port, buffer, env))
-    return false;
+  PortWriteNMEA(port, buffer, env);
 
   buffer.UnsafeFormat("PLXVC,DECL,C,%u", row);
-  char *response = reader.ExpectLine(buffer, TimeoutClock(2000));
+  char *response = reader.ExpectLine(buffer,
+                                     TimeoutClock(std::chrono::seconds(2)));
   return response != nullptr && (*response == 0 || *response == ',');
 }
 
@@ -55,7 +36,7 @@ NanoWriteDeclFormat(Port &port, OperationEnvironment &env,
                     unsigned row, unsigned n_rows,
                     const char *fmt, Args&&... args)
 {
-  NarrowString<256> buffer;
+  StaticString<256> buffer;
   buffer.Format(fmt, args...);
   return NanoWriteDecl(port, env, reader, row, n_rows, buffer);
 }
@@ -65,14 +46,13 @@ static bool
 NanoWriteDeclString(Port &port, OperationEnvironment &env,
                     PortNMEAReader &reader,
                     unsigned row, unsigned n_rows,
-                    const char *prefix, const TCHAR *value)
+                    const char *prefix, const char *value)
 {
-  WideToUTF8Converter narrow_value(value);
-  if (!narrow_value.IsValid())
+  if (!value)
     return false;
 
   return NanoWriteDeclFormat(port, env, reader, row, n_rows,
-                             "%s%s", prefix, (const char *)narrow_value);
+                             "%s%s", prefix, value);
 }
 
 static bool
@@ -82,7 +62,8 @@ NanoWriteDeclMeta(Port &port, OperationEnvironment &env,
 {
   return NanoWriteDeclString(port, env, reader, 1, total_size,
                              "HFPLTPILOT:", declaration.pilot_name) &&
-    NanoWriteDecl(port, env, reader, 2, total_size, "HFCM2CREW2:") &&
+    NanoWriteDeclString(port, env, reader, 2, total_size,
+                        "HFCM2CREW2:", declaration.copilot_name) &&
     NanoWriteDeclString(port, env, reader, 3, total_size,
                         "HFGTYGLIDERTYPE:", declaration.aircraft_type) &&
     NanoWriteDeclString(port, env, reader, 4, total_size,
@@ -95,13 +76,14 @@ NanoWriteDeclMeta(Port &port, OperationEnvironment &env,
 static bool
 NanoWriteStartDeclaration(Port &port, OperationEnvironment &env,
                           PortNMEAReader &reader,
-                          const Declaration &declaration, unsigned total_size)
+                          const Declaration &declaration,
+                          unsigned total_size)
 {
   // TODO: use GPS clock instead?
   const BrokenDateTime date_time = BrokenDateTime::NowUTC();
 
   char buffer[64];
-  FormatIGCTaskTimestamp(buffer, date_time, total_size - 2);
+  FormatIGCTaskTimestamp(buffer, date_time, declaration.Size());
   return NanoWriteDecl(port, env, reader, 7, total_size, buffer);
 }
 
@@ -124,20 +106,74 @@ NanoBeginDeclaration(Port &port, OperationEnvironment &env,
 
 static bool
 NanoWriteLanding(Port &port, OperationEnvironment &env,
-                 PortNMEAReader &reader, unsigned total_size)
+                 PortNMEAReader &reader, unsigned row, unsigned total_size)
 {
-  return NanoWriteDecl(port, env, reader, total_size, total_size,
+  return NanoWriteDecl(port, env, reader, row, total_size,
                        IGCMakeTaskLanding());
+}
+
+static bool
+NanoWriteTurnPoint(Port &port, OperationEnvironment &env,
+                   PortNMEAReader &reader, unsigned row,
+                   unsigned total_size,
+                   const Declaration::TurnPoint &tp)
+{
+  const auto content = LXNavDeclare::FormatTurnPointCRecord(tp);
+  return NanoWriteDecl(port, env, reader, row, total_size, content.c_str());
+}
+
+static bool
+NanoWriteOZ(Port &port, OperationEnvironment &env, PortNMEAReader &reader,
+            unsigned row, unsigned total_size,
+            const Declaration &declaration,
+            unsigned tp_index)
+{
+  const auto line = LXNavDeclare::FormatOZLine(declaration, tp_index);
+  return NanoWriteDecl(port, env, reader, row, total_size, line.c_str());
+}
+
+/**
+ * Write the LLXVTSK task options line.
+ */
+static bool
+NanoWriteTaskOptions(Port &port, OperationEnvironment &env,
+                     PortNMEAReader &reader, unsigned row,
+                     unsigned total_size,
+                     const Declaration &declaration)
+{
+  StaticString<128> content;
+  content = "LLXVTSK";
+
+  if (declaration.is_aat_task && declaration.aat_min_time.count() > 0)
+    content.AppendFormat(",TaskTime=%us",
+                         declaration.aat_min_time.count());
+
+  content += ",StartOnEntry=false,Short=false,Near=true";
+
+  return NanoWriteDecl(port, env, reader, row, total_size, content);
 }
 
 bool
 Nano::Declare(Port &port, const Declaration &declaration,
               OperationEnvironment &env)
 {
-  constexpr unsigned prefix_size = 8;
-  constexpr unsigned suffix_size = 1;
   const unsigned task_size = declaration.Size();
-  const unsigned total_size = prefix_size + task_size + suffix_size;
+
+  /*
+   * Declaration file layout:
+   *   Rows 1-6:          H-records (pilot, glider, etc.)
+   *   Row 7:             C-record timestamp
+   *   Row 8:             C-record takeoff
+   *   Rows 9..8+N:       C-record turnpoints (with elevation)
+   *   Row 9+N:           C-record landing
+   *   Rows 10+N..9+2N:   LLXVOZ observation zone lines
+   *   Row 10+2N:         LLXVTSK task options
+   */
+  constexpr unsigned prefix_size = 8;
+  const unsigned landing_row = prefix_size + task_size + 1;
+  const unsigned oz_start_row = landing_row + 1;
+  const unsigned task_options_row = oz_start_row + task_size;
+  const unsigned total_size = task_options_row;
 
   env.SetProgressRange(total_size);
 
@@ -147,17 +183,29 @@ Nano::Declare(Port &port, const Declaration &declaration,
   if (!NanoBeginDeclaration(port, env, reader, declaration, total_size))
     return false;
 
-  unsigned i = prefix_size + 1;
+  /* Write C-record turnpoints with elevation */
+  unsigned row = prefix_size + 1;
   for (const auto &tp : declaration.turnpoints) {
-    char buffer[128];
-    FormatIGCTaskTurnPoint(buffer, tp.waypoint.location,
-                           tp.waypoint.name.c_str());
-    if (!NanoWriteDecl(port, env, reader, i++, total_size,
-                       buffer))
+    if (!NanoWriteTurnPoint(port, env, reader, row++, total_size, tp))
       return false;
   }
 
-  assert(i == total_size);
+  /* Write C-record landing */
+  if (!NanoWriteLanding(port, env, reader, row++, total_size))
+    return false;
 
-  return NanoWriteLanding(port, env, reader, total_size);
+  assert(row == oz_start_row);
+
+  /* Write LLXVOZ observation zone lines */
+  for (unsigned i = 0; i < task_size; i++) {
+    if (!NanoWriteOZ(port, env, reader, row++, total_size,
+                     declaration, i))
+      return false;
+  }
+
+  assert(row == task_options_row);
+
+  /* Write LLXVTSK task options */
+  return NanoWriteTaskOptions(port, env, reader, row, total_size,
+                              declaration);
 }

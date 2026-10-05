@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_NMEA_DERIVED_H
-#define XCSOAR_NMEA_DERIVED_H
+#pragma once
 
 #include "Geo/GeoPoint.hpp"
 #include "Geo/SpeedVector.hpp"
@@ -36,16 +15,17 @@ Copyright_License {
 #include "Engine/ThermalBand/ThermalEncounterBand.hpp"
 #include "Engine/ThermalBand/ThermalEncounterCollection.hpp"
 #include "NMEA/ThermalLocator.hpp"
-#include "NMEA/Validity.hpp"
+#include "time/Validity.hpp"
 #include "NMEA/ClimbHistory.hpp"
 #include "TeamCode/TeamCode.hpp"
 #include "Engine/Navigation/TraceHistory.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "time/BrokenDateTime.hpp"
 #include "Engine/GlideSolvers/GlidePolar.hpp"
 #include "Atmosphere/Pressure.hpp"
 #include "Engine/Route/Route.hpp"
 #include "Computer/WaveResult.hpp"
-#include "Util/TypeTraits.hpp"
+
+#include <type_traits>
 
 /** Derived terrain altitude information, including glide range */
 struct TerrainInfo
@@ -153,9 +133,16 @@ struct DerivedInfo:
   /** Speed to fly block/dolphin (m/s) */
   double V_stf;
 
+  /** Whether #V_stf was calculated from a valid glide polar. */
+  bool V_stf_available;
+
   /** Auto QNH calculation result. */
   AtmosphericPressure pressure;
   Validity pressure_available;
+
+  /** Elevation used for auto QNH calculation (meters). */
+  double pressure_elevation;
+  Validity pressure_elevation_available;
 
   ClimbHistory climb_history;
 
@@ -257,24 +244,31 @@ struct DerivedInfo:
   double next_leg_eq_thermal;
 
   /**
+   * Thermal value of current leg that is equivalent (gives the same average
+   * speed) to the current MacCready setting on the next leg.
+   * A negative value should be treated as invalid.
+   */
+  double next_leg_eq_thermal_inverse;
+
+  /**
    * @todo Reset to cleared state
    */
   void Reset();
 
-  void Expire(double Time);
+  void Expire(TimeStamp time) noexcept;
 
   /**
    * Return the current wind vector, or the null vector if no wind is
    * available.
    */
-  gcc_pure
+  [[gnu::pure]]
   SpeedVector GetWindOrZero() const {
     return wind_available
       ? wind
       : SpeedVector::Zero();
   }
 
-  void ProvideAutoMacCready(double clock, double mc) {
+  void ProvideAutoMacCready(TimeStamp clock, double mc) {
     if (auto_mac_cready_available &&
         fabs(auto_mac_cready - mc) < 0.05)
       /* change is too small, ignore the new value to limit the rate */
@@ -288,7 +282,4 @@ struct DerivedInfo:
   double CalculateWorkingFraction(const double h, const double safety_height) const;
 };
 
-static_assert(is_trivial_ndebug<DerivedInfo>::value, "type is not trivial");
-
-#endif
-
+static_assert(std::is_trivially_copyable_v<DerivedInfo>, "type is not trivially copyable");

@@ -26,11 +26,11 @@ study the manual and become familiar with XCSoar at home.
 \section{How to get the most from XCSoar}
 
 In order to achieve your maximum benefit from XCSoar, you are kindly asked to 
-do do some more after having installed the software and downloaded some data 
+do some more after having installed the software and downloaded some data
 files. ``Some more'' includes personal and plane data as well as configuration 
 of just a few features. Unless you are willing to tweak everything XCSoar 
 provides, this could be done in a rather short time. Necessary steps are 
-summarized in an \emph{XCSoar Checklist}, given in the next chapter.
+summarized in an \emph{XCSoar Checklist}, given in the next section.
 
 If you are planning to arrange a system with several components engaged in, 
 this manual will give you valuable advice on both, how to set up things and how 
@@ -38,7 +38,7 @@ to use them.
 
 If you are a pilot in a hurry, the authors suggest to change to the short form 
 manual \texttt{XCSoar-in-a-Flash} going through the \emph{XCSoar Checklist} 
-step by step. The short form manual is available on \url{http://www.xcsoar.org/
+step by step. The short form manual is available on \xcsoarwebsite{/
 discover/manual.html}.
 
 
@@ -55,7 +55,7 @@ discover/manual.html}.
 \item finish setup and familiarize
 \item mount hardware
 \item add items listed underneath to your checklists
-\item make "home"
+\item make ``home''
 \end{itemize}
 
 \subsection*{Conduct preflight check, including}
@@ -91,20 +91,23 @@ discover/manual.html}.
 XCSoar runs on the following platforms:
 
 \begin{itemize}
-\item Android mobile phones and tablets with Android 1.6 or newer \\
-  Example: Dell Streak, Samsung Galaxy S II, HTC Desire HD,
-  Motorola Xoom
-\item eReader Kobo (experimental, Dec. 2013)
-\item Windows 2000 or newer
+\item Android mobile phones and tablets with Android 6.0 or newer
+\item iPhone and iPad (iOS)
+\item eReader Kobo
+\item Windows
 \item Linux
-\item Mac OS X (outdated)
+\item macOS
 \end{itemize}
 
 \subsection*{GPS, Logger, Vario}
 
 XCSoar is compatible with any GPS emitting NMEA data.  Most modern
-Android devices have a built-in GPS, but for several reasons it is favorable to
-connect to one or more external devices:
+Android and iOS devices have a built-in GPS.  Many of those phones and
+tablets also have a barometric pressure sensor; XCSoar uses it for
+altitude when no better external altimeter is connected.  On Android,
+XCSoar also uses the phone's accelerometer as a G-sensor (load
+factor).  For several reasons it is still favorable to connect to one
+or more external devices:
 
 \begin{itemize}
 \item a specialized GPS receiver gains much better reception providing much 
@@ -116,8 +119,8 @@ better data for measures and calculations
   flight log can be downloaded
 \item some varios allow synchronising the MacCready setting with
   XCSoar
-\item flarm (and even ADS-B input) provide informations and stati of others 
-around you (- and of course Flarm gives you collision detection)
+\item FLARM (and even ADS-B input) provide informations and states of others
+around you (and of course FLARM gives you collision detection)
 \end{itemize}
 
 \subsection*{Supported external devices and features}
@@ -134,18 +137,17 @@ NMEA Device &
   \begin{sideways} Download\end{sideways} &
   \begin{sideways} Airspeed\end{sideways} & 
   \begin{sideways} Vario\end{sideways} & 
-  \begin{sideways} Baro. altitude\end{sideways} & 
+  \begin{sideways} Baro.\ altitude\end{sideways} &
   \begin{sideways} Wind\end{sideways} &
   \begin{sideways} G-Sensor\end{sideways} \\
 \hline
 \input{supported_devices_table.tex}
 \end{tabular}}
 
-While most Windows CE based devices have a serial port, such legacy
-hardware is not present in modern Android devices.  Those can either
+Modern Android devices typically have no serial port.  Those can either
 use Bluetooth or the Android IOIO board.  To use Bluetooth, you need
 to connect the external device to a Bluetooth-to-Serial adapter, such
-as the K6-Bt or the Glidertools VFBT-1.
+as the K6-Bt or the SoarTronic-BT1/2. %Glidertools is defunct.
 
 
 \section{Software installation}
@@ -173,17 +175,18 @@ To install XCSoar, connect the Kobo to your PC via USB.  The Kobo
 exposes a mass storage device to your PC; open it and create a
 directory called \texttt{.kobo} (note the leading dot).  Download the
 file \texttt{KoboRoot.tgz} from the XCSoar website into that
-directory (\url{http://www.xcsoar.org/hardware/}). Unplug the Kobo and reboot it (switch it off completely,
+directory (\xcsoarwebsite{/hardware/}). Unplug the Kobo and reboot it (switch it off completely,
 and switch it on again).  You will see the message ``Updating'', and
 after a few minutes, the Kobo shows a menu that allows you to launch
-XCSoar or the Kobo e-book reader software.
+XCSoar or the Kobo \mbox{e-book} reader software.
 
 To copy data files (maps, waypoints, ...) to the Kobo, launch the
 original Kobo software (``Nickel'') and connect the Kobo to your PC
 again.  Copy the files into a directory called \texttt{XCSoarData} at
 the top level.
 
-Alternatively data files may be downloaded via XCSoar's file manager, after having invoked a W-LAN-connection just before launching XCSoar.  
+Alternatively data files may be downloaded via XCSoar's file manager,
+after having invoked a WLAN connection just before launching XCSoar.
 
 \subsubsection{Hacking the Kobo}
 
@@ -200,21 +203,51 @@ you know what you're doing, you can use this script to do things
 before \texttt{Nickel} is fully started, for example send commands
 to your attached vario (to shut it down, to cut the volume, etc...).
 
+\subsubsection{The Power Off Screen}
+
+While powered off, XCSoar shows a log of your most recent flights on
+the screen.  Additionally, if present, it shows the contents of the
+file \texttt{XCSoarData/kobo/poweroff.txt} at the bottom.  This file
+can contain arbitrary text, e.g. contact/owner/emergency information.
+
+\subsection*{On iOS}
+
+Install XCSoar from the Apple App Store.  Data files are stored in
+\texttt{Documents/XCSoarData} and can be copied with the Files app
+(or iTunes file sharing).
+
+\subsection*{On macOS}
+
+Install XCSoar from the Apple App Store, or download the macOS package
+from the XCSoar website.  Data files go in \texttt{XCSoarData} in your
+home folder.
+
 \subsection*{On a Windows PC}
 
-Download the program file \verb|XCSoar.exe| (target ``PC'') to your
-hard disk.
+Two Windows builds are available:
+\begin{itemize}
+\item \textbf{64-bit} (target ``WIN64OPENGL''): the recommended
+  version. Run the installer, or use the \verb|.zip| file for a manual
+  install. Supports high-DPI displays, GPU acceleration, and matches the
+  Unix and Android versions in features and visuals.
+\item \textbf{32-bit} (target ``WIN32OPENGL''): same as the 64-bit
+  build for 32-bit Windows; installer or \verb|.zip| available.
+\end{itemize}
+
+The version is visible in Windows file properties of
+\texttt{XCSoar.exe} and the installer.
 
 \subsection*{On Unix/Linux}
 
 The file downloaded is \verb|xcsoar_XXX.deb|, where \verb|XXX| includes
 the version number and platform, e.g. \verb|xcsoar_6.0.4_i386.deb|.
-The is a Debian package and can be installed using 
+This is a Debian package and can be installed using
 \begin{center}
 \verb|sudo dpkg -i xcsoar_XXX.deb|.
 \end{center}
-Use \verb|dpkg-query -L xcsoar| to see where the executable and 
-other files are installed,
+Use \verb|dpkg-query -L xcsoar| to see where the executable and
+other files are installed.
+The package adds an XCSoar entry to the desktop menu.
 Additional data files must be placed in the directory
 \verb|~/.xcsoar|.
 If \verb|~/.xcsoar| does not exist, it will be created the first time
@@ -225,6 +258,20 @@ that \verb|xcsoar| is run.
 Install the Debian package as described above.  However, unlike on
 ``regular'' Linux, XCSoar will not use X11.  Instead, it runs
 full-screen on the Linux console.
+
+On the Raspberry Pi 4 and later, Raspberry Pi OS already enables the
+VC4 display driver.  In \texttt{/boot/firmware/config.txt} (on older
+images, \texttt{/boot/config.txt}) the line is:
+
+\begin{verbatim*}
+dtoverlay=vc4-kms-v3d
+\end{verbatim*}
+
+Leave that line as it is.  XCSoar draws through this driver.  Do not
+add a second line, \texttt{dtoverlay=vc4-fkms-v3d}: the two overlays
+together stop the Pi from booting.  If the file still has
+\texttt{dtoverlay=vc4-fkms-v3d}, edit that existing line so it reads
+\texttt{dtoverlay=vc4-kms-v3d}.  Do not add another overlay line.
 
 XCSoar requires access to your input devices
 (\texttt{/dev/input/event*}).  By default, only \texttt{root} is
@@ -256,11 +303,11 @@ so that XCSoar knows where to look for data files:
 \item[Windows PC]
 \texttt{XCSoarData} is in your personal folder (``\texttt{My
 Documents}'')
-\item[Windows Mobile PDA/PNA]
-If there is a directory named \texttt{XCSoarData} in the same
-directory as \texttt{XCSoar.exe}, then this one will be used.
-\texttt{XCSoarData} is on the SD card.  If there is no SD card, then
-XCSoar looks for it in \texttt{My Documents}.
+\item[macOS]
+\texttt{XCSoarData} is in your home folder.
+\item[iOS]
+\texttt{XCSoarData} is in the app's Documents folder, accessible via
+the Files app.
 \item[Unix/Linux]
 The directory is called \verb|.xcsoar| in the user's home directory.
 \item[Android Devices]
@@ -269,8 +316,8 @@ The directory is called \verb|.xcsoar| in the user's home directory.
 
 
 XCSoar will generate a number of additional files at run time.  These
-will be placed in the  \texttt{XCSoarData} directory (Windows PC, 
-Windows and Android mobile devices), or the \texttt{.xcsoar} directory (Unix/Linux
+will be placed in the  \texttt{XCSoarData} directory (Windows, macOS,
+iOS, and Android devices), or the \texttt{.xcsoar} directory (Unix/Linux
 PC).  From the first run, XCSoar will create and maintain the files
 \texttt{user.cup} (user-edited waypoints),
 \texttt{Default.tsk} (Default Task),  
@@ -293,10 +340,18 @@ Two modes are available inside the XCSoar application:
 \item[SIM] This starts XCSoar in simulator mode, no serial communications
   are attempted.
 \end{description}
+Quitting from this prompt leaves the profile file unchanged, including
+when XCSoar was started with \verb|-profile=...|.
 
 \subsection*{XCSoar PC version}
 The program can be run by opening the explorer window, finding the directory
 that has the XCSoar.exe executable, and double clicking on that program file.
+
+Command-line options may use either one or two dashes where listed below (e.g.\
+\texttt{-h} and \texttt{--help}).
+\texttt{-h}/\texttt{--help} prints the option list and exits;
+\texttt{-version}/\texttt{--version} prints version and licence text and exits.
+Invalid options print a brief usage reminder on standard error.
 
 The program command line options allows the screen orientation of
 the display to be defined:
@@ -318,13 +373,21 @@ Run \verb|xcsoar| from a command line, or create a shortcut on the
 desktop.  The location of the executable file may be found using
 \verb|which xcsoar|.  Only landscape mode is  supported for now.
 
+Useful options include \verb|-datapath=...| for the data directory,
+\verb|-profile=...| to load a profile file, \verb|-simulator| or \verb|-fly|
+when available to skip the startup mode prompt, and geometry switches such as
+\verb|-portrait|, \verb|-square|, and \verb|-small|.
+The window cannot be resized below 320$\times$240 pixels, or
+240$\times$320 when it is taller than it is wide.
+On desktop Unix/macOS builds, \verb|-replay=PATH| may load flight replay data.
+
 \subsection*{Loading data files}\label{sec:loaddatafiles}
 The first time that XCSoar is run, it does not automatically load the 
 data files that you placed in the \verb|XCSoarData| directory.  
 To tell XCSoar which files to load, double click/tap the map (the large,
 blank white part with the glider symbol in the center),
 choose the menu \bmenug{Config 2} (click/tap it twice), then select the item 
-\bmenug{System}.  The Configuration screen should be displayed:
+\mbox{\bmenug{System}.}  The Configuration screen should be displayed:
 \sketch{figures/config-basic.png}
 The first page allows you to choose the map, 
 waypoint and airspace files, by clicking/tapping on the text boxes.
@@ -335,7 +398,7 @@ will be loaded automatically at run time.
 
 \subsection*{Start-up and user profiles}\label{sec:profiles}
 When XCSoar starts up, it will check for existing profiles. If multiple
-profiles are detected it will displays a small window asking you which profile
+profiles are detected it will display a small window asking you which profile
 to load. To proceed, choose the desired profile and press Enter. If no
 profile is chosen the settings from the last session are loaded again. Profiles
 can be useful for example in the following cases:
@@ -364,9 +427,9 @@ As an example you might create a set of files as is:
 \subsection*{SIM mode}
 XCSoar comes with a simple interface allowing for conducting a simulated 
 flight. Depending on the hardware platform, there are different 
-methods for altering values of bearing, speed, an height.  Simulation is 
+methods for altering values of bearing, speed, and height.  Simulation is
 intended for your first familiarization with XCSoar in action. If you like the 
-idea simulating a more realistic thing at home, you should acquire a "true" 
+idea simulating a more realistic thing at home, you should acquire a ``true''
 soaring simulator, to be connected to XCSoar.
 
 On the map screen, clicking/touching the glider symbol
@@ -375,17 +438,17 @@ causes the glider to move in the direction of the drag, the
 speed being proportional to the length of the drag.
 
 With buttons, the aircraft
-speed, altitude and direction may be changed using the Infoboxes.
+speed, altitude and direction may be changed using the InfoBoxes.
 The following may not be available in total on every hardware platform, but on 
 any of the platforms XCSoar supports, a full set of inputs needed for 
 simulation purposes is possible.
 
-By pushing an Infobox, you select a value to be altered by buttons, either 
+By pushing an InfoBox, you select a value to be altered by buttons, either
  hardware or menu buttons.
 The aircraft altitude can be adjusted by selecting the GPS altitude
 InfoBox \bmenuw{Alt GPS}, and touching the up or down key or buttons on the 
 touchscreen.
-The airspeed can be adjusted by selecting the Infobox ground speed
+The airspeed can be adjusted by selecting the InfoBox ground speed
 \bmenuw{V Gnd}, touching up or down key or menu buttons.
 The glider's track  can be adjusted by selecting the track InfoBox
 \bmenuw{Track}, and touching up/down buttons.
@@ -405,7 +468,7 @@ activity, and a short line of text describing the action that is being performed
 This screen also displays the software version information.
 
 \subsection*{Exiting the program}
-For PDA and PC versions, XCSoar is shut down from the menu. The menu can be
+XCSoar is shut down from the menu. The menu can be
 opened by double-clicking on the map or the \InfoBox es.
 \begin{quote}
 \bmenug{QUIT}

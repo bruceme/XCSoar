@@ -1,31 +1,13 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef FLATELLIPSE_HPP
-#define FLATELLIPSE_HPP
+#pragma once
 
 #include "FlatPoint.hpp"
 #include "Math/Angle.hpp"
-#include "Compiler.h"
+
+#include <optional>
+#include <utility>
 
 class FlatLine;
 
@@ -62,7 +44,7 @@ public:
    *
    * @return Location on ellipse
    */
-  gcc_pure
+  [[gnu::pure]]
   FlatPoint Parametric(double t) const;
 
   /**
@@ -74,20 +56,20 @@ public:
    *
    * @return True if line intersects
    */
-  bool IntersectExtended(const FlatPoint &p, FlatPoint &i1, FlatPoint &i2) const;
+  [[gnu::pure]]
+  std::optional<std::pair<FlatPoint, FlatPoint>> IntersectExtended(const FlatPoint &p) const noexcept;
 
 private:
-  gcc_pure
+  [[gnu::pure]]
   double ab() const {
     return a / b;
   }
 
-  gcc_pure
+  [[gnu::pure]]
   double ba() const {
     return b / a;
   }
 
-  bool Intersect(const FlatLine &line, FlatPoint &i1, FlatPoint &i2) const;
+  [[gnu::pure]]
+  std::optional<std::pair<FlatPoint, FlatPoint>> Intersect(const FlatLine &line) const noexcept;
 };
-
-#endif

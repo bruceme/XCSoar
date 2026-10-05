@@ -1,38 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_GLIDECOMPUTER_TASK_HPP
-#define XCSOAR_GLIDECOMPUTER_TASK_HPP
+#pragma once
 
 #include "RouteComputer.hpp"
 #include "TraceComputer.hpp"
 #include "ContestComputer.hpp"
 #include "Engine/Navigation/Aircraft.hpp"
-#include "NMEA/Validity.hpp"
+#include "time/Validity.hpp"
 
 struct NMEAInfo;
 class ProtectedTaskManager;
 class ProtectedAirspaceWarningManager;
+class Waypoints;
 
 class TaskComputer
 {
@@ -72,11 +52,16 @@ public:
     return trace;
   }
 
+  TraceComputer &GetTraceComputer() noexcept {
+    return trace;
+  }
+
   void LockedCopyTraceTo(TracePointVector &v) const {
     trace.LockedCopyTo(v);
   }
 
-  void LockedCopyTraceTo(TracePointVector &v, unsigned min_time,
+  void LockedCopyTraceTo(TracePointVector &v,
+                         std::chrono::duration<unsigned> min_time,
                          const GeoPoint &location, double resolution) const {
     trace.LockedCopyTo(v, min_time, location, resolution);
   }
@@ -99,11 +84,10 @@ public:
   /**
    * Auto-create a task on takeoff that leads back home.
    */
-  void ProcessAutoTask(const NMEAInfo &basic, const DerivedInfo &calculated);
+  void ProcessAutoTask(const NMEAInfo &basic, const DerivedInfo &calculated,
+                       Waypoints &waypoints);
 
   void ProcessIdle(const MoreData &basic, DerivedInfo &calculated,
                    const ComputerSettings &settings_computer,
                    bool exhaustive=false);
 };
-
-#endif

@@ -1,42 +1,22 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/CAI302/Internal.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/Port/ConfiguredPort.hpp"
 #include "Device/Config.hpp"
 #include "DebugPort.hpp"
-#include "OS/Args.hpp"
+#include "system/Args.hpp"
 #include "Operation/ConsoleOperationEnvironment.hpp"
-#include "Util/Macros.hpp"
-#include "Util/PrintException.hxx"
-#include "IO/Async/GlobalAsioThread.hpp"
-#include "IO/Async/AsioThread.hpp"
-#include "IO/NullDataHandler.hpp"
+#include "util/Macros.hpp"
+#include "util/PrintException.hxx"
+#include "io/async/GlobalAsioThread.hpp"
+#include "io/async/AsioThread.hpp"
+#include "io/NullDataHandler.hpp"
 
 #include <stdio.h>
 
-gcc_pure
+[[gnu::pure]]
 static int
 StringBufferLength(const char *buffer, size_t size)
 {
@@ -130,17 +110,22 @@ RunCommand(CAI302Device &device, const char *command,
 {
   if (strcmp(command, "info") == 0)
     return PrintInfo(device, env);
-  else if (strcmp(command, "reboot") == 0)
-    return device.Reboot(env);
-  else if (strcmp(command, "poweroff") == 0)
-    return device.PowerOff(env);
-  else if (strcmp(command, "startlogger") == 0)
-    return device.StartLogging(env);
-  else if (strcmp(command, "stoplogger") == 0)
-    return device.StopLogging(env);
-  else if (strcmp(command, "clearlog") == 0)
-    return device.ClearLog(env);
-  else if (strcmp(command, "pilots") == 0)
+  else if (strcmp(command, "reboot") == 0) {
+    device.Reboot(env);
+    return true;
+  } else if (strcmp(command, "poweroff") == 0) {
+    device.PowerOff(env);
+    return true;
+  } else if (strcmp(command, "startlogger") == 0) {
+    device.StartLogging(env);
+    return true;
+  } else if (strcmp(command, "stoplogger") == 0) {
+    device.StopLogging(env);
+    return true;
+  } else if (strcmp(command, "clearlog") == 0) {
+    device.ClearLog(env);
+    return true;
+  } else if (strcmp(command, "pilots") == 0)
     return ListPilots(device, env);
   else if (strcmp(command, "navpoints") == 0)
     return ListNavpoints(device, env);
@@ -170,7 +155,7 @@ try {
   ScopeGlobalAsioThread global_asio_thread;
 
   NullDataHandler handler;
-  auto port = debug_port.Open(*asio_thread, handler);
+  auto port = debug_port.Open(*asio_thread, *global_cares_channel, handler);
 
   ConsoleOperationEnvironment env;
 

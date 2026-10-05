@@ -1,32 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "UnitsConfigPanel.hpp"
 #include "Form/DataField/Enum.hpp"
 #include "Form/DataField/Listener.hpp"
 #include "Units/Units.hpp"
 #include "Units/UnitsStore.hpp"
-#include "Profile/ProfileKeys.hpp"
+#include "Profile/Keys.hpp"
 #include "Interface.hpp"
 #include "Language/Language.hpp"
 #include "Widget/RowFormWidget.hpp"
@@ -45,7 +25,8 @@ enum ControlIndex {
   UnitsMass,
   UnitsWingLoading,
   spacer_2,
-  UnitsLatLon
+  UnitsLatLon,
+  ROTATION,
 };
 
 class UnitsConfigPanel final
@@ -58,12 +39,12 @@ public:
   void PresetCheck();
 
   /* methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
 private:
   /* methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override;
+  void OnModified(DataField &df) noexcept override;
 };
 
 void
@@ -86,22 +67,22 @@ void
 UnitsConfigPanel::PresetCheck()
 {
   UnitSetting current_dlg_set;
-  current_dlg_set.speed_unit = (Unit)GetValueInteger((unsigned)UnitsSpeed);
+  current_dlg_set.speed_unit = (Unit)GetValueEnum(UnitsSpeed);
   current_dlg_set.wind_speed_unit = current_dlg_set.speed_unit;
-  current_dlg_set.distance_unit = (Unit)GetValueInteger((unsigned)UnitsDistance);
-  current_dlg_set.vertical_speed_unit = (Unit)GetValueInteger((unsigned)UnitsLift);
-  current_dlg_set.altitude_unit = (Unit)GetValueInteger((unsigned)UnitsAltitude);
-  current_dlg_set.temperature_unit = (Unit)GetValueInteger((unsigned)UnitsTemperature);
-  current_dlg_set.task_speed_unit = (Unit)GetValueInteger((unsigned)UnitsTaskSpeed);
-  current_dlg_set.pressure_unit = (Unit)GetValueInteger((unsigned)UnitsPressure);
-  current_dlg_set.mass_unit = (Unit)GetValueInteger((unsigned)UnitsMass);
-  current_dlg_set.wing_loading_unit = (Unit)GetValueInteger((unsigned)UnitsWingLoading);
+  current_dlg_set.distance_unit = (Unit)GetValueEnum(UnitsDistance);
+  current_dlg_set.vertical_speed_unit = (Unit)GetValueEnum(UnitsLift);
+  current_dlg_set.altitude_unit = (Unit)GetValueEnum(UnitsAltitude);
+  current_dlg_set.temperature_unit = (Unit)GetValueEnum(UnitsTemperature);
+  current_dlg_set.task_speed_unit = (Unit)GetValueEnum(UnitsTaskSpeed);
+  current_dlg_set.pressure_unit = (Unit)GetValueEnum(UnitsPressure);
+  current_dlg_set.mass_unit = (Unit)GetValueEnum(UnitsMass);
+  current_dlg_set.wing_loading_unit = (Unit)GetValueEnum(UnitsWingLoading);
 
   LoadValueEnum(UnitsPreset, Units::Store::EqualsPresetUnits(current_dlg_set));
 }
 
 void
-UnitsConfigPanel::OnModified(DataField &df)
+UnitsConfigPanel::OnModified(DataField &df) noexcept
 {
   if (IsDataField(UnitsPreset, df)) {
     const DataFieldEnum &dfe = (const DataFieldEnum &)df;
@@ -116,7 +97,8 @@ UnitsConfigPanel::OnModified(DataField &df)
 }
 
 void
-UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+UnitsConfigPanel::Prepare(ContainerWindow &parent,
+                          const PixelRect &rc) noexcept
 {
   const UnitSetting &config = CommonInterface::GetUISettings().format.units;
   const CoordinateFormat coordinate_format =
@@ -139,24 +121,24 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(spacer_1);
 
   static constexpr StaticEnumChoice units_speed_list[] = {
-    { (unsigned)Unit::STATUTE_MILES_PER_HOUR, _T("mph") },
-    { (unsigned)Unit::KNOTS, N_("knots") },
-    { (unsigned)Unit::KILOMETER_PER_HOUR, _T("km/h") },
-    { (unsigned)Unit::METER_PER_SECOND, _T("m/s") },
-    { 0 }
+    { Unit::STATUTE_MILES_PER_HOUR, "mph" },
+    { Unit::KNOTS, N_("knots") },
+    { Unit::KILOMETER_PER_HOUR, "km/h" },
+    { Unit::METER_PER_SECOND, "m/s" },
+    nullptr
   };
   AddEnum(_("Aircraft/Wind speed"),
-          _("Units used for airspeed and ground speed.  "
+          _("Units used for airspeed and ground speed. "
             "A separate unit is available for task speeds."),
           units_speed_list,
           (unsigned int)config.speed_unit, this);
   SetExpertRow(UnitsSpeed);
 
   static constexpr StaticEnumChoice units_distance_list[] = {
-    { (unsigned)Unit::STATUTE_MILES, _T("sm") },
-    { (unsigned)Unit::NAUTICAL_MILES, _T("nm") },
-    { (unsigned)Unit::KILOMETER, _T("km") },
-    { 0 }
+    { Unit::STATUTE_MILES, "sm" },
+    { Unit::NAUTICAL_MILES, "nm" },
+    { Unit::KILOMETER, "km" },
+    nullptr
   };
   AddEnum(_("Distance"),
           _("Units used for horizontal distances e.g. "
@@ -166,10 +148,10 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(UnitsDistance);
 
   static constexpr StaticEnumChoice units_lift_list[] = {
-    { (unsigned)Unit::KNOTS, N_("knots") },
-    { (unsigned)Unit::METER_PER_SECOND, _T("m/s") },
-    { (unsigned)Unit::FEET_PER_MINUTE, _T("ft/min") },
-    { 0 }
+    { Unit::KNOTS, N_("knots") },
+    { Unit::METER_PER_SECOND, "m/s" },
+    { Unit::FEET_PER_MINUTE, "ft/min" },
+    nullptr
   };
   AddEnum(_("Lift"), _("Units used for vertical speeds (variometer)."),
           units_lift_list,
@@ -177,9 +159,9 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(UnitsLift);
 
   static constexpr StaticEnumChoice units_altitude_list[] = {
-    { (unsigned)Unit::FEET,  N_("feet") },
-    { (unsigned)Unit::METER, N_("meters") },
-    { 0 }
+    { Unit::FEET,  N_("feet") },
+    { Unit::METER, N_("meters") },
+    nullptr
   };
   AddEnum(_("Altitude"), _("Units used for altitude and heights."),
           units_altitude_list,
@@ -187,9 +169,9 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(UnitsAltitude);
 
   static constexpr StaticEnumChoice units_temperature_list[] = {
-    { (unsigned)Unit::DEGREES_CELCIUS, _T(DEG "C") },
-    { (unsigned)Unit::DEGREES_FAHRENHEIT, _T(DEG "F") },
-    { 0 }
+    { Unit::DEGREES_CELCIUS, DEG "C" },
+    { Unit::DEGREES_FAHRENHEIT, DEG "F" },
+    nullptr
   };
   AddEnum(_("Temperature"), _("Units used for temperature."),
           units_temperature_list,
@@ -197,22 +179,22 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(UnitsTemperature);
 
   static constexpr StaticEnumChoice units_taskspeed_list[] = {
-    { (unsigned)Unit::STATUTE_MILES_PER_HOUR, _T("mph") },
-    { (unsigned)Unit::KNOTS, N_("knots") },
-    { (unsigned)Unit::KILOMETER_PER_HOUR, _T("km/h") },
-    { (unsigned)Unit::METER_PER_SECOND, _T("m/s") },
-    { 0 }
+    { Unit::STATUTE_MILES_PER_HOUR, "mph" },
+    { Unit::KNOTS, N_("knots") },
+    { Unit::KILOMETER_PER_HOUR, "km/h" },
+    { Unit::METER_PER_SECOND, "m/s" },
+    nullptr
   };
-  AddEnum(_("Task speed"), _("Units used for task speeds."),
+  AddEnum(_("Task Speed"), _("Units used for task speeds."),
           units_taskspeed_list,
           (unsigned)config.task_speed_unit, this);
   SetExpertRow(UnitsTaskSpeed);
 
   static constexpr StaticEnumChoice pressure_labels_list[] = {
-    { (unsigned)Unit::HECTOPASCAL, _T("hPa") },
-    { (unsigned)Unit::MILLIBAR, _T("mb") },
-    { (unsigned)Unit::INCH_MERCURY, _T("inHg") },
-    { 0 }
+    { Unit::HECTOPASCAL, "hPa" },
+    { Unit::MILLIBAR, "mb" },
+    { Unit::INCH_MERCURY, "inHg" },
+    nullptr
   };
   AddEnum(_("Pressure"), _("Units used for pressures."),
           pressure_labels_list,
@@ -220,9 +202,9 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(UnitsPressure);
 
   static constexpr StaticEnumChoice mass_labels_list[] = {
-    { (unsigned)Unit::KG, _T("kg") },
-    { (unsigned)Unit::LB, _T("lb") },
-    { 0 }
+    { Unit::KG, "kg" },
+    { Unit::LB, "lb" },
+    nullptr
   };
   AddEnum(_("Mass"), _("Units used for mass."),
           mass_labels_list,
@@ -230,9 +212,9 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(UnitsMass);
 
   static constexpr StaticEnumChoice wing_loading_labels_list[] = {
-    { (unsigned)Unit::KG_PER_M2, _T("kg/m²") },
-    { (unsigned)Unit::LB_PER_FT2, _T("lb/ft²") },
-    { 0 }
+    { Unit::KG_PER_M2, "kg/m²" },
+    { Unit::LB_PER_FT2, "lb/ft²" },
+    nullptr
   };
   AddEnum(_("Wing loading"), _("Units used for wing loading."),
           wing_loading_labels_list,
@@ -243,21 +225,31 @@ UnitsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   SetExpertRow(spacer_2);
 
   static constexpr StaticEnumChoice units_lat_lon_list[] = {
-    { (unsigned)CoordinateFormat::DDMMSS, _T("DDMMSS") },
-    { (unsigned)CoordinateFormat::DDMMSS_S, _T("DDMMSS.s") },
-    { (unsigned)CoordinateFormat::DDMM_MMM, _T("DDMM.mmm") },
-    { (unsigned)CoordinateFormat::DD_DDDDD, _T("DD.ddddd") },
-    { (unsigned)CoordinateFormat::UTM, _T("UTM") },
-    { 0 }
+    { CoordinateFormat::DDMMSS, "DDMMSS" },
+    { CoordinateFormat::DDMMSS_S, "DDMMSS.s" },
+    { CoordinateFormat::DDMM_MMM, "DDMM.mmm" },
+    { CoordinateFormat::DD_DDDDD, "DD.ddddd" },
+    { CoordinateFormat::UTM, "UTM" },
+    nullptr
   };
   AddEnum(_("Lat./Lon."), _("Units used for latitude and longitude."),
           units_lat_lon_list,
           (unsigned)coordinate_format);
   SetExpertRow(UnitsLatLon);
+
+  static constexpr StaticEnumChoice rotation_labels_list[] = {
+    { Unit::HZ, "Hz" },
+    { Unit::RPM, "rpm" },
+    nullptr
+  };
+  AddEnum(_("Rotation"), _("Unit used for rotation."),
+          rotation_labels_list,
+          (unsigned)config.rotation_unit, this);
+  SetExpertRow(ROTATION);
 }
 
 bool
-UnitsConfigPanel::Save(bool &_changed)
+UnitsConfigPanel::Save(bool &_changed) noexcept
 {
   bool changed = false;
 
@@ -291,14 +283,17 @@ UnitsConfigPanel::Save(bool &_changed)
 
   changed |= SaveValueEnum(UnitsLatLon, ProfileKeys::LatLonUnits, coordinate_format);
 
+  changed |= SaveValueEnum(ROTATION, ProfileKeys::RotationUnitValue,
+                           config.rotation_unit);
+
   _changed |= changed;
 
   return true;
 }
 
-Widget *
+std::unique_ptr<Widget>
 CreateUnitsConfigPanel()
 {
-  return new UnitsConfigPanel();
+  return std::make_unique<UnitsConfigPanel>();
 }
 

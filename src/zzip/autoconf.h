@@ -1,5 +1,5 @@
-#ifndef _ZZIP_AUTOCONF_H_
-#define _ZZIP_AUTOCONF_H_ 1
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /*
  * This file is trying to override configure time checks of zzip with
@@ -7,6 +7,8 @@
  * but it may be really helpful with thirdparty software that happens to
  * include zzip headers from a central place but running on a different host.
  */
+ 
+#pragma once
 
 #include "conf.h" /* <zzip/conf.h> : <zzip/_config.h> */
 
@@ -40,6 +42,4 @@
 #ifndef ZZIP_WORDS_BIGENDIAN
 #define ZZIP_WORDS_BIGENDIAN 1
 #endif
-#endif
-
 #endif

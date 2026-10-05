@@ -1,42 +1,31 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "MultipleDevices.hpp"
+#include "Atmosphere/Pressure.hpp"
 #include "Descriptor.hpp"
+#include "NMEA/Info.hpp"
+#include "Device/DataEditor.hpp"
 #include "Dispatcher.hpp"
 
-MultipleDevices::MultipleDevices(boost::asio::io_service &io_service)
+#include <algorithm> // for std::any_of()
+
+MultipleDevices::MultipleDevices(DeviceBlackboard &blackboard,
+                                 NMEALogger *nmea_logger,
+                                 DeviceFactory &factory) noexcept
+  : blackboard(blackboard)
 {
   for (unsigned i = 0; i < NUMDEV; ++i) {
     DeviceDispatcher *dispatcher = dispatchers[i] =
       new DeviceDispatcher(*this, i);
 
-    devices[i] = new DeviceDescriptor(io_service, i, this);
+    devices[i] = new DeviceDescriptor(blackboard, nmea_logger,
+                                      factory, i, this);
     devices[i]->SetDispatcher(dispatcher);
   }
 }
 
-MultipleDevices::~MultipleDevices()
+MultipleDevices::~MultipleDevices() noexcept
 {
   for (DeviceDescriptor *i : devices)
     delete i;
@@ -46,28 +35,59 @@ MultipleDevices::~MultipleDevices()
 }
 
 void
-MultipleDevices::Tick()
+MultipleDevices::Tick() noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->OnSysTicker();
 }
 
 void
-MultipleDevices::AutoReopen(OperationEnvironment &env)
+MultipleDevices::Open(OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->Open(env);
+}
+
+void
+MultipleDevices::Close() noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->Close();
+}
+
+void
+MultipleDevices::AutoReopen(OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->AutoReopen(env);
 }
 
+bool
+MultipleDevices::HasVega() const noexcept
+{
+  return std::any_of(devices.begin(), devices.end(),
+                     [](const auto *d) { return d->IsVega(); });
+}
+
 void
-MultipleDevices::PutMacCready(double mac_cready, OperationEnvironment &env)
+MultipleDevices::VegaWriteNMEA(const char *text,
+                               OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    if (i->IsVega())
+      i->WriteNMEA(text, env);
+}
+
+void
+MultipleDevices::PutMacCready(double mac_cready,
+                              OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutMacCready(mac_cready, env);
 }
 
 void
-MultipleDevices::PutBugs(double bugs, OperationEnvironment &env)
+MultipleDevices::PutBugs(double bugs, OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutBugs(bugs, env);
@@ -75,23 +95,61 @@ MultipleDevices::PutBugs(double bugs, OperationEnvironment &env)
 
 void
 MultipleDevices::PutBallast(double fraction, double overload,
-                            OperationEnvironment &env)
+                            OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutBallast(fraction, overload, env);
 }
 
 void
-MultipleDevices::PutVolume(unsigned volume, OperationEnvironment &env)
+MultipleDevices::PutCrewMass(double crew_mass, OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutCrewMass(crew_mass, env);
+}
+
+void
+MultipleDevices::PutEmptyMass(double empty_mass, OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutEmptyMass(empty_mass, env);
+}
+
+void
+MultipleDevices::PutPolar(const GlidePolar &polar,
+                          OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutPolar(polar, env);
+}
+
+void
+MultipleDevices::PutTarget(const GeoPoint &location, const char *name,
+                           std::optional<double> elevation,
+                           OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutTarget(location, name, elevation, env);
+}
+
+void
+MultipleDevices::PutVolume(unsigned volume, OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutVolume(volume, env);
 }
 
 void
+MultipleDevices::PutPilotEvent(OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutPilotEvent(env);
+}
+
+void
 MultipleDevices::PutActiveFrequency(RadioFrequency frequency,
-                                    const TCHAR *name,
-                                    OperationEnvironment &env)
+                                    const char *name,
+                                    OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutActiveFrequency(frequency, name, env);
@@ -99,23 +157,56 @@ MultipleDevices::PutActiveFrequency(RadioFrequency frequency,
 
 void
 MultipleDevices::PutStandbyFrequency(RadioFrequency frequency,
-                                     const TCHAR *name,
-                                     OperationEnvironment &env)
+                                     const char *name,
+                                     OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutStandbyFrequency(frequency, name, env);
 }
 
 void
-MultipleDevices::PutQNH(const AtmosphericPressure &pres,
-                        OperationEnvironment &env)
+MultipleDevices::ExchangeRadioFrequencies(OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices) {
+    NMEAInfo basic = i->GetData();
+    if (i->ExchangeRadioFrequencies(env, basic)) {
+      blackboard.LockSetDeviceDataScheduleMerge(i->GetIndex(), basic);
+    }
+  }
+}
+
+void
+MultipleDevices::PutTransponderCode(TransponderCode code,
+                                    OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutTransponderCode(code, env);
+}
+
+void
+MultipleDevices::PutQNH(AtmosphericPressure pres,
+                        OperationEnvironment &env) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->PutQNH(pres, env);
 }
 
 void
-MultipleDevices::NotifySensorUpdate(const MoreData &basic)
+MultipleDevices::PutElevation(int elevation, OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->PutElevation(elevation, env);
+}
+
+void
+MultipleDevices::RequestElevation(OperationEnvironment &env) noexcept
+{
+  for (DeviceDescriptor *i : devices)
+    i->RequestElevation(env);
+}
+
+void
+MultipleDevices::NotifySensorUpdate(const MoreData &basic) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->OnSensorUpdate(basic);
@@ -123,43 +214,43 @@ MultipleDevices::NotifySensorUpdate(const MoreData &basic)
 
 void
 MultipleDevices::NotifyCalculatedUpdate(const MoreData &basic,
-                                        const DerivedInfo &calculated)
+                                        const DerivedInfo &calculated) noexcept
 {
   for (DeviceDescriptor *i : devices)
     i->OnCalculatedUpdate(basic, calculated);
 }
 
 void
-MultipleDevices::AddPortListener(PortListener &listener)
+MultipleDevices::AddPortListener(PortListener &listener) noexcept
 {
-  const ScopeLock protect(listeners_mutex);
+  const std::lock_guard lock{listeners_mutex};
   assert(std::find(listeners.begin(), listeners.end(),
                    &listener) == listeners.end());
   listeners.push_back(&listener);
 }
 
 void
-MultipleDevices::RemovePortListener(PortListener &listener)
+MultipleDevices::RemovePortListener(PortListener &listener) noexcept
 {
-  const ScopeLock protect(listeners_mutex);
+  const std::lock_guard lock{listeners_mutex};
   assert(std::find(listeners.begin(), listeners.end(),
                    &listener) != listeners.end());
   listeners.remove(&listener);
 }
 
 void
-MultipleDevices::PortStateChanged()
+MultipleDevices::PortStateChanged() noexcept
 {
-  const ScopeLock protect(listeners_mutex);
+  const std::lock_guard lock{listeners_mutex};
 
   for (auto *listener : listeners)
     listener->PortStateChanged();
 }
 
 void
-MultipleDevices::PortError(const char *msg)
+MultipleDevices::PortError(const char *msg) noexcept
 {
-  const ScopeLock protect(listeners_mutex);
+  const std::lock_guard lock{listeners_mutex};
 
   for (auto *listener : listeners)
     listener->PortError(msg);

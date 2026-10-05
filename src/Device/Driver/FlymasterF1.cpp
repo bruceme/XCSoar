@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/FlymasterF1.hpp"
 #include "Device/Driver.hpp"
@@ -27,6 +7,8 @@ Copyright_License {
 #include "NMEA/Checksum.hpp"
 #include "NMEA/Info.hpp"
 #include "NMEA/InputLine.hpp"
+
+using std::string_view_literals::operator""sv;
 
 class FlymasterF1Device : public AbstractDevice {
   Port &port;
@@ -44,7 +26,8 @@ FlymasterF1Device::EnableNMEA(OperationEnvironment &env)
 {
   /* this command initiates NMEA mode according to the "Flymaster F1
      Commands" document */
-  return PortWriteNMEA(port, "$PFMNAV,", env);
+  PortWriteNMEA(port, "$PFMNAV,", env);
+  return true;
 }
 
 static bool
@@ -79,7 +62,7 @@ VARIO(NMEAInputLine &line, NMEAInfo &info)
 
   if (line.ReadChecked(value)) {
     info.temperature = Temperature::FromCelsius(value);
-    info.temperature_available = true;
+    info.temperature_available.Update(info.clock);
   }
 
   return true;
@@ -92,24 +75,23 @@ FlymasterF1Device::ParseNMEA(const char *String, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(String);
-  char type[16];
-  line.Read(type, 16);
 
-  if (StringIsEqual(type, "$VARIO"))
+  const auto type = line.ReadView();
+  if (type == "$VARIO"sv)
     return VARIO(line, info);
   else
     return false;
 }
 
 static Device *
-FlymasterF1CreateOnPort(const DeviceConfig &config, Port &port)
+FlymasterF1CreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &port)
 {
   return new FlymasterF1Device(port);
 }
 
 const struct DeviceRegister flymaster_f1_driver = {
-  _T("FlymasterF1"),
-  _T("Flymaster F1"),
+  "FlymasterF1",
+  "Flymaster F1",
   0,
   FlymasterF1CreateOnPort,
 };

@@ -1,40 +1,17 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_WAYPOINT_LIST_FILTER_HPP
-#define XCSOAR_WAYPOINT_LIST_FILTER_HPP
-
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
 #include "Math/Angle.hpp"
 
-#include <stdint.h>
-#include <tchar.h>
-
+#include <cstdint>
 struct Waypoint;
 struct GeoPoint;
 class FAITrianglePointValidator;
 
-enum class TypeFilter: uint8_t {
+enum class TypeFilter : uint8_t {
   ALL = 0,
   AIRPORT,
   LANDABLE,
@@ -44,11 +21,45 @@ enum class TypeFilter: uint8_t {
   FAI_TRIANGLE_LEFT,
   FAI_TRIANGLE_RIGHT,
   USER,
-  FILE_1,
-  FILE_2,
+  FILE,
   MAP,
   LAST_USED,
+
+  /* One filter per Waypoint::Type value not already covered by
+     the categorical filters above (AIRFIELD via AIRPORT,
+     OUTLANDING via LANDABLE, NORMAL effectively via TURNPOINT). */
+  MOUNTAIN_TOP,
+  MOUNTAIN_PASS,
+  BRIDGE,
+  TUNNEL,
+  TOWER,
+  POWERPLANT,
+  OBSTACLE,
+  THERMAL_HOTSPOT,
+  MARKER,
+  VOR,
+  NDB,
+  DAM,
+  CASTLE,
+  INTERSECTION,
+  REPORTING_POINT,
+  PG_TAKEOFF,
+  PG_LANDING,
+
+  /** Sentinel: number of real TypeFilter values (excluding the
+      dynamic file ID range below). */
+  COUNT,
+
+  /**
+   * Reserved range for dynamic entries in UI:
+   * IDs 100+ are used for individual waypoint files in the filter dropdown.
+   * DO NOT add enum values >= 100 to avoid conflicts!
+   */
+  _DYNAMIC_FILE_ID_START = 100,
 };
+
+static_assert((unsigned)TypeFilter::COUNT < (unsigned)TypeFilter::_DYNAMIC_FILE_ID_START,
+              "TypeFilter enum values must be < 100 to avoid collision with dynamic file IDs");
 
 struct WaypointFilter
 {
@@ -60,16 +71,32 @@ struct WaypointFilter
   Angle direction;
   TypeFilter type_index;
 
+  /**
+   * When type_index is FILE, this specifies which file to filter by.
+   * -1 = all PRIMARY files, 0+ = specific file index
+   */
+  int file_num = -1;
+
   void Clear() {
     name.clear();
     distance = 0;
     direction = Angle::Native(-1);
     type_index = TypeFilter::ALL;
+    file_num = -1;
   }
 
-  gcc_pure
+  [[gnu::pure]]
   bool Matches(const Waypoint &waypoint, GeoPoint location,
                const FAITrianglePointValidator &triangle_validator) const;
+
+  /**
+   * Like Matches(), but also check the name and the distance.  For
+   * lists not built by #WaypointListBuilder, such as the recently
+   * used waypoints.
+   */
+  [[gnu::pure]]
+  bool MatchesAll(const Waypoint &waypoint, GeoPoint location,
+                  const FAITrianglePointValidator &triangle_validator) const;
 
 private:
   static bool CompareType(const Waypoint &waypoint, TypeFilter type,
@@ -83,9 +110,7 @@ private:
 
   bool CompareDirection(const Waypoint &waypoint, GeoPoint location) const;
 
-  static bool CompareName(const Waypoint &waypoint, const TCHAR *name);
+  static bool CompareName(const Waypoint &waypoint, const char *name);
 
   bool CompareName(const Waypoint &waypoint) const;
 };
-
-#endif

@@ -28,73 +28,111 @@
 
 #include "Parser.hpp"
 #include "Node.hpp"
-#include "Util/CharUtil.hxx"
-#include "Util/StringAPI.hxx"
-#include "Util/StringUtil.hpp"
-#include "Util/NumberParser.hpp"
-#include "IO/FileLineReader.hpp"
+#include "system/Path.hpp"
+#include "io/FileReader.hxx"
+#include "util/AllocatedString.hxx"
+#include "util/CharUtil.hxx"
+#include "util/StringAPI.hxx"
+#include "util/StringStrip.hxx"
+#include "util/NumberParser.hpp"
 
+#include <cassert>
+#include <memory>
 #include <stdexcept>
 
-#include <assert.h>
-
 namespace XML {
-  /** Main structure used for parsing XML. */
-  struct Parser {
-    const TCHAR *lpXML;
-    unsigned nIndex;
-    Error error;
-    const TCHAR *lpEndTag;
-    size_t cbEndTag;
-    bool nFirst;
-  };
 
-  /** Enumeration used to decipher what type a token is. */
-  enum TokenTypeTag {
-    eTokenText = 0,
-    eTokenQuotedText,
-    eTokenTagStart,         /* "<"            */
-    eTokenTagEnd,           /* "</"           */
-    eTokenCloseTag,         /* ">"            */
-    eTokenEquals,           /* "="            */
-    eTokenDeclaration,      /* "<?"           */
-    eTokenShortHandClose,   /* "/>"           */
-    eTokenError
-  };
+struct Input {
+  const std::string_view src;
+  std::size_t position = 0;
 
-  struct NextToken {
-    const TCHAR *pStr;
+  explicit Input(std::string_view _src) noexcept
+    :src(_src) {}
 
-    /**
-     * The number of characters that have been read.
-     */
-    size_t length;
+  std::string_view substr(std::size_t pos, std::size_t count) const noexcept {
+    assert(pos + count <= src.size());
 
-    TokenTypeTag type;
-  };
+    return src.substr(pos, count);
+  }
 
-  /** Enumeration used when parsing attributes. */
-  enum Attrib {
-    eAttribName = 0,
-    eAttribEquals,
-    eAttribValue
-  };
+  char PeekChar() const noexcept {
+    if (position >= src.size())
+      return 0;
+
+    return src[position];
+  }
 
   /**
-   * Enumeration used when parsing elements to dictate whether we are
-   * currently inside a tag.
+   * Obtain the next character from the string.
    */
-  enum Status {
-    eInsideTag = 0,
-    eOutsideTag
-  };
+  char GetNextChar() noexcept {
+    if (position >= src.size())
+      return 0;
 
-  static XML::NextToken
-  GetNextToken(Parser *pXML);
+    return src[position++];
+  }
 
-  static bool
-  ParseXMLElement(XMLNode &node, Parser *pXML);
-}
+  /**
+   * Find next non-white space character.
+   */
+  char FindNonWhiteSpace() noexcept {
+    // Iterate through characters in the string until we find a NULL or a
+    // non-white space character
+    char ch;
+    while ((ch = GetNextChar()) != 0) {
+      if (!IsWhitespaceOrNull(ch))
+        return ch;
+    }
+    return 0;
+  }
+};
+
+/** Main structure used for parsing XML. */
+struct Parser : Input {
+  std::string_view end_tag{};
+  bool nFirst = true;
+
+  explicit Parser(std::string_view _src) noexcept
+    :Input(_src) {}
+};
+
+/** Enumeration used to decipher what type a token is. */
+enum class TokenType {
+  TEXT,
+  QUOTED_TEXT,
+  TAG_START,         /* "<"            */
+  TAG_END,           /* "</"           */
+  CLOSE_TAG,         /* ">"            */
+  EQUALS,           /* "="            */
+  DECLARATION,      /* "<?"           */
+  SHORT_HAND_CLOSE,   /* "/>"           */
+  ERROR,
+};
+
+struct NextToken {
+  std::string_view text;
+
+  TokenType type;
+};
+
+/** Enumeration used when parsing attributes. */
+enum class Attrib {
+  NAME,
+  EQUALS,
+  VALUE
+};
+
+/**
+ * Enumeration used when parsing elements to dictate whether we are
+ * currently inside a tag.
+ */
+enum class Status {
+  INSIDE_TAG,
+  OUTSIDE_TAG
+};
+
+static void
+ParseXMLElement(XMLNode &node, Parser *pXML);
 
 /**
  * This function is the opposite of the function "toXMLString". It
@@ -107,58 +145,53 @@ namespace XML {
  * @param lo length of string
  * @return new allocated string converted from xml
  */
-static TCHAR *
-FromXMLString(const TCHAR *ss, size_t lo)
+static AllocatedString
+FromXMLString(std::string_view src) noexcept
 {
-  assert(ss != nullptr);
-
-  const TCHAR *end = ss + lo;
+  const char *ss = src.data();
+  const char *end = ss + src.size();
 
   /* allocate a buffer with the size of the input string; we know for
      sure that this is enough, because resolving entities can only
      shrink the string, but never grows */
-  TCHAR *d = (TCHAR *)malloc((lo + 1) * sizeof(*d));
-  assert(d);
-  TCHAR *result = d;
+  auto result = AllocatedString::Donate(new char[src.size() + 1]);
+  char *d = result.data();
   while (ss < end && *ss) {
-    if (*ss == _T('&')) {
+    if (*ss == '&') {
       ss++;
-      if (StringIsEqualIgnoreCase(ss, _T("lt;" ), 3)) {
-        *(d++) = _T('<' );
+      if (StringIsEqualIgnoreCase(ss, "lt;" , 3)) {
+        *(d++) = '<' ;
         ss += 3;
-      } else if (StringIsEqualIgnoreCase(ss, _T("gt;" ), 3)) {
-        *(d++) = _T('>' );
+      } else if (StringIsEqualIgnoreCase(ss, "gt;" , 3)) {
+        *(d++) = '>' ;
         ss += 3;
-      } else if (StringIsEqualIgnoreCase(ss, _T("amp;" ), 4)) {
-        *(d++) = _T('&' );
+      } else if (StringIsEqualIgnoreCase(ss, "amp;" , 4)) {
+        *(d++) = '&' ;
         ss += 4;
-      } else if (StringIsEqualIgnoreCase(ss, _T("apos;"), 5)) {
-        *(d++) = _T('\'');
+      } else if (StringIsEqualIgnoreCase(ss, "apos;", 5)) {
+        *(d++) = '\'';
         ss += 5;
-      } else if (StringIsEqualIgnoreCase(ss, _T("quot;"), 5)) {
-        *(d++) = _T('"' );
+      } else if (StringIsEqualIgnoreCase(ss, "quot;", 5)) {
+        *(d++) = '"' ;
         ss += 5;
       } else if (*ss == '#') {
         /* number entity */
 
         ++ss;
 
-        TCHAR *endptr;
+        char *endptr;
         unsigned i = ParseUnsigned(ss, &endptr, 10);
         if (endptr == ss || endptr >= end || *endptr != ';') {
-          free(result);
           return nullptr;
         }
 
-        // XXX convert to UTF-8 if !_UNICODE
-        TCHAR ch = (TCHAR)i;
+        char ch = (char)i;
         if (ch == 0)
           ch = ' ';
 
         *d++ = ch;
         ss = endptr + 1;
       } else {
-        free(result);
         return nullptr;
       }
     } else {
@@ -168,185 +201,146 @@ FromXMLString(const TCHAR *ss, size_t lo)
   }
   *d = 0;
 
-  /* shrink the memory allocation just in case we allocated too
-     much */
-  d = (TCHAR *)realloc(result, (d + 1 - result) * sizeof(*d));
-  if (d != nullptr)
-    result = d;
-
   return result;
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-CompareTagName(const TCHAR *cclose, const TCHAR *copen)
+CompareTagName(const char *cclose, const char *copen)
 {
   assert(cclose != nullptr);
   assert(copen != nullptr);
 
-  size_t l = _tcslen(cclose);
+  size_t l = strlen(cclose);
   if (!StringIsEqualIgnoreCase(cclose, copen, l))
     return false;
 
-  const TCHAR c = copen[l];
+  const char c = copen[l];
   if (IsWhitespaceOrNull(c) ||
-      (c == _T('/')) ||
-      (c == _T('<')) ||
-      (c == _T('>')) ||
-      (c == _T('=')))
+      (c == '/') ||
+      (c == '<') ||
+      (c == '>') ||
+      (c == '='))
     return true;
 
   return false;
 }
 
 /**
- * Obtain the next character from the string.
- */
-static inline TCHAR
-GetNextChar(XML::Parser *pXML)
-{
-  TCHAR ch = pXML->lpXML[pXML->nIndex];
-  if (ch != 0)
-    pXML->nIndex++;
-  return ch;
-}
-
-/**
- * Find next non-white space character.
- */
-static TCHAR
-FindNonWhiteSpace(XML::Parser *pXML)
-{
-  assert(pXML);
-
-    // Iterate through characters in the string until we find a NULL or a
-  // non-white space character
-  TCHAR ch;
-  while ((ch = GetNextChar(pXML)) != 0) {
-    if (!IsWhitespaceOrNull(ch))
-      return ch;
-  }
-  return 0;
-}
-
-/**
  * Find the next token in a string.
  */
-static XML::NextToken
-XML::GetNextToken(Parser *pXML)
+static NextToken
+GetNextToken(Parser *pXML)
 {
-  XML::NextToken result;
-  const TCHAR *lpXML;
-  TCHAR ch;
-  TCHAR temp_ch;
+  NextToken result;
+  char ch;
+  char temp_ch;
   size_t size;
-  unsigned n;
+  std::size_t n;
   bool found_match;
   bool is_text = false;
 
   // Find next non-white space character
-  ch = FindNonWhiteSpace(pXML);
-  if (gcc_unlikely(ch == 0)) {
+  ch = pXML->FindNonWhiteSpace();
+  if (ch == 0) [[unlikely]]
     // If we failed to obtain a valid character
-    return { nullptr, 0, eTokenError };
-  }
+    return {{}, TokenType::ERROR};
 
   // Cache the current string pointer
-  lpXML = pXML->lpXML;
-  result.pStr = &lpXML[pXML->nIndex - 1];
+  const std::size_t start = pXML->position - 1;
 
   switch (ch) {
     // Check for quotes
-  case _T('\''):
-  case _T('\"'):
+  case '\'':
+  case '\"':
     // Type of token
-    result.type = eTokenQuotedText;
+    result.type = TokenType::QUOTED_TEXT;
     temp_ch = ch;
-    n = pXML->nIndex;
+    n = pXML->position;
 
     // Set the size
     size = 1;
     found_match = false;
 
     // Search through the string to find a matching quote
-    while (((ch = GetNextChar(pXML))) != 0) {
+    while (((ch = pXML->GetNextChar())) != 0) {
       size++;
       if (ch == temp_ch) {
         found_match = true;
         break;
       }
-      if (ch == _T('<'))
+      if (ch == '<')
         break;
     }
 
     // If we failed to find a matching quote
     if (!found_match) {
-      pXML->nIndex = n;
+      pXML->position = n;
       is_text = true;
       break;
     }
 
     //  4.02.2002
-    if (FindNonWhiteSpace(pXML)) {
-      pXML->nIndex--;
+    if (pXML->FindNonWhiteSpace()) {
+      pXML->position--;
     }
 
     break;
 
     // Equals (used with attribute values)
-  case _T('='):
+  case '=':
     size = 1;
-    result.type = eTokenEquals;
+    result.type = TokenType::EQUALS;
     break;
 
     // Close tag
-  case _T('>'):
+  case '>':
     size = 1;
-    result.type = eTokenCloseTag;
+    result.type = TokenType::CLOSE_TAG;
     break;
 
     // Check for tag start and tag end
-  case _T('<'):
+  case '<':
 
     // Peek at the next character to see if we have an end tag '</',
     // or an xml declaration '<?'
-    temp_ch = pXML->lpXML[pXML->nIndex];
+    temp_ch = pXML->PeekChar();
 
     // If we have a tag end...
-    if (temp_ch == _T('/')) {
+    if (temp_ch == '/') {
       // Set the type and ensure we point at the next character
-      GetNextChar(pXML);
-      result.type = eTokenTagEnd;
+      pXML->GetNextChar();
+      result.type = TokenType::TAG_END;
       size = 2;
     }
 
     // If we have an XML declaration tag
-    else if (temp_ch == _T('?')) {
+    else if (temp_ch == '?') {
 
       // Set the type and ensure we point at the next character
-      GetNextChar(pXML);
-      result.type = eTokenDeclaration;
+      pXML->GetNextChar();
+      result.type = TokenType::DECLARATION;
       size = 2;
     }
 
     // Otherwise we must have a start tag
     else {
-      result.type = eTokenTagStart;
+      result.type = TokenType::TAG_START;
       size = 1;
     }
     break;
 
     // Check to see if we have a short hand type end tag ('/>').
-  case _T('/'):
+  case '/':
 
     // Peek at the next character to see if we have a short end tag '/>'
-    temp_ch = pXML->lpXML[pXML->nIndex];
+    temp_ch = pXML->PeekChar();
 
     // If we have a short hand end tag...
-    if (temp_ch == _T('>')) {
+    if (temp_ch == '>') {
       // Set the type and ensure we point at the next character
-      GetNextChar(pXML);
-      result.type = eTokenShortHandClose;
+      pXML->GetNextChar();
+      result.type = TokenType::SHORT_HAND_CLOSE;
       size = 2;
       break;
     }
@@ -354,9 +348,7 @@ XML::GetNextToken(Parser *pXML)
     // If we haven't found a short hand closing tag then drop into the
     // text process
 
-#if GCC_CHECK_VERSION(7,0)
     [[fallthrough]];
-#endif
 
     // Other characters
   default:
@@ -366,25 +358,25 @@ XML::GetNextToken(Parser *pXML)
   // If this is a TEXT node
   if (is_text) {
     // Indicate we are dealing with text
-    result.type = eTokenText;
+    result.type = TokenType::TEXT;
     size = 1;
     bool nExit = false;
 
-    while (!nExit && ((ch = GetNextChar(pXML)) != 0)) {
+    while (!nExit && ((ch = pXML->GetNextChar()) != 0)) {
       if (IsWhitespaceOrNull(ch))
         // Break when we find white space
         break;
 
       switch (ch) {
       // If we find a slash then this maybe text or a short hand end tag.
-      case _T('/'):
+      case '/':
 
         // Peek at the next character to see it we have short hand end tag
-        temp_ch = pXML->lpXML[pXML->nIndex];
+        temp_ch = pXML->PeekChar();
 
         // If we found a short hand end tag then we need to exit the loop
-        if (temp_ch == _T('>')) {
-          pXML->nIndex--; //  03.02.2002
+        if (temp_ch == '>') {
+          --pXML->position; //  03.02.2002
           nExit = true;
         } else {
           size++;
@@ -394,10 +386,10 @@ XML::GetNextToken(Parser *pXML)
         // Break when we find a terminator and decrement the index and
         // column count so that we are pointing at the right character
         // the next time we are called.
-      case _T('<'):
-      case _T('>'):
-      case _T('='):
-        pXML->nIndex--;
+      case '<':
+      case '>':
+      case '=':
+        --pXML->position;
       nExit = true;
       break;
 
@@ -410,56 +402,25 @@ XML::GetNextToken(Parser *pXML)
       }
     }
   }
-  result.length = size;
 
+  result.text = pXML->substr(start, size);
   return result;
-}
-
-const TCHAR *
-XML::GetErrorMessage(Error error)
-{
-  switch (error) {
-  case eXMLErrorNone:
-    return _T("No error");
-  case eXMLErrorEmpty:
-    return _T("No XML data");
-  case eXMLErrorFirstNotStartTag:
-    return _T("First token not start tag");
-  case eXMLErrorMissingTagName:
-    return _T("Missing start tag name");
-  case eXMLErrorMissingEndTagName:
-    return _T("Missing end tag name");
-  case eXMLErrorNoMatchingQuote:
-    return _T("Unmatched quote");
-  case eXMLErrorUnmatchedEndTag:
-    return _T("Unmatched end tag");
-  case eXMLErrorUnexpectedToken:
-    return _T("Unexpected token found");
-  case eXMLErrorInvalidTag:
-    return _T("Invalid tag found");
-  case eXMLErrorNoElements:
-    return _T("No elements found");
-  case eXMLErrorFileNotFound:
-    return _T("File not found");
-  }
-
-  return _T("Unknown");
 }
 
 /**
  * Recursively parse an XML element.
  */
-static bool
-XML::ParseXMLElement(XMLNode &node, Parser *pXML)
+static void
+ParseXMLElement(XMLNode &node, Parser *pXML)
 {
   bool is_declaration;
-  const TCHAR *text = nullptr;
+  const char *text = nullptr;
   XMLNode *pNew;
-  enum Status status; // inside or outside a tag
-  enum Attrib attrib = eAttribName;
+  Status status; // inside or outside a tag
+  Attrib attrib = Attrib::NAME;
 
   /* the name of the attribute that is currently being */
-  tstring attribute_name;
+  std::string attribute_name;
 
   assert(pXML);
 
@@ -467,45 +428,45 @@ XML::ParseXMLElement(XMLNode &node, Parser *pXML)
   if (pXML->nFirst) {
     // Assume we are outside of a tag definition
     pXML->nFirst = false;
-    status = eOutsideTag;
+    status = Status::OUTSIDE_TAG;
   } else {
     // If this is not the first call then we should only be called when inside a tag.
-    status = eInsideTag;
+    status = Status::INSIDE_TAG;
   }
 
   // Iterate through the tokens in the document
   while (true) {
     // Obtain the next token
     NextToken token = GetNextToken(pXML);
-    if (gcc_unlikely(token.type == eTokenError))
-      return false;
+    if (token.type == TokenType::ERROR) [[unlikely]]
+      return;
 
     // Check the current status
     switch (status) {
       // If we are outside of a tag definition
-    case eOutsideTag:
+    case Status::OUTSIDE_TAG:
 
       // Check what type of token we obtained
       switch (token.type) {
         // If we have found text or quoted text
-      case eTokenText:
-      case eTokenQuotedText:
-      case eTokenEquals:
+      case TokenType::TEXT:
+      case TokenType::QUOTED_TEXT:
+      case TokenType::EQUALS:
         if (text == nullptr)
-          text = token.pStr;
+          text = token.text.data();
 
         break;
 
         // If we found a start tag '<' and declarations '<?'
-      case eTokenTagStart:
-      case eTokenDeclaration:
+      case TokenType::TAG_START:
+      case TokenType::DECLARATION:
         // Cache whether this new element is a declaration or not
-        is_declaration = token.type == eTokenDeclaration;
+        is_declaration = token.type == TokenType::DECLARATION;
 
         // If we have node text then add this to the element
         if (text != nullptr) {
-          size_t length = StripRight(text, token.pStr - text);
-          node.AddText(text, length);
+          const std::string_view unstripped_text(text, token.text.data() - text);
+          node.AddText(StripRight(unstripped_text));
           text = nullptr;
         }
 
@@ -514,70 +475,62 @@ XML::ParseXMLElement(XMLNode &node, Parser *pXML)
 
         // Return an error if we couldn't obtain the next token or
         // it wasnt text
-        if (token.type != eTokenText) {
-          pXML->error = eXMLErrorMissingTagName;
-          return false;
-        }
+        if (token.type != TokenType::TEXT)
+          throw std::runtime_error("Missing start tag name");
 
         // If the name of the new element differs from the name of
         // the current element we need to add the new element to
         // the current one and recurse
-        pNew = &node.AddChild(token.pStr, token.length,
-                              is_declaration);
+        pNew = &node.AddChild(token.text, is_declaration);
 
         while (true) {
           // Callself to process the new node.  If we return
           // FALSE this means we dont have any more
           // processing to do...
 
-          if (!ParseXMLElement(*pNew, pXML)) {
-            return false;
-          } else {
-            // If the call to recurse this function
-            // evented in a end tag specified in XML then
-            // we need to unwind the calls to this
-            // function until we find the appropriate node
-            // (the element name and end tag name must
-            // match)
-            if (pXML->cbEndTag) {
-              // If we are back at the root node then we
-              // have an unmatched end tag
-              if (node.GetName() == nullptr) {
-                pXML->error = eXMLErrorUnmatchedEndTag;
-                return false;
-              }
+          ParseXMLElement(*pNew, pXML);
 
-              // If the end tag matches the name of this
-              // element then we only need to unwind
-              // once more...
+          // If the call to recurse this function
+          // evented in a end tag specified in XML then
+          // we need to unwind the calls to this
+          // function until we find the appropriate node
+          // (the element name and end tag name must
+          // match)
+          if (!pXML->end_tag.empty()) {
+            // If we are back at the root node then we
+            // have an unmatched end tag
+            if (node.IsNull())
+              throw std::runtime_error("Unmatched end tag");
 
-              if (CompareTagName(node.GetName(), pXML->lpEndTag)) {
-                pXML->cbEndTag = 0;
-              }
+            // If the end tag matches the name of this
+            // element then we only need to unwind
+            // once more...
 
-              return true;
-            } else {
-              // If we didn't have a new element to create
-              break;
+            if (CompareTagName(node.GetName(), pXML->end_tag.data())) {
+              pXML->end_tag = {};
             }
+
+            return;
+          } else {
+            // If we didn't have a new element to create
+            break;
           }
         }
         break;
 
         // If we found an end tag
-      case eTokenTagEnd:
+      case TokenType::TAG_END:
 
         // If we have node text then add this to the element
         if (text != nullptr) {
-          size_t length = StripRight(text, token.pStr - text);
-          TCHAR *text2 = FromXMLString(text, length);
-          if (text2 == nullptr) {
-            pXML->error = eXMLErrorUnexpectedToken;
-            return false;
-          }
+          const std::string_view unstripped_text(text, token.text.data() - text);
 
-          node.AddText(text2);
-          free(text2);
+          if (const auto text2 = FromXMLString(StripRight(unstripped_text));
+              text2 != nullptr)
+            node.AddText(text2);
+          else
+            throw std::runtime_error("Unexpected token found");
+
           text = nullptr;
         }
 
@@ -585,187 +538,171 @@ XML::ParseXMLElement(XMLNode &node, Parser *pXML)
         token = GetNextToken(pXML);
 
         // The end tag should be text
-        if (token.type != eTokenText) {
-          pXML->error = eXMLErrorMissingEndTagName;
-          return false;
-        }
+        if (token.type != TokenType::TEXT)
+          throw std::runtime_error("Missing end tag name");
 
         // After the end tag we should find a closing tag
-        if (GetNextToken(pXML).type != eTokenCloseTag) {
-          pXML->error = eXMLErrorMissingEndTagName;
-          return false;
-        }
+        if (GetNextToken(pXML).type != TokenType::CLOSE_TAG)
+          throw std::runtime_error("Missing end tag name");
 
         // We need to return to the previous caller.  If the name
         // of the tag cannot be found we need to keep returning to
         // caller until we find a match
-        if (!CompareTagName(node.GetName(), token.pStr)) {
-          pXML->lpEndTag = token.pStr;
-          pXML->cbEndTag = token.length;
+        if (!CompareTagName(node.GetName(), token.text.data())) {
+          pXML->end_tag = token.text;
         }
 
         // Return to the caller
-        return true;
+        return;
 
         // Errors...
-      case eTokenCloseTag: /* '>'         */
-      case eTokenShortHandClose: /* '/>'        */
-        pXML->error = eXMLErrorUnexpectedToken;
-        return false;
+      case TokenType::CLOSE_TAG: /* '>'         */
+      case TokenType::SHORT_HAND_CLOSE: /* '/>'        */
+        throw std::runtime_error("Unexpected token found");
       default:
         break;
       }
       break;
 
       // If we are inside a tag definition we need to search for attributes
-    case eInsideTag:
+    case Status::INSIDE_TAG:
       // Check what part of the attribute (name, equals, value) we
       // are looking for.
       switch (attrib) {
         // If we are looking for a new attribute
-      case eAttribName:
+      case Attrib::NAME:
         // Check what the current token type is
         switch (token.type) {
           // If the current type is text...
           // Eg.  'attribute'
-        case eTokenText:
+        case TokenType::TEXT:
           // Cache the token then indicate that we are next to
           // look for the equals
-          attribute_name.assign(token.pStr, token.length);
-          attrib = eAttribEquals;
+          attribute_name = token.text;
+          attrib = Attrib::EQUALS;
           break;
 
           // If we found a closing tag...
           // Eg.  '>'
-        case eTokenCloseTag:
+        case TokenType::CLOSE_TAG:
           // We are now outside the tag
-          status = eOutsideTag;
+          status = Status::OUTSIDE_TAG;
           break;
 
           // If we found a short hand '/>' closing tag then we can
           // return to the caller
-        case eTokenShortHandClose:
-          return true;
+        case TokenType::SHORT_HAND_CLOSE:
+          return;
 
           // Errors...
-        case eTokenQuotedText: /* '"SomeText"'   */
-        case eTokenTagStart: /* '<'            */
-        case eTokenTagEnd: /* '</'           */
-        case eTokenEquals: /* '='            */
-        case eTokenDeclaration: /* '<?'           */
-          pXML->error = eXMLErrorUnexpectedToken;
-          return false;
+        case TokenType::QUOTED_TEXT: /* '"SomeText"'   */
+        case TokenType::TAG_START: /* '<'            */
+        case TokenType::TAG_END: /* '</'           */
+        case TokenType::EQUALS: /* '='            */
+        case TokenType::DECLARATION: /* '<?'           */
+          throw std::runtime_error("Unexpected token found");
         default:
           break;
         }
         break;
 
         // If we are looking for an equals
-      case eAttribEquals:
+      case Attrib::EQUALS:
         // Check what the current token type is
         switch (token.type) {
           // If the current type is text...
           // Eg.  'Attribute AnotherAttribute'
-        case eTokenText:
+        case TokenType::TEXT:
           // Add the unvalued attribute to the list
-          node.AddAttribute(std::move(attribute_name), _T(""), 0);
+          node.AddAttribute(std::move(attribute_name), std::string_view{});
           // Cache the token then indicate.  We are next to
           // look for the equals attribute
-          attribute_name.assign(token.pStr, token.length);
+          attribute_name = token.text;
           break;
 
           // If we found a closing tag 'Attribute >' or a short hand
           // closing tag 'Attribute />'
-        case eTokenShortHandClose:
-        case eTokenCloseTag:
+        case TokenType::SHORT_HAND_CLOSE:
+        case TokenType::CLOSE_TAG:
           assert(!attribute_name.empty());
 
           // If we are a declaration element '<?' then we need
           // to remove extra closing '?' if it exists
-          if (node.IsDeclaration() && attribute_name.back() == _T('?')) {
+          if (node.IsDeclaration() && attribute_name.back() == '?') {
             attribute_name.pop_back();
           }
 
           if (!attribute_name.empty())
             // Add the unvalued attribute to the list
-            node.AddAttribute(std::move(attribute_name), _T(""), 0);
+            node.AddAttribute(std::move(attribute_name), std::string_view{});
 
           // If this is the end of the tag then return to the caller
-          if (token.type == eTokenShortHandClose)
-            return true;
+          if (token.type == TokenType::SHORT_HAND_CLOSE)
+            return;
 
           // We are now outside the tag
-          status = eOutsideTag;
+          status = Status::OUTSIDE_TAG;
           break;
 
           // If we found the equals token...
           // Eg.  'Attribute ='
-        case eTokenEquals:
+        case TokenType::EQUALS:
           // Indicate that we next need to search for the value
           // for the attribute
-          attrib = eAttribValue;
+          attrib = Attrib::VALUE;
           break;
 
           // Errors...
-        case eTokenQuotedText: /* 'Attribute "InvalidAttr"'*/
-        case eTokenTagStart: /* 'Attribute <'            */
-        case eTokenTagEnd: /* 'Attribute </'           */
-        case eTokenDeclaration: /* 'Attribute <?'           */
-          pXML->error = eXMLErrorUnexpectedToken;
-          return false;
+        case TokenType::QUOTED_TEXT: /* 'Attribute "InvalidAttr"'*/
+        case TokenType::TAG_START: /* 'Attribute <'            */
+        case TokenType::TAG_END: /* 'Attribute </'           */
+        case TokenType::DECLARATION: /* 'Attribute <?'           */
+          throw std::runtime_error("Unexpected token found");
         default:
           break;
         }
         break;
 
         // If we are looking for an attribute value
-      case eAttribValue:
+      case Attrib::VALUE:
         // Check what the current token type is
         switch (token.type) {
           // If the current type is text or quoted text...
           // Eg.  'Attribute = "Value"' or 'Attribute = Value' or
           // 'Attribute = 'Value''.
-        case eTokenText:
-        case eTokenQuotedText:
+        case TokenType::TEXT:
+        case TokenType::QUOTED_TEXT:
           // If we are a declaration element '<?' then we need
           // to remove extra closing '?' if it exists
-          if (node.IsDeclaration() && (token.pStr[token.length - 1]) == _T('?')) {
-            token.length--;
+          if (node.IsDeclaration() && token.text.ends_with('?')) {
+            token.text.remove_suffix(1);
           }
 
           // Add the valued attribute to the list
-          if (token.type == eTokenQuotedText) {
-            token.pStr++;
-            token.length -= 2;
+          if (token.type == TokenType::QUOTED_TEXT) {
+            token.text.remove_prefix(1);
+            token.text.remove_suffix(1);
           }
 
           assert(!attribute_name.empty());
 
-          {
-            TCHAR *value = FromXMLString(token.pStr, token.length);
-            if (value == nullptr) {
-              pXML->error = eXMLErrorUnexpectedToken;
-              return false;
-            }
-
-            node.AddAttribute(std::move(attribute_name),
-                              value, _tcslen(value));
-            free(value);
-          }
+          if (const auto value = FromXMLString(token.text); value != nullptr)
+            node.AddAttribute(attribute_name, value);
+          else
+            throw std::runtime_error("Unexpected token found");
 
           // Indicate we are searching for a new attribute
-          attrib = eAttribName;
+          attrib = Attrib::NAME;
           break;
 
           // Errors...
-        case eTokenTagStart: /* 'Attr = <'          */
-        case eTokenTagEnd: /* 'Attr = </'         */
-        case eTokenCloseTag: /* 'Attr = >'          */
-        case eTokenShortHandClose: /* "Attr = />"         */
-        case eTokenEquals: /* 'Attr = ='          */
-        case eTokenDeclaration: /* 'Attr = <?'         */
-          pXML->error = eXMLErrorUnexpectedToken;
-          return false;
+        case TokenType::TAG_START: /* 'Attr = <'          */
+        case TokenType::TAG_END: /* 'Attr = </'         */
+        case TokenType::CLOSE_TAG: /* 'Attr = >'          */
+        case TokenType::SHORT_HAND_CLOSE: /* "Attr = />"         */
+        case TokenType::EQUALS: /* 'Attr = ='          */
+        case TokenType::DECLARATION: /* 'Attr = <?'         */
+          throw std::runtime_error("Unexpected token found");
         default:
           break;
         }
@@ -774,26 +711,19 @@ XML::ParseXMLElement(XMLNode &node, Parser *pXML)
   }
 }
 
-/**
- * Count the number of lines and columns in an XML string.
- */
-static void
-CountLinesAndColumns(const TCHAR *lpXML, size_t nUpto, XML::Results *pResults)
+static XMLNode *
+GetRootElement(XMLNode &n) noexcept
 {
-  assert(lpXML);
-  assert(pResults);
+  assert(n.IsNull());
 
-  pResults->line = 1;
-  pResults->column = 1;
-  for (size_t n = 0; n < nUpto; n++) {
-    TCHAR ch = lpXML[n];
-    assert(ch);
-    if (ch == _T('\n')) {
-      pResults->line++;
-      pResults->column = 1;
-    } else
-      pResults->column++;
-  }
+  XMLNode *result = n.GetFirstChild();
+
+  // If the new main node is the xml declaration
+  // -> try to take the first childnode again
+  if (result != nullptr && result->IsDeclaration())
+    result = result->GetFirstChild();
+
+  return result;
 }
 
 /**
@@ -803,123 +733,40 @@ CountLinesAndColumns(const TCHAR *lpXML, size_t nUpto, XML::Results *pResults)
  * @param pResults XMLResult object to write in on error or success
  * @return The main XMLNode or empty XMLNode on error
  */
-XMLNode *
-XML::ParseString(const TCHAR *xml_string, Results *pResults)
+XMLNode
+ParseString(std::string_view xml_string)
 {
-  // If String is empty
-  if (xml_string == nullptr) {
-    // If XML::Results object exists
-    if (pResults) {
-      // -> Save the error type
-      pResults->error = eXMLErrorNoElements;
-      pResults->line = 0;
-      pResults->column = 0;
-    }
-
-    // -> Return empty XMLNode
-    return nullptr;
-  }
-
-  Error error;
   XMLNode xnode = XMLNode::Null();
-  Parser xml = { nullptr, 0, eXMLErrorNone, nullptr, 0, true, };
-
-  xml.lpXML = xml_string;
+  Parser xml{xml_string};
 
   // Fill the XMLNode xnode with the parsed data of xml
   // note: xnode is now the document node, not the main XMLNode
   ParseXMLElement(xnode, &xml);
-  error = xml.error;
 
-  // If the document node does not have childnodes
-  XMLNode *child = xnode.GetFirstChild();
-  if (child == nullptr) {
-    // If XML::Results object exists
-    if (pResults) {
-      // -> Save the error type
-      pResults->error = eXMLErrorNoElements;
-      pResults->line = 0;
-      pResults->column = 0;
-    }
+  auto *root_element = GetRootElement(xnode);
+  if (root_element == nullptr)
+    throw std::runtime_error("No elements found");
 
-    // -> Return empty XMLNode
-    return nullptr;
-  } else {
-    // Set the document's first childnode as new main node
-    xnode = std::move(*child);
-  }
-
-  // If the new main node is the xml declaration
-  // -> try to take the first childnode again
-  if (xnode.IsDeclaration()) {
-    // If the declaration does not have childnodes
-    child = xnode.GetFirstChild();
-    if (child == nullptr) {
-      // If XML::Results object exists
-      if (pResults) {
-        // -> Save the error type
-        pResults->error = eXMLErrorNoElements;
-        pResults->line = 0;
-        pResults->column = 0;
-      }
-
-      // -> Return empty XMLNode
-      return nullptr;
-    } else {
-      // Set the declaration's first childnode as new main node
-      xnode = std::move(*child);
-    }
-  }
-
-  // If an XML::Results object exists
-  // -> save the result (error/success)
-  if (pResults) {
-    pResults->error = error;
-
-    // If we have an error
-    if (error != eXMLErrorNone) {
-      // Find which line and column it starts on and
-      // save it in the XML::Results object
-      CountLinesAndColumns(xml.lpXML, xml.nIndex, pResults);
-    }
-  }
-
-  // If error occurred -> set node to empty
-  if (error != eXMLErrorNone)
-    return nullptr;
-
-  // Return the node (empty, main or child of main that equals tag)
-  return new XMLNode(std::move(xnode));
+  return std::move(*root_element);
 }
 
-static bool
-ReadTextFile(Path path, tstring &buffer)
-try {
-  /* auto-detect the character encoding, to be able to parse XCSoar
-     6.0 task files */
-  FileLineReader reader(path, Charset::AUTO);
+static std::unique_ptr<char[]>
+ReadTextFile(Path path)
+{
+  FileReader reader{path};
 
-  long size = reader.GetSize();
+  const auto size = reader.GetSize();
   if (size > 65536)
-    return false;
-  else if (size < 0)
-    size = 4096;
+    throw std::runtime_error("File is too large");
 
-  buffer.reserve(size);
+  std::unique_ptr<char[]> buffer{new char[size + 1]};
+  const auto nbytes = reader.Read(std::as_writable_bytes(std::span{buffer.get(), static_cast<std::size_t>(size)}));
+  if (nbytes != size)
+    throw std::runtime_error{"Short read"};
 
-  const TCHAR *line;
-  while ((line = reader.ReadLine()) != nullptr) {
-    if (buffer.length() > 65536)
-      /* too long */
-      return false;
+  buffer[nbytes] = '\0';
 
-    buffer.append(line);
-    buffer.append(_T("\n"));
-  }
-
-  return true;
-} catch (const std::runtime_error &) {
-  return false;
+  return buffer;
 }
 
 /**
@@ -927,29 +774,13 @@ try {
 * (Includes error handling)
  * @param filename Filepath to the XML file to parse
  * @param tag (?)
- * @param pResults Pointer to the XML::Results object to fill on error or success
  * @return The main XMLNode or an empty node on error
  */
-XMLNode *
-XML::ParseFile(Path filename, Results *pResults)
+XMLNode
+ParseFile(Path filename)
 {
-  // Open the file for reading
-  tstring buffer;
-
-  // If file can't be read
-  if (!ReadTextFile(filename, buffer)) {
-    // If XML::Results object exists
-    if (pResults) {
-      // -> Save the error type into it
-      pResults->error = eXMLErrorFileNotFound;
-      pResults->line = 0;
-      pResults->column = 0;
-    }
-
-    // -> Return empty XMLNode
-    return nullptr;
-  }
-
-  // Parse the string and get the main XMLNode
-  return ParseString(buffer.c_str(), pResults);
+  const auto buffer = ReadTextFile(filename);
+  return ParseString(buffer.get());
 }
+
+} // namespace XML

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 // Written by Curtis Olson, started September 1997.
 //
@@ -45,13 +25,12 @@ Copyright_License {
  * @file leastsqs.h
  */
 
-#ifndef _LEASTSQS_H
-#define _LEASTSQS_H
+#pragma once
 
 #include "XYDataStore.hpp"
 #include "Angle.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 struct ErrorEllipse {
   double x;
@@ -113,59 +92,59 @@ public:
   /**
    * Reset the LeastSquares calculator.
    */
-  void Reset();
+  void Reset() noexcept;
 
-  double GetGradient() const {
+  double GetGradient() const noexcept {
     assert(!IsEmpty());
 
     return m;
   }
 
-  double GetAverageY() const {
+  double GetAverageY() const noexcept {
     assert(!IsEmpty());
 
     return y_ave;
   }
 
-  double GetYAt(double x) const {
+  double GetYAt(double x) const noexcept {
     assert(!IsEmpty());
 
     return x * m + b;
   }
 
-  double GetYAtMinX() const {
+  double GetYAtMinX() const noexcept {
     return GetYAt(GetMinX());
   }
 
-  double GetYAtMaxX() const {
+  double GetYAtMaxX() const noexcept {
     return GetYAt(GetMaxX());
   }
 
-  double GetMeanY() const {
+  double GetMeanY() const noexcept {
     assert(!IsEmpty());
 
     return y_mean;
   }
 
-  double GetMeanX() const {
+  double GetMeanX() const noexcept {
     assert(!IsEmpty());
 
     return x_mean;
   }
 
-  double GetVarX() const {
+  double GetVarX() const noexcept {
     assert(!IsEmpty());
 
     return x_var;
   }
 
-  double GetVarY() const {
+  double GetVarY() const noexcept {
     assert(!IsEmpty());
 
     return y_var;
   }
 
-  double GetCovXY() const {
+  double GetCovXY() const noexcept {
     assert(!IsEmpty());
 
     return xy_var;
@@ -177,7 +156,7 @@ public:
    *
    * @param y y-Value of the new data point
    */
-  void Update(double y);
+  void Update(double y) noexcept;
 
   /**
    * Add a new data point to the values and calculate least squares
@@ -187,23 +166,23 @@ public:
    * @param y y-Value of the new data point
    * @param weight Weight of the new data point (optional)
    */
-  void Update(double x, double y, double weight=1);
+  void Update(double x, double y, double weight=1) noexcept;
 
   /**
    * Calculate the 1 std error ellipse fitting the data
    */
-  ErrorEllipse GetErrorEllipse() const;
+  ErrorEllipse GetErrorEllipse() const noexcept;
 
 protected:
   /**
    * Calculate the least squares average.
    */
-  void Compute();
+  void Compute() noexcept;
 
   /**
    * Calculates the LeastSquaresError.
    */
-  void UpdateError();
+  void UpdateError() noexcept;
 
   /**
    * Add a new data point to the values.
@@ -212,17 +191,15 @@ protected:
    * @param y y-Value of the new data point
    * @param weight Weight of the new data point (optional)
    */
-  void Add(double x, double y, double weight=1);
+  void Add(double x, double y, double weight=1) noexcept;
 
   /**
    * Remove data point to the values.
    * This updates the least squares statistics but not x/y min/max.
    * If weights aren't stored, this assumes weight = 1
    */
-  void Remove(const unsigned i);
+  void Remove(unsigned i) noexcept;
 
 };
 
 static_assert(std::is_trivial<LeastSquares>::value, "type is not trivial");
-
-#endif // _LEASTSQS_H

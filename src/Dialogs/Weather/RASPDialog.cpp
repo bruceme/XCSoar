@@ -1,253 +1,680 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "RASPDialog.hpp"
-#include "Dialogs/ListPicker.hpp"
-#include "Dialogs/JobDialog.hpp"
-#include "Renderer/TextRowRenderer.hpp"
 #include "Widget/RowFormWidget.hpp"
-#include "Look/DialogLook.hpp"
+#include "Weather/Rasp/Configured.hpp"
+#include "Weather/Rasp/FieldControls.hpp"
 #include "Weather/Rasp/RaspStore.hpp"
-#include "Weather/Rasp/Providers.hpp"
-#include "Form/Edit.hpp"
-#include "Form/List.hpp"
+#include "Weather/MapOverlay/ControlsWidget.hpp"
+#include "Weather/Settings.hpp"
+#include "WeatherOverlayDraft.hpp"
+#include "Weather/Rasp/RaspStyle.hpp"
+#include "Weather/Rasp/ColorMap.hpp"
+#include "Weather/Rasp/RaspRenderer.hpp"
+#include "Terrain/RasterRenderer.hpp"
+#include "ui/canvas/RawBitmap.hpp"
+#include "Math/Angle.hpp"
+#include "Units/Units.hpp"
+#include "Units/System.hpp"
+#include "Units/Descriptor.hpp"
+#include "Units/Unit.hpp"
+
+#ifdef ENABLE_OPENGL
+#include "ui/canvas/opengl/ConstantAlpha.hpp"
+#endif
+#include "Profile/Keys.hpp"
+#include "Profile/Profile.hpp"
+#include "ui/window/PaintWindow.hpp"
+#include "ui/canvas/Color.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "Form/Button.hpp"
+#include "Form/Frame.hpp"
 #include "Form/DataField/Enum.hpp"
-#include "Form/DataField/Listener.hpp"
-#include "Form/ActionListener.hpp"
-#include "Protection.hpp"
+#include "Form/Edit.hpp"
+#include "Interface.hpp"
+#include "PageSettings.hpp"
+#include "Repository/FileType.hpp"
+#include "UISettings.hpp"
+#include "Look/DialogLook.hpp"
+#include "Screen/Layout.hpp"
 #include "DataGlobals.hpp"
 #include "UIGlobals.hpp"
+#include "UtilsSettings.hpp"
 #include "UIState.hpp"
 #include "ActionInterface.hpp"
 #include "Language/Language.hpp"
-#include "LocalPath.hpp"
-#include "Net/HTTP/Session.hpp"
-#include "Net/HTTP/ToFile.hpp"
-#include "IO/FileTransaction.hpp"
+#include "util/StaticString.hxx"
+#include "util/Macros.hpp"
+#include "net/http/Features.hpp"
+#ifdef HAVE_DOWNLOAD_MANAGER
+#include "Weather/Rasp/DownloadGlue.hpp"
+#include "net/http/DownloadManager.hpp"
+#endif
 
-#include <stdio.h>
+#include <fmt/format.h>
+#include <algorithm>
+#include <span>
+
+class RaspColorbarWindow : public PaintWindow {
+  const DialogLook &look;
+  const RaspStyle *style = nullptr;
+  ContourDensity contour_density = ContourDensity::OFF;
+
+public:
+  explicit RaspColorbarWindow(const DialogLook &_look) noexcept
+    :look(_look) {}
+
+  void SetStyle(const RaspStyle *_style,
+                ContourDensity _contour_density) noexcept {
+    style = _style;
+    contour_density = _contour_density;
+    Invalidate();
+  }
+
+  void OnPaint(Canvas &canvas) noexcept override;
+};
+
+void
+RaspColorbarWindow::OnPaint(Canvas &canvas) noexcept
+{
+  const auto rc = canvas.GetRect();
+
+  if (style == nullptr) {
+    canvas.Clear(look.background_color);
+    return;
+  }
+
+  const unsigned height_scale = style->height_scale;
+
+  // Build the color table using the same code path
+  // as the map renderer
+  auto materialized =
+    MaterializeColorRamp(style->color_map,
+                         style->color_map_alpha,
+                         style->scale, style->offset,
+                         height_scale, style->do_water);
+  auto ramp = materialized.GetColorRamp();
+
+  // Gate alpha on the backend's per-pixel source-alpha capability, matching
+  // the map renderer, so the preview never diverges from the actual map.
+  const bool use_alpha = ramp.has_alpha && HaveBitmapSourceAlpha();
+  const auto &map = use_alpha
+    ? style->color_map_alpha : style->color_map;
+  const float min_v = map.points[0].value;
+  const float max_v = map.points[map.num_points - 1].value;
+
+  // Compute rendering-domain bounds from the physical
+  // color map range
+  const int16_t min_h = (int16_t)std::clamp(
+    (int)(min_v * style->scale + style->offset),
+    0, (int)INT16_MAX);
+  const int16_t max_h = (int16_t)std::clamp(
+    (int)(max_v * style->scale + style->offset),
+    0, (int)INT16_MAX);
+
+  RasterRenderer renderer;
+  if (use_alpha)
+    renderer.PrepareColorTableAlpha(
+      &ramp, style->do_water,
+      height_scale, RASP_INTERP_LEVELS);
+  else
+    renderer.PrepareColorTable(
+      &ramp, style->do_water,
+      height_scale, RASP_INTERP_LEVELS);
+
+  canvas.Select(look.text_font);
+  const unsigned font_h = canvas.CalcTextSize("0").height;
+  const int bar_bottom = rc.bottom - font_h - Layout::Scale(2);
+  const unsigned width = rc.right - rc.left;
+  const unsigned bar_height = std::max(0, bar_bottom - rc.top);
+
+  canvas.DrawFilledRectangle(PixelRect{rc.left, bar_bottom, rc.right, rc.bottom},
+                             look.background_color);
+
+  if (width == 0 || bar_height == 0)
+    return;
+
+  // Fill a synthetic height matrix with a horizontal
+  // gradient and render through the full pipeline
+  renderer.FillGradient({width, bar_height},
+                        min_h, max_h);
+  const unsigned contour_spacing =
+    ContourSpacing(contour_density, height_scale);
+  renderer.GenerateImage(false, height_scale,
+                         0, 0, Angle::Zero(), contour_spacing);
+
+  if (use_alpha) {
+    // Draw checkerboard background for alpha styles
+    constexpr unsigned CHECK_SQUARES_Y = 7;
+    const unsigned check_squares_x = std::max(1u, CHECK_SQUARES_Y * width / bar_height);
+    const unsigned check_size_x = width / check_squares_x + 1;
+    const unsigned check_size_y = bar_height / CHECK_SQUARES_Y + 1;
+    const Color light_color(230, 230, 230);
+    const Color dark_color(26, 26, 26);
+
+    for (unsigned iy = 0; iy < CHECK_SQUARES_Y; iy++) {
+         unsigned y = iy * bar_height / CHECK_SQUARES_Y;
+      for (unsigned ix = 0; ix < check_squares_x; ix++) {
+        unsigned x = ix * width / check_squares_x;
+        const bool light = (ix + iy + 1) % 2 == 0;
+        canvas.DrawFilledRectangle(
+          PixelRect{(int)x, (int)y,
+            std::min((int)(x + check_size_x),
+                     (int)width),
+            std::min((int)(y + check_size_y),
+                     (int)bar_height)},
+          light ? light_color : dark_color);
+      }
+    }
+  }
+
+#ifdef ENABLE_OPENGL
+  const ScopeTextureConstantAlpha blend(use_alpha, 1.0f);
+#endif
+  renderer.GetImage().StretchTo(
+    PixelSize{width, bar_height}, canvas,
+    PixelSize{width, bar_height}, false, use_alpha);
+
+  // Draw min/max text labels, converted to the user's units
+  const Unit unit = style->unit_group == UnitGroup::NONE
+    ? Unit::UNDEFINED
+    : Units::GetUserUnitByGroup(style->unit_group);
+  const char *const unit_name = unit == Unit::UNDEFINED
+    ? nullptr : Units::GetUnitName(unit);
+
+  const RaspStyle &s = *style;
+  auto fmt_value = [&s, unit, unit_name](float v) -> std::string {
+    const double value = unit == Unit::UNDEFINED
+      ? (double)v
+      : Units::ToUserUnit(s.ToSystemValue(v), unit);
+
+    std::string text = (value >= 100.0 || value <= -100.0)
+      ? fmt::format("{:.0f}", value)
+      : fmt::format("{:.1f}", value);
+
+    if (unit_name != nullptr)
+      text += fmt::format(" {}", unit_name);
+
+    return text;
+  };
+
+  canvas.SetTextColor(look.text_color);
+  canvas.SetBackgroundTransparent();
+
+  try {
+    const auto min_text = fmt_value(min_v);
+    const auto max_text = fmt_value(max_v);
+    const int text_offset = Layout::Scale(1);
+
+    canvas.DrawText({rc.left + text_offset, bar_bottom + text_offset},
+                    min_text);
+    const auto max_size = canvas.CalcTextSize(max_text);
+    canvas.DrawText({rc.right - (int)max_size.width - text_offset,
+                     bar_bottom + text_offset},
+                    max_text);
+  } catch (...) {
+    // Suppress formatting/allocation failures; colorbar rendering is preserved
+  }
+}
 
 class RASPSettingsPanel final
-  : public RowFormWidget, DataFieldListener, ActionListener {
+  : public RowFormWidget {
 
   enum Controls {
-    ITEM,
+    FILE,
+    MODIFIED,
+#ifdef HAVE_DOWNLOAD_MANAGER
+    AUTO_UPDATE,
+    UPDATE_BUTTON,
+#endif
+    OPACITY,
+    CONTOURS,
+    SPACER,
+    PAGE_HEADER,
+    LAYER,
     TIME,
-    DOWNLOAD,
+    COLORBAR,
+    APPLY_TO_PAGE,
+    ADD_PAGE,
+    SPACER_AFTER_ADD,
   };
 
   std::shared_ptr<RaspStore> rasp;
+  WeatherOverlayDraft::State overlay;
 
-  BrokenTime time;
+#ifdef HAVE_DOWNLOAD_MANAGER
+  Button *update_button = nullptr;
+#endif
+  Button *apply_to_page_button = nullptr;
+  Button *add_page_button = nullptr;
+
+  static RASPSettingsPanel *active;
+
+  ContourDensity contour_density = ContourDensity::OFF;
+  unsigned rasp_layer_opacity = 70;
+
+  void ReloadRasp();
+  void UpdateModifiedDisplay();
+  void UpdateLayerControl();
+  void UpdateTimeControl() noexcept;
+  void RefreshPageSection() noexcept;
+  void SyncUpdateButtonEnabled() noexcept;
+  void UpdateClicked();
+  void OnLayerModified() noexcept;
+  void ApplyToPageClicked() noexcept;
+  void AddPageClicked() noexcept;
+  bool EditTime(DataField &df) noexcept;
+
+  static bool EditTimeCallback(const char *caption, DataField &df,
+                               const char *help_text) noexcept;
 
 public:
-  explicit RASPSettingsPanel(std::shared_ptr<RaspStore> &&_rasp)
+  explicit RASPSettingsPanel(std::shared_ptr<RaspStore> &&_rasp) noexcept
     :RowFormWidget(UIGlobals::GetDialogLook()),
      rasp(std::move(_rasp)) {}
 
+  ~RASPSettingsPanel() noexcept override {
+    if (active == this)
+      active = nullptr;
+  }
+
 private:
-  void FillItemControl();
-  void UpdateTimeControl();
-  void OnTimeModified(const DataFieldEnum &df);
-  void Download();
+  void UpdateColorbar() noexcept;
 
   /* methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
+};
 
-  /* virtual methods from DataFieldListener */
-  void OnModified(DataField &df) override {
-    if (IsDataField(ITEM, df))
-      UpdateTimeControl();
-    else if (IsDataField(TIME, df))
-      OnTimeModified((const DataFieldEnum &)df);
-  }
+RASPSettingsPanel *RASPSettingsPanel::active = nullptr;
 
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override {
-    switch (id) {
-    case DOWNLOAD:
-      Download();
-      break;
+void
+RASPSettingsPanel::ReloadRasp()
+{
+  rasp = LoadConfiguredRasp(false);
+  DataGlobals::SetRasp(rasp);
+  RaspFileChanged = true;
+  Profile::Save();
+  UpdateModifiedDisplay();
+  RefreshPageSection();
+  SyncUpdateButtonEnabled();
+  WeatherMapOverlay::RefreshControlsLabels();
+  UpdateColorbar();
+}
+
+void
+RASPSettingsPanel::UpdateModifiedDisplay()
+{
+  StaticString<32> buffer;
+  buffer.clear();
+
+  if (rasp != nullptr) {
+    const BrokenDateTime modified = rasp->GetFileModifiedTime();
+    if (modified.IsPlausible()) {
+      buffer.Format("%04u-%02u-%02u %02u:%02u",
+                      modified.year, modified.month, modified.day,
+                      modified.hour, modified.minute);
     }
   }
-};
+
+  if (buffer.empty())
+    buffer = _("Unknown");
+
+  SetText(MODIFIED, buffer.c_str());
+}
 
 void
-RASPSettingsPanel::FillItemControl()
+RASPSettingsPanel::UpdateLayerControl()
 {
-  auto &df = (DataFieldEnum &)GetDataField(ITEM);
-
+  auto &control = GetControl(LAYER);
+  auto &df = (DataFieldEnum &)*control.GetDataField();
   df.ClearChoices();
-  df.AddChoice(-1, _T("none"), _T("none"), nullptr);
-  for (unsigned i = 0; i < rasp->GetItemCount(); i++) {
-    const auto &mi = rasp->GetItemInfo(i);
-    const TCHAR *label = mi.label;
-    if (label != nullptr)
-      label = gettext(label);
 
-    const TCHAR *help = mi.help;
-    if (help != nullptr)
-      help = gettext(help);
-
-    df.AddChoice(i, mi.name, label, help);
+  if (rasp == nullptr || rasp->GetItemCount() == 0) {
+    df.AddChoice(-1, "none", _("None"), nullptr);
+    df.SetValue(-1);
+    overlay.draft.rasp_field = -1;
+    control.SetEnabled(false);
+    control.RefreshDisplay();
+    return;
   }
 
-  const WeatherUIState &state = CommonInterface::GetUIState().weather;
-  df.Set(state.map);
+  Rasp::FieldChoicesOptions options;
+  options.include_none = true;
+  Rasp::FillFieldChoices(df, rasp.get(), options);
+
+  if (overlay.draft.rasp_field < 0 ||
+      unsigned(overlay.draft.rasp_field) >= rasp->GetItemCount())
+    overlay.draft.rasp_field = -1;
+
+  df.SetValue(overlay.draft.rasp_field);
+  control.SetEnabled(true);
+  control.RefreshDisplay();
 }
 
 void
-RASPSettingsPanel::UpdateTimeControl()
+RASPSettingsPanel::UpdateTimeControl() noexcept
 {
-  const DataFieldEnum &item = (const DataFieldEnum &)GetDataField(ITEM);
-
-  const int item_index = item.GetValue();
-  SetRowEnabled(TIME, item_index >= 0);
-
-  if (item_index >= 0) {
-    DataFieldEnum &time_df = (DataFieldEnum &)GetDataField(TIME);
-    time_df.ClearChoices();
-    time_df.addEnumText(_("Now"));
-
-    rasp->ForEachTime(item_index, [&time_df](BrokenTime t){
-        TCHAR timetext[10];
-        _stprintf(timetext, _T("%02u:%02u"), t.hour, t.minute);
-        time_df.addEnumText(timetext, t.GetMinuteOfDay());
-      });
-
-    if (time.IsPlausible())
-      time_df.Set(time.GetMinuteOfDay());
-    GetControl(TIME).RefreshDisplay();
-  }
+  StaticString<64> label;
+  Rasp::FormatTimeLabelForPage(label, overlay.draft);
+  WeatherOverlayDraft::SetAxisLabel(
+    GetControl(TIME), label.c_str(),
+    Rasp::IsFieldTimeSelectable(overlay.draft.rasp_field));
 }
-
-inline void
-RASPSettingsPanel::OnTimeModified(const DataFieldEnum &df)
-{
-  const int value = df.GetValue();
-  time = value >= 0
-    ? BrokenTime::FromMinuteOfDay(value)
-    : BrokenTime::Invalid();
-}
-
-class RaspProviderRenderer : public ListItemRenderer {
-  TextRowRenderer row_renderer;
-
-public:
-  unsigned CalculateLayout(const DialogLook &look) {
-    return row_renderer.CalculateLayout(*look.list.font);
-  }
-
-  virtual void OnPaintItem(Canvas &canvas, const PixelRect rc,
-                           unsigned i) override {
-    row_renderer.DrawTextRow(canvas, rc, rasp_providers[i].name);
-  }
-};
 
 void
-RASPSettingsPanel::Download()
+RASPSettingsPanel::RefreshPageSection() noexcept
 {
-  unsigned n = 0;
-  for (auto i = rasp_providers; i->url != nullptr; ++i)
-    ++n;
+  overlay.Load(PageLayout::Overlay::RASP);
+  UpdateLayerControl();
+  UpdateTimeControl();
+  UpdateColorbar();
+  overlay.SyncButtons(apply_to_page_button, add_page_button);
+}
 
-  assert(n > 0);
-
-  RaspProviderRenderer renderer;
-  int i = ListPicker(_("Download"), n, 0, renderer.CalculateLayout(GetLook()),
-                     renderer);
-  if (i < 0)
+void
+RASPSettingsPanel::ApplyToPageClicked() noexcept
+{
+  if (!overlay.ApplyIfDirty())
     return;
 
-  const char *url = rasp_providers[i].url;
-  auto path = LocalPath(_T(RASP_FILENAME));
-
-  {
-    DialogJobRunner runner(UIGlobals::GetMainWindow(),
-                           GetLook(),
-                           _("Download"), true);
-
-    Net::Session session;
-
-    FileTransaction transaction(path);
-    Net::DownloadToFileJob job(session, url, transaction.GetTemporaryPath());
-    if (!runner.Run(job) || !job.WasSuccessful())
-      return;
-
-    transaction.Commit();
-  }
-
-  rasp = std::make_shared<RaspStore>(std::move(path));
-  rasp->ScanAll();
-
-  DataGlobals::SetRasp(std::shared_ptr<RaspStore>(rasp));
-  FillItemControl();
+  UpdateLayerControl();
+  UpdateTimeControl();
+  overlay.SyncButtons(apply_to_page_button, add_page_button);
 }
 
 void
-RASPSettingsPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+RASPSettingsPanel::AddPageClicked() noexcept
 {
-  const WeatherUIState &state = CommonInterface::GetUIState().weather;
-  time = state.time;
-
-  WndProperty *wp;
-
-  wp = AddEnum(_("Field"), nullptr, this);
-  wp->GetDataField()->EnableItemHelp(true);
-  FillItemControl();
-
-  wp->RefreshDisplay();
-
-  AddEnum(_("Time"), nullptr, this);
-  UpdateTimeControl();
-
-  AddButton(_("Download"), *this, DOWNLOAD);
+  overlay.AddPage(apply_to_page_button, add_page_button);
 }
 
 bool
-RASPSettingsPanel::Save(bool &_changed)
+RASPSettingsPanel::EditTime([[maybe_unused]] DataField &df) noexcept
 {
-  WeatherUIState &state = CommonInterface::SetUIState().weather;
+  if (!Rasp::EditTimeOnLayout(overlay.draft))
+    return true;
 
-  state.map = GetValueInteger(ITEM);
-  state.time = time;
+  UpdateTimeControl();
+  overlay.SyncButtons(apply_to_page_button, add_page_button);
+  return true;
+}
 
-  ActionInterface::SendUIState(true);
+bool
+RASPSettingsPanel::EditTimeCallback([[maybe_unused]] const char *caption,
+                                    DataField &df,
+                                    [[maybe_unused]] const char *help_text) noexcept
+{
+  return active != nullptr ? active->EditTime(df) : false;
+}
+
+void
+RASPSettingsPanel::OnLayerModified() noexcept
+{
+  auto &df = (DataFieldEnum &)*GetControl(LAYER).GetDataField();
+  overlay.draft.rasp_field = df.GetValue();
+  UpdateTimeControl();
+  UpdateColorbar();
+  overlay.SyncButtons(apply_to_page_button, add_page_button);
+}
+
+void
+RASPSettingsPanel::SyncUpdateButtonEnabled() noexcept
+{
+#ifdef HAVE_DOWNLOAD_MANAGER
+  if (update_button == nullptr)
+    return;
+
+  /* Manual Update stays available even when Auto update is on
+     (WeatherSettings::rasp.auto_update), but needs a file selected. */
+  update_button->SetEnabled(Net::DownloadManager::IsAvailable() &&
+                            !GetValueFile(FILE).empty());
+#endif
+}
+
+void
+RASPSettingsPanel::UpdateClicked()
+{
+#ifdef HAVE_DOWNLOAD_MANAGER
+  if (GetValueFile(FILE).empty())
+    return;
+
+  RequestConfiguredRaspUpdate();
+#endif
+}
+
+void
+RASPSettingsPanel::UpdateColorbar() noexcept
+{
+  /* The colorbar previews the layer selected in the "Layer" control;
+     the "None" choice has the id -1. */
+  const RaspStyle *s = nullptr;
+  const int field_index = overlay.draft.rasp_field;
+  if (field_index >= 0 && rasp &&
+      unsigned(field_index) < rasp->GetItemCount()) {
+    const auto &mi = rasp->GetItemInfo(field_index);
+    s = &LookupWeatherTerrainStyle(mi.name);
+  }
+
+  ((RaspColorbarWindow &)GetRow(COLORBAR)).SetStyle(s, contour_density);
+}
+
+void
+RASPSettingsPanel::Prepare([[maybe_unused]] ContainerWindow &parent,
+                           [[maybe_unused]] const PixelRect &rc) noexcept
+{
+  active = this;
+
+  const auto &settings =
+    CommonInterface::GetComputerSettings().weather;
+
+  WndProperty *wp = AddFile(_("File"), nullptr,
+                            ProfileKeys::RaspFile,
+                            GetFileTypePatterns(FileType::RASP),
+                            FileType::RASP);
+  wp->GetDataField()->SetOnModified([this]{
+    if (SaveValueFileReader(FILE, ProfileKeys::RaspFile)) {
+      ReloadRasp();
+      GetControl(FILE).RefreshDisplay();
+    }
+  });
+
+  AddReadOnly(C_("Status", "Modified"),
+              _("Local date and time of the selected RASP file."));
+  UpdateModifiedDisplay();
+
+#ifdef HAVE_DOWNLOAD_MANAGER
+  AddBoolean(C_("Setting", "Auto update"),
+             _("Automatically download a newer RASP file when the "
+               "configured forecast is missing or out of date."),
+             settings.rasp.auto_update);
+  GetControl(AUTO_UPDATE).GetDataField()->SetOnModified([this]{
+    auto &weather = CommonInterface::SetComputerSettings().weather;
+    if (SaveValue(AUTO_UPDATE, ProfileKeys::RaspAutoUpdate,
+                  weather.rasp.auto_update))
+      Profile::Save();
+    SyncUpdateButtonEnabled();
+    if (weather.rasp.auto_update)
+      RequestConfiguredRaspUpdateIfOutOfDate();
+  });
+  if (!Net::DownloadManager::IsAvailable())
+    SetRowEnabled(AUTO_UPDATE, false);
+
+  update_button = AddButton(_("Update"), [this]{ UpdateClicked(); });
+  SyncUpdateButtonEnabled();
+#endif
+
+  const auto &dialog_look = UIGlobals::GetDialogLook();
+
+  rasp_layer_opacity = CommonInterface::GetMapSettings().rasp_layer_opacity;
+  AddInteger(_("Overlay opacity"),
+             /* xgettext:no-c-format */
+             _("Sets the opacity of the RASP weather overlay on the map.  "
+               "0% is fully transparent, 100% is fully opaque."),
+             "%d %%", "%d", 0, 100, 10,
+             rasp_layer_opacity);
+
+  {
+    static constexpr StaticEnumChoice contour_density_list[] = {
+      { ContourDensity::OFF,       N_("Off") },
+      { ContourDensity::WIDE,      N_("Wide") },
+      { ContourDensity::REGULAR,   N_("Regular") },
+      { ContourDensity::FINE,      N_("Fine") },
+      { ContourDensity::SUPERFINE, N_("Superfine") },
+      nullptr,
+    };
+    static_assert(ARRAY_SIZE(contour_density_list) ==
+                  unsigned(ContourDensity::COUNT) + 1,
+                  "contour_density_list must match ContourDensity::COUNT");
+    contour_density = CommonInterface::GetMapSettings().rasp_contour_density;
+    WndProperty *cp = AddEnum(_("Contours"),
+                              _("Draws contour lines onto the RASP weather "
+                                "overlay.  Denser settings draw more lines; "
+                                "\"Off\" disables the contour lines."),
+                              contour_density_list,
+                              (unsigned)contour_density);
+    cp->GetDataField()->SetOnModified([this]{
+      contour_density = (ContourDensity)GetValueEnum(CONTOURS);
+      UpdateColorbar();
+    });
+  }
+
+  /* Everything below relates to the currently displayed page, not the
+     global RASP file/transparency/contour settings above.  Separate it
+     with an empty line (an empty WndFrame) and a plain-text header (a
+     WndFrame, so the header text is not enclosed in an input-field
+     box). */
+  {
+    auto spacer = std::make_unique<WndFrame>(dialog_look);
+    spacer->Create((ContainerWindow &)GetWindow(),
+                   {0, 0, Layout::Scale(100),
+                    (int)Layout::GetMinimumControlHeight()});
+    Add(std::move(spacer));
+  }
+
+  {
+    const auto &ui_state = CommonInterface::GetUIState();
+    const auto &ui_settings = CommonInterface::GetUISettings();
+    const unsigned page_index = ui_state.pages.current_index;
+    const PageLayout &page = ui_settings.pages.pages[page_index];
+
+    /* Pass rasp=nullptr so the title omits the selected RASP field name;
+       that field is configured right here in this dialog. */
+    StaticString<64> title_buffer;
+    const char *title =
+      page.MakeTitle(ui_settings.info_boxes,
+                     std::span{title_buffer.data(), title_buffer.capacity()});
+
+    StaticString<128> header;
+    header.Format("%s %u - %s:", _("Page"), page_index + 1, title);
+
+    auto header_frame = std::make_unique<WndFrame>(dialog_look);
+    header_frame->Create((ContainerWindow &)GetWindow(),
+                         {0, 0, Layout::Scale(100),
+                          (int)Layout::GetMinimumControlHeight()});
+    header_frame->SetFont(dialog_look.bold_font);
+    header_frame->SetText(header.c_str());
+    Add(std::move(header_frame));
+  }
+
+  auto *layer = AddEnum(C_("Weather control", "Layer"),
+                        _("RASP weather layer for the current map page. "
+                          "Use Apply to page to commit changes."));
+  layer->GetDataField()->SetOnModified([this]{
+    OnLayerModified();
+  });
+
+  auto *time = AddEnum(C_("Weather control", "Time"),
+                       _("Forecast time for the current map page. "
+                         "Opens the same picker as the weather controls "
+                         "(Auto, Now, or a fixed quarter-hour slot)."));
+  time->SetEditCallback(EditTimeCallback);
+
+  {
+    auto colorbar =
+      std::make_unique<RaspColorbarWindow>(dialog_look);
+
+    WindowStyle style;
+    style.Border();
+    colorbar->Create((ContainerWindow &)GetWindow(),
+                     {0, 0, Layout::Scale(100), Layout::Scale(40)},
+                     style);
+    Add(std::move(colorbar));
+  }
+
+  UpdateColorbar();
+
+  apply_to_page_button = AddButton(C_("Button", "Apply to page"), [this]{
+    ApplyToPageClicked();
+  });
+  add_page_button = AddButton(C_("Button", "Add page"), [this]{
+    AddPageClicked();
+  });
+  RefreshPageSection();
+  AddSpacer();
+
+  AddButton(C_("Button", "Pages setup"), [this]{
+    WeatherOverlayDraft::OpenPagesConfig();
+    RefreshPageSection();
+  });
+}
+
+void
+RASPSettingsPanel::Show(const PixelRect &rc) noexcept
+{
+  RowFormWidget::Show(rc);
+  RefreshPageSection();
+  SyncUpdateButtonEnabled();
+}
+
+bool
+RASPSettingsPanel::Save(bool &_changed) noexcept
+{
+  bool changed = false;
+
+#ifdef HAVE_DOWNLOAD_MANAGER
+  auto &weather = CommonInterface::SetComputerSettings().weather;
+  if (SaveValue(AUTO_UPDATE, ProfileKeys::RaspAutoUpdate,
+               weather.rasp.auto_update))
+    changed = true;
+#endif
+
+  /* Compare against the live setting, not against #contour_density:
+     the latter is updated by the control's OnModified callback to
+     preview the colorbar, so it already holds the new value here. */
+  if (SaveValueEnum(CONTOURS, ProfileKeys::RaspContours,
+                    CommonInterface::SetMapSettings().rasp_contour_density)) {
+    /* Propagate the map settings; the redraw is triggered by the
+       SendUIState() call below. */
+    ActionInterface::SendMapSettings(false);
+    changed = true;
+  }
+
+  if (SaveValueInteger(OPACITY, ProfileKeys::RaspLayerOpacity,
+                       rasp_layer_opacity)) {
+    CommonInterface::SetMapSettings().rasp_layer_opacity =
+      (uint8_t)rasp_layer_opacity;
+    ActionInterface::SendMapSettings(false);
+    changed = true;
+  }
+
+  if (changed) {
+    /* This dialog can be shown standalone (via the weather dialog),
+       where nothing else writes the profile to disk, so persist here. */
+    Profile::Save();
+    ActionInterface::SendUIState(true);
+  }
+
+  _changed |= changed;
 
   return true;
 }
 
-Widget *
-CreateRaspWidget()
+std::unique_ptr<Widget>
+CreateRaspWidget() noexcept
 {
   auto rasp = DataGlobals::GetRasp();
-  return new RASPSettingsPanel(std::move(rasp));
+  return std::make_unique<RASPSettingsPanel>(std::move(rasp));
 }
-
-/*
-  Todo:
-  - time based search
-  - Draw a legend on screen?
-  - Auto-advance time index of forecast if before current time
-*/

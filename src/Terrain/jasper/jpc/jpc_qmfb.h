@@ -67,14 +67,12 @@
  * $Id$
  */
 
-#ifndef JPC_QMFB_H
-#define JPC_QMFB_H
+#pragma once
 
 /******************************************************************************\
 * Includes.
 \******************************************************************************/
 
-#include "jasper/jas_seq.h"
 #include "jpc_fix.h"
 
 /******************************************************************************\
@@ -102,9 +100,9 @@ any particular platform.  Hopefully, it is not too unreasonable, however. */
 #endif
 
 typedef struct {
-#ifdef ENABLE_JASPER_ENCODE
+#ifdef JAS_ENABLE_ENCODER
 	int (*analyze)(jpc_fix_t *, int, int, int, int, int);
-#endif /* ENABLE_JASPER_ENCODE */
+#endif
 	int (*synthesize)(jpc_fix_t *, int, int, int, int, int);
 	const double *lpenergywts;
 	const double *hpenergywts;
@@ -112,5 +110,3 @@ typedef struct {
 
 extern const jpc_qmfb2d_t jpc_ft_qmfb2d;
 extern const jpc_qmfb2d_t jpc_ns_qmfb2d;
-
-#endif

@@ -1,40 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ASYNC_JOB_RUNNER_HPP
-#define XCSOAR_ASYNC_JOB_RUNNER_HPP
-
-#include "Thread/Thread.hpp"
+#include "thread/Thread.hpp"
 
 #include <atomic>
 #include <exception>
-
-#include <assert.h>
+#include <cassert>
 
 class Job;
 class OperationEnvironment;
 class ThreadedOperationEnvironment;
-class Notify;
+namespace UI { class Notify; }
 
 /**
  * An environment that runs a #Job in another thread.  It does not
@@ -45,7 +23,7 @@ class Notify;
 class AsyncJobRunner final : private Thread {
   Job *job;
   ThreadedOperationEnvironment *env;
-  Notify *notify;
+  UI::Notify *notify;
 
   std::atomic<bool> running;
 
@@ -88,7 +66,7 @@ public:
    * @param notify an optional object that gets notified when the job
    * finishes
    */
-  void Start(Job *job, OperationEnvironment &env, Notify *notify=NULL);
+  void Start(Job *job, OperationEnvironment &env, UI::Notify *notify=nullptr);
 
   /**
    * Cancel the current #Job.  Returns immediately; to wait for the
@@ -114,7 +92,5 @@ public:
 
 private:
   /* virtual methods from class Thread */
-  void Run() override;
+  void Run() noexcept override;
 };
-
-#endif

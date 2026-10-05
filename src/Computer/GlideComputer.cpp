@@ -1,32 +1,14 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "GlideComputer.hpp"
+#include "Atmosphere/AirDensity.hpp"
 #include "Computer/Settings.hpp"
 #include "NMEA/Derived.hpp"
-#include "ConditionMonitor/ConditionMonitors.hpp"
 #include "GlideComputerInterface.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
+
+using namespace std::chrono;
 
 static PeriodClock last_team_code_update;
 
@@ -38,6 +20,7 @@ GlideComputer::GlideComputer(const ComputerSettings &_settings,
   :air_data_computer(_way_points),
    warning_computer(_settings.airspace.warnings, _airspace_database),
    task_computer(task, _airspace_database, &warning_computer.GetManager()),
+   idle_condition_monitors(warning_computer.GetManager()),
    waypoints(_way_points),
    retrospective(_way_points),
    team_code_ref_id(-1)
@@ -74,22 +57,28 @@ GlideComputer::ProcessGPS(bool force)
 {
   const MoreData &basic = Basic();
   DerivedInfo &calculated = SetCalculated();
+
+  if (computer_settings.polar.glide_polar_task.IsValid())
+    if (const auto altitude = basic.GetAnyAltitude())
+      computer_settings.polar.glide_polar_task.SetDensityRatio(
+          AirDensityRatio(*altitude));
+
   const ComputerSettings &settings = GetComputerSettings();
 
   const bool last_flying = calculated.flight.flying;
 
   if (basic.time_available) {
     /* use UTC offset to calculate local time */
-    const int utc_offset_s = settings.utc_offset.AsSeconds();
+    const auto utc_offset = settings.utc_offset.ToDuration();
 
     calculated.date_time_local = basic.date_time_utc.IsDatePlausible()
       /* known date: apply UTC offset to BrokenDateTime, which may
          increment/decrement date */
-      ? basic.date_time_utc + utc_offset_s
+      ? basic.date_time_utc + utc_offset
       /* unknown date: apply UTC offset only to BrokenTime, leave the
          BrokenDate part invalid as it was */
       : BrokenDateTime(BrokenDate::Invalid(),
-                       ((const BrokenTime &)basic.date_time_utc) + utc_offset_s);
+                       basic.date_time_utc.GetTime() + utc_offset);
   } else
     calculated.date_time_local = BrokenDateTime::Invalid();
 
@@ -120,7 +109,10 @@ GlideComputer::ProcessGPS(bool force)
 
   TakeoffLanding(last_flying);
 
-  task_computer.ProcessAutoTask(basic, calculated);
+  // const_cast is safe here: waypoints object is actually non-const
+  // (from data_components->waypoints), and AddTempPoint is a safe operation
+  task_computer.ProcessAutoTask(basic, calculated,
+                                const_cast<Waypoints &>(waypoints));
 
   // Process extended information
   air_data_computer.ProcessVertical(Basic(),
@@ -139,10 +131,11 @@ GlideComputer::ProcessGPS(bool force)
 
   // update basic trace history
   if (basic.time_available) {
-    const auto dt = trace_history_time.Update(basic.time, 0.5, 30);
-    if (dt > 0)
+    const auto dt = trace_history_time.Update(basic.time,
+                                              milliseconds{500}, seconds{30});
+    if (dt.count() > 0)
       calculated.trace_history.append(basic);
-    else if (dt < 0)
+    else if (dt.count() < 0)
       /* time warp */
       calculated.trace_history.clear();
   }
@@ -150,9 +143,9 @@ GlideComputer::ProcessGPS(bool force)
   CalculateVarioScale();
 
   // Update the ConditionMonitors
-  ConditionMonitorsUpdate(Basic(), Calculated(), settings);
+  condition_monitors.Update(Basic(), Calculated(), settings);
 
-  return idle_clock.CheckUpdate(500);
+  return idle_clock.CheckUpdate(milliseconds(500));
 }
 
 void
@@ -162,7 +155,7 @@ GlideComputer::ProcessIdle(bool exhaustive)
   DerivedInfo &calculated = SetCalculated();
 
   // Log GPS fixes for internal usage
-  // (snail trail, stats, olc, ...)
+  // (snail trail, stats, contest, ...)
   stats_computer.DoLogging(basic, calculated);
   log_computer.Run(basic, calculated, GetComputerSettings().logger);
 
@@ -171,6 +164,8 @@ GlideComputer::ProcessIdle(bool exhaustive)
 
   warning_computer.Update(GetComputerSettings(), basic,
                           calculated, calculated.airspace_warnings);
+
+  idle_condition_monitors.Update(basic, calculated, GetComputerSettings());
 
   // Calculate summary of flight
   if (basic.location_available)
@@ -205,7 +200,7 @@ GlideComputer::CalculateOwnTeamCode()
     return;
 
   // Only calculate every 10sec otherwise cancel calculation
-  if (!last_team_code_update.CheckUpdate(10000))
+  if (!last_team_code_update.CheckUpdate(seconds(10)))
     return;
 
   // Get bearing and distance to the reference waypoint
@@ -367,11 +362,20 @@ void
 GlideComputer::CalculateVarioScale()
 {
   DerivedInfo &calculated = SetCalculated();
-  const GlidePolar &glide_polar = GetComputerSettings().polar.glide_polar_task;
+  const FlightStatistics &stats = stats_computer.GetFlightStats();
   calculated.common_stats.vario_scale_positive =
-      std::max(stats_computer.GetFlightStats().GetVarioScalePositive(),
+      stats.GetVarioScalePositive();
+  calculated.common_stats.vario_scale_negative =
+      stats.GetVarioScaleNegative();
+
+  const GlidePolar &glide_polar = GetComputerSettings().polar.glide_polar_task;
+  if (!glide_polar.IsValid())
+    return;
+
+  calculated.common_stats.vario_scale_positive =
+      std::max(calculated.common_stats.vario_scale_positive,
                glide_polar.GetMC());
   calculated.common_stats.vario_scale_negative =
-      std::min(stats_computer.GetFlightStats().GetVarioScaleNegative(),
+      std::min(calculated.common_stats.vario_scale_negative,
                -glide_polar.GetSBestLD());
 }

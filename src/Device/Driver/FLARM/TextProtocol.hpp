@@ -1,38 +1,20 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "util/Compiler.h"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_TEXT_PROTOCOL_HPP
-#define XCSOAR_FLARM_TEXT_PROTOCOL_HPP
-
-#include "Compiler.h"
+#include <cstddef>
 
 /**
  * Copy a string, ignoring all characters that are illegal in a
  * setting value.  There is no buffer overflow check; the destination
  * buffer must be large enough to fit all of the source string
  * (worst-case).
+ *
+ * @param maxBytes copy no more than maxBytes bytes (excluding null terminator)
  */
 char *
-CopyCleanFlarmString(char *gcc_restrict dest, const char *gcc_restrict src);
-
-#endif
+CopyCleanFlarmString(char *gcc_restrict dest, const char *gcc_restrict src,
+                     std::size_t maxBytes) noexcept;

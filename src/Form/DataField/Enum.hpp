@@ -1,64 +1,54 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DATA_FIELD_ENUM_HPP
-#define XCSOAR_DATA_FIELD_ENUM_HPP
+#pragma once
 
 #include "Base.hpp"
-#include "Util/StaticArray.hxx"
 
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 /**
  * A struct that is used for static initialisation of the enum list.
  */
 struct StaticEnumChoice {
   unsigned id;
-  const TCHAR *display_string;
-  const TCHAR *help;
+  const char *display_string;
+  const char *help;
+
+  constexpr StaticEnumChoice(std::nullptr_t n) noexcept
+    :id(0), display_string(n), help(n) {}
+
+  template<typename T>
+  requires(std::is_same_v<T, unsigned> || std::is_same_v<T, int> ||
+           std::is_enum_v<T>)
+  constexpr StaticEnumChoice(T _id, const char *_display_string,
+                             const char *_help=nullptr) noexcept
+    :id(static_cast<unsigned>(_id)), display_string(_display_string), help(_help) {}
 };
 
 class DataFieldEnum final : public DataField {
 public:
   class Entry {
     unsigned id;
-    TCHAR *string;
-    TCHAR *display_string;
-    TCHAR *help;
+    char *string;
+    char *display_string;
+    char *help;
 
   public:
-    Entry():string(nullptr), display_string(nullptr), help(nullptr) {}
-    ~Entry();
+    Entry() noexcept:string(nullptr), display_string(nullptr), help(nullptr) {}
+    ~Entry() noexcept;
 
     Entry(const Entry &) = delete;
 
-    Entry(Entry &&other)
+    Entry(Entry &&other) noexcept
       :id(other.id), string(other.string),
        display_string(other.display_string), help(other.help) {
       other.string = other.display_string = other.help = nullptr;
     }
 
-    Entry &operator=(Entry &&other) {
+    Entry &operator=(Entry &&other) noexcept {
       id = other.id;
       std::swap(string, other.string);
       std::swap(display_string, other.display_string);
@@ -66,65 +56,70 @@ public:
       return *this;
     }
 
-    friend void swap(Entry &a, Entry &b) {
+    friend void swap(Entry &a, Entry &b) noexcept {
       std::swap(a.id, b.id);
       std::swap(a.string, b.string);
       std::swap(a.display_string, b.display_string);
       std::swap(a.help, b.help);
     }
 
-    unsigned GetId() const {
+    unsigned GetId() const noexcept {
       return id;
     }
 
-    const TCHAR *GetString() const {
+    const char *GetString() const noexcept {
       return string;
     }
 
-    const TCHAR *GetDisplayString() const {
+    const char *GetDisplayString() const noexcept {
       return display_string;
     }
 
-    const TCHAR *GetHelp() const {
+    const char *GetHelp() const noexcept {
       return help;
     }
 
-    void SetString(const TCHAR *_string);
-    void Set(unsigned _id, const TCHAR *_string,
-             const TCHAR *_display_string=nullptr,
-             const TCHAR *_help=nullptr);
+    void SetString(const char *_string) noexcept;
+    void SetDisplayString(const char *_string) noexcept;
+    void Set(unsigned _id, const char *_string,
+             const char *_display_string=nullptr,
+             const char *_help=nullptr) noexcept;
   };
 
 private:
-  StaticArray<Entry, 128> entries;
-  unsigned int value;
+  std::vector<Entry> entries;
+  std::size_t value = 0;
 
 public:
-  DataFieldEnum(DataFieldListener *listener=nullptr)
-    :DataField(Type::ENUM, true, listener), value(0) {}
+  DataFieldEnum(DataFieldListener *listener=nullptr) noexcept
+    :DataField(Type::ENUM, true, listener) {}
 
-  gcc_pure
-  unsigned GetValue() const;
+  [[gnu::pure]]
+  unsigned GetValue() const noexcept;
 
-  gcc_pure
-  bool Exists(const TCHAR *text) const {
+  [[gnu::pure]]
+  bool Exists(const char *text) const noexcept {
     return Find(text) >= 0;
   }
 
-  void replaceEnumText(unsigned int i, const TCHAR *Text);
+  void replaceEnumText(std::size_t index, const char *Text) noexcept;
+
+  void SetDisplayString(std::size_t index, const char *_string) noexcept {
+    entries[index].SetDisplayString(_string);
+  }
 
   /**
    * Clear the list of choices.  This will not notify the
    * DataFieldListener.
    */
-  void ClearChoices() {
+  void ClearChoices() noexcept {
     entries.clear();
     value = 0;
   }
 
-  bool AddChoice(unsigned id, const TCHAR *text,
-                 const TCHAR *display_string=nullptr,
-                 const TCHAR *help=nullptr);
+  bool AddChoice(unsigned id, const char *text,
+                 const char *display_string=nullptr,
+                 const char *help=nullptr);
 
   /**
    * Add choices from the specified nullptr-terminated list (the last
@@ -133,28 +128,35 @@ public:
    */
   void AddChoices(const StaticEnumChoice *list);
 
-  bool addEnumText(const TCHAR *text, unsigned id, const TCHAR *help=nullptr) {
+  bool addEnumText(const char *text, unsigned id,
+                   const char *help=nullptr) {
     return AddChoice(id, text, nullptr, help);
   }
 
-  unsigned addEnumText(const TCHAR *Text, const TCHAR *display_string=nullptr,
-                       const TCHAR *ItemHelpText=nullptr);
-  void addEnumTexts(const TCHAR *const*list);
+  unsigned addEnumText(const char *Text, const char *display_string=nullptr,
+                       const char *ItemHelpText=nullptr);
+  void addEnumTexts(const char *const*list);
 
   /**
    * @return help of current enum item or nullptr if current item has no help
    */
-  const TCHAR *GetHelp() const;
+  const char *GetHelp() const noexcept;
 
   /**
    * @param value True if display item help in text box below picker
    * Displays help strings associated with enums Items
    */
-  void EnableItemHelp(bool value) override {
+  void EnableItemHelp(bool value) noexcept override {
     item_help_enabled = value;
   }
 
-  void Set(unsigned Value);
+  void SetValue(unsigned Value) noexcept;
+
+  template<typename T>
+  requires(std::is_enum_v<T>)
+  void SetValue(T value) noexcept {
+    SetValue(unsigned(value));
+  }
 
   /**
    * Select the item with the specified text (not display string).
@@ -163,7 +165,17 @@ public:
    * @return false if an item with the specified text was not found,
    * and therefore the value was not changed
    */
-  bool Set(const TCHAR *text);
+  bool SetValue(const char *text) noexcept;
+
+  bool ModifyValue(unsigned new_value) noexcept;
+
+  template<typename T>
+  requires(std::is_enum_v<T>)
+  bool ModifyValue(T value) noexcept {
+    return ModifyValue(unsigned(value));
+  }
+
+  bool ModifyValue(const char *text) noexcept;
 
   /**
    * Set the value to the specified string.  If there is no choice
@@ -171,37 +183,36 @@ public:
    *
    * @return the new integer value
    */
-  int SetStringAutoAdd(const TCHAR *text);
+  int SetStringAutoAdd(const char *text);
 
-  void Sort(unsigned startindex = 0);
+  void Sort(std::size_t startindex = 0) noexcept;
 
-  gcc_pure
-  unsigned Count() const {
+  [[gnu::pure]]
+  std::size_t Count() const noexcept {
     return entries.size();
   }
-  unsigned getItem(unsigned index) const;
+
+  const auto &operator[](std::size_t index) const noexcept {
+    return entries[index];
+  }
 
   /* virtual methods from class DataField */
-  void Inc() override;
-  void Dec() override;
-  int GetAsInteger() const override;
-  const TCHAR *GetAsString() const override;
-  const TCHAR *GetAsDisplayString() const override;
-  void SetAsInteger(int value) override;
-  void SetAsString(const TCHAR *value) override;
-  ComboList CreateComboList(const TCHAR *reference) const override;
+  void Inc() noexcept override;
+  void Dec() noexcept override;
+  const char *GetAsString() const noexcept override;
+  const char *GetAsDisplayString() const noexcept override;
+  ComboList CreateComboList(const char *reference) const noexcept override;
+  void SetFromCombo(int iDataFieldIndex, const char *sValue) noexcept override;
 
 protected:
   /**
    * Finds an entry with the specified text.  Returns -1 if not found.
    */
-  gcc_pure
-  int Find(const TCHAR *text) const;
+  [[gnu::pure]]
+  int Find(const char *text) const noexcept;
 
-  gcc_pure
-  int Find(unsigned id) const;
+  [[gnu::pure]]
+  int Find(unsigned id) const noexcept;
 
-  void SetIndex(unsigned new_value, bool invoke_callback);
+  void SetIndex(std::size_t new_value, bool invoke_callback) noexcept;
 };
-
-#endif

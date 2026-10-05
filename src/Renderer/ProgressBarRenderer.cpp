@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#include "ProgressBarRenderer.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "Look/Colors.hpp"
+#include "Asset.hpp"
+
+#include <algorithm>
+
+static constexpr unsigned
+CalcProgressBarPosition(unsigned current_value,
+                        unsigned min_value, unsigned max_value,
+                        unsigned width) noexcept
+{
+  if (min_value >= max_value)
+    return 0;
+
+  const unsigned value = std::clamp(current_value, min_value, max_value);
+  return (value - min_value) * width / (max_value - min_value);
+}
+
+void
+DrawSimpleProgressBar(Canvas &canvas, const PixelRect &r,
+                      unsigned current_value,
+                      unsigned min_value, unsigned max_value,
+                      const Color *background_color,
+                      const Color *progress_color) noexcept
+{
+  const int position =
+    CalcProgressBarPosition(current_value, min_value, max_value,
+                            r.GetWidth());
+
+  auto a = r, b = r;
+  a.right = b.left = a.left + position;
+
+  const Color fill_color = IsDithered()
+    ? COLOR_BLACK
+    : progress_color != nullptr
+      ? HasColors() ? *progress_color : COLOR_BLACK
+      : COLOR_GREEN;
+  canvas.DrawFilledRectangle(a, fill_color);
+  canvas.DrawFilledRectangle(b,
+                             background_color != nullptr
+                             ? *background_color : COLOR_WHITE);
+}
+
+void
+DrawRoundProgressBar(Canvas &canvas, const PixelRect &r,
+                     unsigned current_value,
+                     unsigned min_value, unsigned max_value,
+                     const Color *background_color) noexcept
+{
+  canvas.SelectNullPen();
+  if (background_color != nullptr) {
+    Brush bg_brush(*background_color);
+    canvas.Select(bg_brush);
+  } else {
+    canvas.SelectWhiteBrush();
+  }
+  canvas.DrawRoundRectangle(r, PixelSize{r.GetHeight()});
+
+  /* Inset the fill on every side.  Scaling it to the full width and
+     then shifting it right by the margin draws the end cap past the
+     track. */
+  const unsigned margin = r.GetHeight() / 9;
+  const unsigned width = r.GetWidth();
+  if (width <= 2 * margin)
+    return;
+
+  const unsigned position =
+    CalcProgressBarPosition(current_value, min_value, max_value,
+                            width - 2 * margin);
+  if (position == 0)
+    return;
+
+  Brush progress_brush(IsDithered() ? COLOR_BLACK : COLOR_XCSOAR_LIGHT);
+  canvas.Select(progress_brush);
+  unsigned top, bottom;
+  if (position <= r.GetHeight() - 2 * margin) {
+    /* A short fill is a circle, so it stays inside the track cap. */
+    const unsigned center_y = r.GetHeight() / 2;
+    top = center_y - position / 2;
+    bottom = center_y + position / 2;
+  } else {
+    top = margin;
+    bottom = r.GetHeight() - margin;
+  }
+  canvas.DrawRoundRectangle(PixelRect(r.left + int(margin),
+                                      r.top + int(top),
+                                      r.left + int(margin + position),
+                                      r.top + int(bottom)),
+                            PixelSize{r.GetHeight()});
+}

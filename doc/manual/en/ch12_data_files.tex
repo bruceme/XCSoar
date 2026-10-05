@@ -19,33 +19,13 @@ is good practice to make sure that the file names are recognisable so
 that when making configuration changes there is less risk of confusion
 between different files and different file types.
 
-Regarding older Pocket PC devices it is a good idea to have data files located in
-nonvolatile memory, the use of SD cards and other removable media in
-PDAs can cause performance issues; for smaller files, and files that
-are only accessed at start-up (waypoints, airspace, glide polars,
-configuration files), this is acceptable.  However, terrain and
-topography files are accessed continuously while XCSoar is running, so
-these should be located in faster storage memory.
-For newer Windows Mobile or Android devices this is not an issue any 
-more. The access to modern memory cards usually meets the required performance.   
+Terrain and topography files are accessed continuously while XCSoar is
+running, so they should be located on reasonably fast storage.
+Modern memory cards usually meet the required performance.
 
-Many PDAs provide a 'file store' which is nonvolatile; the same
-arguments above apply regarding their use and performance.
-
-All data files should be copied into the directory: 
-\begin{verbatim}
-My Documents/XCSoarData
-\end{verbatim}
-
-On PDAs data can also be stored on the operating system file
-store, on Compact Flash cards or SD cards under the directory
-\verb|XCSoarData|.
-
-For example:
-\begin{verbatim}
-SD Card/XCSoarData
-IPAQ File Store/XCSoarData
-\end{verbatim}
+All data files should be copied into the directory
+\verb|XCSoarData|.  See Chapter~\ref{cha:installation} for where that
+directory lives on each platform.
 
 If unsure, just start the newly installed XCSoar and it creates the \verb|XCSoarData|
 directory at the right place.
@@ -66,15 +46,15 @@ files which are generated from OpenStreetMap.
 
 Map files can be downloaded from the XCSoar web site:
 
-\url{http://www.xcsoar.org/download/maps/}
+\xcsoarwebsite{/download/maps/}
 
 To generate a custom map database with different settings and bounds, you
 may use the map generator:
 
-\url{http://mapgen.xcsoar.org/}
+\url{https://mapgen.xcsoar.org/}
 
-As far as waypoints or airspaces are included in the map database CXSoar 
-defaults to them. An e.g. separately configured waypoint file will replace all the 
+As far as waypoints or airspaces are included in the map database XCSoar
+defaults to them. An e.g.\ separately configured waypoint file will replace all the
 waypoints given by the map database.
 
 \section{Waypoints}
@@ -97,7 +77,9 @@ inaccessible.}: \url{http://soaringweb.org/TP}
 Several commercial and freely distributable programs exist for
 converting between different waypoint formats.
 
-If the elevation of any waypoints is set to zero in the waypoint file,
+Elevation field of a waypoint shouldn't be empty. If so, import of such
+a waypoint is skipped.
+But if the elevation of any waypoints is set to zero in the waypoint file,
 then XCSoar estimates the waypoint elevation from the terrain database
 if available.
 
@@ -113,16 +95,16 @@ Special Use Airspace section of the soaring web site:
 The following is the list of supported airspace types: Class A-G, Prohibited, 
 Danger Areas, Restricted, Task Area, CTR, No Gliders, Wave, Transponder 
 Mandatory, and Other.  All other airspace types will be drawn as type ``Other''.
-In addition to the OpenAir standard the AR command is recognized as the 
-airspace radio frequency.
+In addition to the OpenAir standard the 'AF' or 'AR' command is recognized as the airspace radio frequency.
+Ie. Since 2018, Naviter proposes the following change 'AF 999.999' (find 'Additional OpenAir fields' here - \url{http://www.winpilot.com/UsersGuide/UserAirspace.asp})
 
-\section{Airfield details}\label{sec:airfield-details}
+\section{Airfields or Waypoint details}\label{sec:airfield-details}
 
-The airfield details file (extension \verb|.txt|) is a simple text
-format file containing entries for each airfield, marked in square
+The airfields or waypoint details file (extension \verb|.txt|) is a simple text
+format file containing entries for each waypoint (especially airfield), marked in square
 brackets, followed by the text to be displayed on the
 Waypoint Details Dialogue for that particular waypoint.  The text should
-have a narrow margin because the waypoint details dialogue cannot
+have a narrow margin because the airfields or waypoint details dialogue cannot
 currently handle word wrapping.
 
 The text may also specify images for airfields or waypoints.  To
@@ -131,7 +113,17 @@ name (this is currently not supported on PC/Windows).  Be sure
 to avoid any additional whitespaces around the equal sign or in front of the
 keyword. Which files are supported depends on your operating system and the
 applications that are installed.  Android supports JPEG files and other
-file types, others mostly BMP images.
+file types, others mostly BMP images. one or several images can be shown.
+The file name is relative to the XCSoar data directory, also for
+waypoints loaded from a \verb|.cupx| file. For those, a section in this
+file replaces the pictures the archive carries for that waypoint, even if
+it lists no image; only a file name that also exists in the archive is
+still taken from the archive.
+
+The text may also specify any document specific to airfields or waypoints using
+\verb|file=| followed by the file name. Such document won't be loaded directly in XCSoar 
+but will be loaded by external app. Any arbitrary file is supported. PDF files, for example,
+will be loaded by your PDF reader.
 
 The names of airfields used in the file must correspond exactly to the
 names in the waypoints file, with the exception that converting to
@@ -166,7 +158,9 @@ REMARKS:
 
 ICAO: YBLA
 
+file=Benalla.pdf
 image=Benalla_sat.bmp
+image=Benalla_pic.bmp
 
 [GROOTE EYLANDT]
 Blah blah blah blah
@@ -186,22 +180,29 @@ team.
 The format of the file is simple.  Lines beginning with \verb|*| are
 ignored and so may be used to document how the polar was calculated or
 if there are restrictions on its use.  Other than comments, the file
-must contain a single row of numbers separated with commas:
+must contain a single row of numbers separated with commas.
+
+The WinPilot polar format defines eight fields:
 \begin{itemize}
 \item Mass dry gross weight in kg: this is the weight of the glider plus
-  a 'standard' pilot without ballast.
+  a `standard' pilot without ballast.
 \item Max water ballast in liters (kg).
 \item Speed in km/h for first measurement point, (usually minimum sink speed).
 \item Sink rate in m/s for first measurement point.
 \item Speed in km/h for second measurement point, (usually best glide speed).
 \item Sink rate in m/s for second measurement point.
-\item Speed in km/h for third measurement point, (usually max manoeuvring speed).
+\item Speed in km/h for third measurement point, (usually a high cruise speed).
 \item Sink rate in m/s for third measurement point.
 \end{itemize}
-The following is an extension to the existing polare file format and thus optional. 
+XCSoar optionally accepts two further fields after those eight (not part of
+the WinPilot format):
 \begin{itemize}
-\item The wing area in m$^2$ to allow the wing load computation (could be zero if unknown). 
-\item The max. manoeuvering speed in km/h to enable simple checks for the cruise speed command. 
+\item The wing area in m$^2$ to allow the wing load computation (could be zero if unknown).
+\item The max.\ cruise speed in m/s.  XCSoar uses this as an upper limit
+  for MacCready speed-to-fly (including final glide), so the computer does
+  not command unrealistically high cruise speeds.  It corresponds to the
+  plane setting ``Max.\ Cruise Speed''.  A typical choice is the rough-air
+  / green-arc limit from the flight manual.
 \end{itemize}
 
 An example, for the LS-3 glider, is given below:
@@ -250,7 +251,7 @@ file name \verb|default.prf|.
 The easiest way to create a new profile is to copy a previous one,
 such as the default profile.  Copy the file, give it a logical name,
 and then when XCSoar starts next time the new profile can be selected
-and customised through the configuration settings dialogs.
+and customised through the configuration settings dialogues.
 
 
 \section{Checklist}\label{sec:checklist-file}
@@ -258,7 +259,7 @@ and customised through the configuration settings dialogs.
 The checklist file (\verb|xcsoar-checklist.txt|) uses a similar format to
 the airfield details file.  Each page in the checklist is preceded by
 the name of the list in square brackets.  Multiple pages can be
-defined (up to 20).
+defined (up to 32).
 
 An example (extract):
 \begin{verbatim}
@@ -278,14 +279,19 @@ Remove tape from wings and tail
 
 \section{Tasks}
 
-Task files (extension \verb|.tsk|) are stored in a XCSoar own XML format, 
+Task files (extension \verb|.tsk|) are stored in XCSoar's own XML format,
 whereas SeeYou tasks can also be loaded from file (extension \verb|.cup|).
+The task file format is documented for developers and authors of
+converters at \url{https://xcsoar.readthedocs.io/en/latest/task_file.html}.
 
 \section{Flight logs} \label{sec:logfiles}
 
 The software flight logger generates IGC files (extension \verb|.igc|)
 according to the long naming convention described in the FAI 
 document {\em Technical Specification for IGC-Approved GNSS Flight Recorders}.  
+The GPS line of its header (\verb|HFGPS|) names the device that supplies
+the GPS fix when the logger starts: the first device in the Devices list
+that delivers a position, the one whose GPS flag is shown in bold.
 
 Log-files are stored in the `logs' subdirectory of the XCSoarData directory.
 These files can be imported into other programs for analysis after flight.
@@ -336,7 +342,7 @@ Some reasons why you might like to use xci:
 \begin{itemize}
 \item Modify the layout of button labels
 \item Support a new set or layout of buttons (organiser hardware buttons)
-\item Support an external device such as a bluetooth keyboard or gamepad
+\item Support an external device such as a Bluetooth keyboard or gamepad
 \item Customise any button/key event
 \item Do multiple events from one key or glide computer triggered process
 \end{itemize}
@@ -370,4 +376,3 @@ key=Task started
 delay=1500
 hide=yes
 \end{verbatim}
-% 

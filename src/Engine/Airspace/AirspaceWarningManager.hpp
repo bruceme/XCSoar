@@ -1,33 +1,18 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef AIRSPACE_WARNING_MANAGER_HPP
-#define AIRSPACE_WARNING_MANAGER_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "AirspaceWarning.hpp"
 #include "AirspaceWarningConfig.hpp"
 #include "Util/AircraftStateFilter.hpp"
-#include "Compiler.h"
+#include "time/FloatDuration.hxx"
+#include "util/Serial.hpp"
 
 #include <list>
+#include <string>
+#include <string_view>
+#include <unordered_set>
 
 class TaskStats;
 class GlidePolar;
@@ -51,25 +36,50 @@ class AirspaceWarningManager {
 
   const Airspaces &airspaces;
 
-  double prediction_time_glide;
-  double prediction_time_filter;
+  FloatDuration prediction_time_glide;
+  FloatDuration prediction_time_filter;
 
   AircraftStateFilter cruise_filter;
   AircraftStateFilter circling_filter;
 
-  typedef std::list<AirspaceWarning> AirspaceWarningList;
+  using AirspaceWarningList = std::list<AirspaceWarning>;
+
+  struct TransparentStringHash {
+    using is_transparent = void;
+
+    std::size_t operator()(std::string_view s) const noexcept {
+      return std::hash<std::string_view>{}(s);
+    }
+  };
+
+  struct TransparentStringEqual {
+    using is_transparent = void;
+
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+      return a == b;
+    }
+  };
 
   AirspaceWarningList warnings;
 
   /**
+   * NOTAM areas are removed and re-created when the NOTAM list is refreshed,
+   * so #warnings cannot match the new #AbstractAirspace by pointer.  "Ack
+   * day" for NOTAM is also keyed by NOTAM number (#GetStationName()) so it
+   * survives updates.
+   */
+  std::unordered_set<std::string, TransparentStringHash,
+                     TransparentStringEqual> notam_day_ack_by_station;
+
+  /**
    * This number is incremented each time this object is modified.
    */
-  unsigned serial;
+  Serial serial;
 
 public:
-  typedef AirspaceWarningList::const_iterator const_iterator;
+  using const_iterator = AirspaceWarningList::const_iterator;
 
-  /** 
+  /**
    * Default constructor
    * 
    * @param airspaces Store of airspaces
@@ -81,7 +91,7 @@ public:
 
   AirspaceWarningManager(const AirspaceWarningManager &) = delete;
 
-  gcc_pure
+  [[gnu::pure]]
   const FlatProjection &GetProjection() const;
 
   const AirspaceWarningConfig &GetConfig() const {
@@ -92,9 +102,10 @@ public:
 
   /**
    * Returns a serial for the current state.  The serial gets
-   * incremented each time the list of warnings is modified.
+   * incremented each time the a warning or the list of warnings is
+   * modified.
    */
-  unsigned GetSerial() const {
+  Serial GetSerial() const noexcept {
     return serial;
   }
 
@@ -119,21 +130,21 @@ public:
    */
   bool Update(const AircraftState &state, const GlidePolar &glide_polar,
               const TaskStats &task_stats,
-              const bool circling, const unsigned dt);
+              bool circling, std::chrono::duration<unsigned> dt);
 
   /**
    * Adjust time of glide predictor
    *
    * @param the_time New time (s)
    */
-  void SetPredictionTimeGlide(double time);
+  void SetPredictionTimeGlide(FloatDuration time) noexcept;
 
   /**
    * Adjust time of state predictor.  Also updates filter time constant
    *
    * @param the_time New time (s)
    */
-  void SetPredictionTimeFilter(double time);
+  void SetPredictionTimeFilter(FloatDuration time) noexcept;
 
   /**
    * Find corresponding airspace warning item in store for an airspace
@@ -142,7 +153,7 @@ public:
    *
    * @return Reference to airspace warning item
    */
-  AirspaceWarning& GetWarning(const AbstractAirspace& airspace);
+  AirspaceWarning &GetWarning(ConstAirspacePtr airspace);
 
   /**
    * Find corresponding airspace warning item in store by airspace
@@ -151,7 +162,7 @@ public:
    *
    * @return Pointer to airspace warning item (or nullptr if not found)
    */
-  AirspaceWarning* GetWarningPtr(const AbstractAirspace& airspace);
+  AirspaceWarning *GetWarningPtr(const AbstractAirspace &airspace) noexcept;
 
   /**
    * Return new corresponding airspace warning item in store by airspace
@@ -160,10 +171,11 @@ public:
    *
    * @return Pointer to airspace warning item (or nullptr if not found)
    */
-  AirspaceWarning* GetNewWarningPtr(const AbstractAirspace& airspace);
+  AirspaceWarning *GetNewWarningPtr(ConstAirspacePtr airspace);
 
-  const AirspaceWarning *GetWarningPtr(const AbstractAirspace &airspace) const {
-    return const_cast<AirspaceWarningManager *>(this)->GetWarningPtr(airspace);
+  const AirspaceWarning *GetWarningPtr(const AbstractAirspace &airspace) const noexcept {
+    return const_cast<AirspaceWarningManager *>(this)
+      ->GetWarningPtr(airspace);
   }
 
   /**
@@ -171,7 +183,7 @@ public:
    *
    * @return True if no warnings in list
    */
-  gcc_pure
+  [[gnu::pure]]
   bool empty() const {
     return warnings.empty();
   }
@@ -182,6 +194,7 @@ public:
   void clear() {
     ++serial;
     warnings.clear();
+    notam_day_ack_by_station.clear();
   }
 
   /**
@@ -198,12 +211,12 @@ public:
     return warnings.size();
   }
 
-  gcc_pure
+  [[gnu::pure]]
   const_iterator begin() const {
     return warnings.begin();
   }
 
-  gcc_pure
+  [[gnu::pure]]
   const_iterator end() const {
     return warnings.end();
   }
@@ -212,7 +225,7 @@ public:
    * Acknowledge an airspace warning or airspace inside (depending on
    * the state).
    */
-  void Acknowledge(const AbstractAirspace &airspace);
+  void Acknowledge(ConstAirspacePtr airspace) noexcept;
 
   /**
    * Acknowledge an airspace warning
@@ -220,7 +233,7 @@ public:
    * @param airspace The airspace subject
    * @param set Whether to set or cancel acknowledgement
    */
-  void AcknowledgeWarning(const AbstractAirspace& airspace,
+  void AcknowledgeWarning(ConstAirspacePtr airspace,
                           const bool set = true);
 
   /**
@@ -229,7 +242,7 @@ public:
    * @param airspace The airspace subject
    * @param set Whether to set or cancel acknowledgement
    */
-  void AcknowledgeInside(const AbstractAirspace& airspace,
+  void AcknowledgeInside(ConstAirspacePtr airspace,
                          const bool set = true);
 
   /**
@@ -238,7 +251,7 @@ public:
    * @param airspace The airspace subject
    * @param set Whether to set or cancel acknowledgement
    */
-  void AcknowledgeDay(const AbstractAirspace& airspace,
+  void AcknowledgeDay(ConstAirspacePtr airspace,
                       const bool set = true);
 
   /**
@@ -246,8 +259,8 @@ public:
    *
    * @param airspace The airspace subject
    */
-  gcc_pure
-  bool GetAckDay(const AbstractAirspace& airspace) const;
+  [[gnu::pure]]
+  bool GetAckDay(const AbstractAirspace &airspace) const noexcept;
 
   /**
    * Returns true if this airspace would be warned about,
@@ -257,10 +270,14 @@ public:
    * day" (see GetAckDay()) or airspaces that are inactive or
    * airspaces that are not configured for airspace warnings.
    */
-  gcc_pure
-  bool IsActive(const AbstractAirspace &airspace) const;
+  [[gnu::pure]]
+  bool IsActive(const AbstractAirspace &airspace) const noexcept;
 
 private:
+  AirspaceWarning *FindWarningByNotamDayAckKey(std::string_view key) noexcept;
+  const AirspaceWarning *
+  FindWarningByNotamDayAckKey(std::string_view key) const noexcept;
+
   bool UpdateTask(const AircraftState &state, const GlidePolar &glide_polar,
                   const TaskStats &task_stats);
   bool UpdateFilter(const AircraftState& state, const bool circling);
@@ -271,7 +288,5 @@ private:
                        const GeoPoint &location_predicted,
                        const AirspaceAircraftPerformance &perf,
                        const AirspaceWarning::State warning_state,
-                       double max_time);
+                       FloatDuration max_time) noexcept;
 };
-
-#endif

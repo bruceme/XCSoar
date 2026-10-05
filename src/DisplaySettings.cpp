@@ -1,30 +1,33 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DisplaySettings.hpp"
+
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 void
 DisplaySettings::SetDefaults()
 {
   orientation = DisplayOrientation::DEFAULT;
+  cursor_size = 1;
+  invert_cursor_colors = false;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  /* iOS has always laid out XCSoar inside the safe area; keep that,
+     or an update would silently move every existing installation
+     behind the status bar and the display cutout */
+  full_screen = false;
+  infobox_area_stretch = INFOBOX_AREA_STRETCH_NONE;
+#else
+  full_screen = true;
+  /* Android has always drawn the InfoBoxes and gauges edge to edge */
+  infobox_area_stretch = INFOBOX_AREA_STRETCH_ALL;
+#endif
+  status_bar = StatusBar::AUTO;
+#ifdef KOBO
+  display_type = DisplayType::E_INK;
+#else
+  display_type = DisplayType::LCD;
+#endif
 }

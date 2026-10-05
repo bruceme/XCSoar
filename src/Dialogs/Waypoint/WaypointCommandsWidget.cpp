@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WaypointCommandsWidget.hpp"
 #include "WaypointDialogs.hpp"
@@ -33,24 +13,14 @@ Copyright_License {
 #include "Task/MapTaskManager.hpp"
 #include "Interface.hpp"
 #include "Protection.hpp"
-#include "Components.hpp"
 #include "Waypoint/WaypointGlue.hpp"
 #include "Pan.hpp"
-#include "Blackboard/DeviceBlackboard.hpp"
+#include "Simulator.hpp"
 #include "Operation/MessageOperationEnvironment.hpp"
 #include "Profile/Current.hpp"
-
-enum Commands {
-  REPLACE_IN_TASK,
-  INSERT_IN_TASK,
-  APPEND_TO_TASK,
-  REMOVE_FROM_TASK,
-  SET_HOME,
-  PAN,
-  SET_ACTIVE_FREQUENCY,
-  SET_STANDBY_FREQUENCY,
-  EDIT,
-};
+#include "Profile/Profile.hpp"
+#include "ActionInterface.hpp"
+#include "Widget/RowFormWidget.hpp"
 
 static bool
 ReplaceInTask(ProtectedTaskManager &task_manager,
@@ -60,8 +30,8 @@ ReplaceInTask(ProtectedTaskManager &task_manager,
   case MapTaskManager::SUCCESS:
     try {
       task_manager.TaskSaveDefault();
-    } catch (const std::runtime_error &e) {
-      ShowError(e, _("Failed to save file."));
+    } catch (...) {
+      ShowError(std::current_exception(), _("Failed to save file."));
       return false;
     }
 
@@ -98,8 +68,8 @@ InsertInTask(ProtectedTaskManager &task_manager,
   case MapTaskManager::SUCCESS:
     try {
       task_manager.TaskSaveDefault();
-    } catch (const std::runtime_error &e) {
-      ShowError(e, _("Failed to save file."));
+    } catch (...) {
+      ShowError(std::current_exception(), _("Failed to save file."));
       return false;
     }
 
@@ -138,8 +108,8 @@ AppendToTask(ProtectedTaskManager &task_manager,
   case MapTaskManager::SUCCESS:
     try {
       task_manager.TaskSaveDefault();
-    } catch (const std::runtime_error &e) {
-      ShowError(e, _("Failed to save file."));
+    } catch (...) {
+      ShowError(std::current_exception(), _("Failed to save file."));
       return false;
     }
 
@@ -178,8 +148,8 @@ RemoveFromTask(ProtectedTaskManager &task_manager,
   case MapTaskManager::SUCCESS:
     try {
       task_manager.TaskSaveDefault();
-    } catch (const std::runtime_error &e) {
-      ShowError(e, _("Failed to save file."));
+    } catch (...) {
+      ShowError(std::current_exception(), _("Failed to save file."));
       return false;
     }
 
@@ -209,19 +179,25 @@ RemoveFromTask(ProtectedTaskManager &task_manager,
 }
 
 static void
-SetHome(const Waypoint &waypoint)
+SetHome(Waypoints *way_points, const Waypoint &waypoint)
 {
   ComputerSettings &settings_computer = CommonInterface::SetComputerSettings();
   settings_computer.poi.SetHome(waypoint);
 
   {
     ScopeSuspendAllThreads suspend;
-    WaypointGlue::SetHome(way_points, terrain,
-                          settings_computer.poi, settings_computer.team_code,
-                          device_blackboard, false);
+    if (way_points != nullptr) {
+      WaypointGlue::SetHome(*way_points,
+                            settings_computer.poi,
+                            settings_computer.team_code,
+                            false);
+      ActionInterface::SetStartupLocation();
+    }
     WaypointGlue::SaveHome(Profile::map,
                            settings_computer.poi, settings_computer.team_code);
   }
+
+  Profile::Save();
 }
 
 static bool
@@ -231,99 +207,109 @@ ActivatePan(const Waypoint &waypoint)
 }
 
 void
-WaypointCommandsWidget::OnAction(int id)
+WaypointCommandsWidget::UpdateButtons()
 {
-  MessageOperationEnvironment env;
+  has_freq = waypoint->radio_frequency.IsDefined();
+  SetRowEnabled(REPLACE_IN_TASK, task_manager != nullptr);
+  SetRowEnabled(INSERT_IN_TASK, task_manager != nullptr);
+  SetRowEnabled(APPEND_TO_TASK, task_manager != nullptr);
+  SetRowEnabled(REMOVE_FROM_TASK, task_manager != nullptr && MapTaskManager::GetIndexInTask(*waypoint) >= 0);
 
-  switch (id) {
-  case REPLACE_IN_TASK:
-    if (ReplaceInTask(*task_manager, waypoint) && form != nullptr)
-      form->SetModalResult(mrOK);
-    break;
+  SetRowEnabled(SET_ACTIVE_FREQUENCY, has_freq);
+  SetRowEnabled(SET_STANDBY_FREQUENCY, has_freq);
 
-  case INSERT_IN_TASK:
-    if (InsertInTask(*task_manager, waypoint) && form != nullptr)
-      form->SetModalResult(mrOK);
-    break;
-
-  case APPEND_TO_TASK:
-    if (AppendToTask(*task_manager, waypoint) && form != nullptr)
-      form->SetModalResult(mrOK);
-    break;
-
-  case REMOVE_FROM_TASK:
-    if (RemoveFromTask(*task_manager, *waypoint) && form != nullptr)
-      form->SetModalResult(mrOK);
-    break;
-
-  case SET_HOME:
-    SetHome(*waypoint);
-    if (form != nullptr)
-      form->SetModalResult(mrOK);
-    break;
-
-  case PAN:
-    if (ActivatePan(*waypoint) && form != nullptr)
-      form->SetModalResult(mrOK);
-    break;
-
-  case SET_ACTIVE_FREQUENCY:
-    device_blackboard->SetActiveFrequency(waypoint->radio_frequency,
-                                          waypoint->name.c_str(), env);
-    break;
-
-  case SET_STANDBY_FREQUENCY:
-    device_blackboard->SetStandbyFrequency(waypoint->radio_frequency,
-                                           waypoint->name.c_str(), env);
-    break;
-
-  case EDIT:
-    {
-      Waypoint wp_copy = *waypoint;
-
-      /* move to user.cup */
-      wp_copy.origin = WaypointOrigin::USER;
-
-      if (dlgWaypointEditShowModal(wp_copy)) {
-        // TODO: refresh data instead of closing dialog?
-        form->SetModalResult(mrOK);
-
-        {
-          ScopeSuspendAllThreads suspend;
-          way_points.Replace(waypoint, std::move(wp_copy));
-          way_points.Optimise();
-        }
-
-        try {
-          WaypointGlue::SaveWaypoints(way_points);
-        } catch (const std::runtime_error &e) {
-          ShowError(e, _("Failed to save waypoints"));
-        }
-      }
-    }
-    break;
-  }
+  SetRowEnabled(EDIT, allow_edit && waypoints != nullptr);
 }
 
 void
-WaypointCommandsWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+WaypointCommandsWidget::CommitParentSearchAndCloseForm() noexcept
 {
+  if (form == nullptr)
+    return;
+  if (nesting.state_change_committed != nullptr)
+    *nesting.state_change_committed = true;
+  form->SetModalResult(mrOK);
+}
+
+void
+WaypointCommandsWidget::Prepare(ContainerWindow &parent,
+                                const PixelRect &rc) noexcept
+{
+
   RowFormWidget::Prepare(parent, rc);
 
-  if (task_manager != nullptr) {
-    AddButton(_("Replace in Task"), *this, REPLACE_IN_TASK);
-    AddButton(_("Insert in Task"), *this, INSERT_IN_TASK);
-    AddButton(_("Append to Task"), *this, APPEND_TO_TASK);
+  replace_button = AddButton(_("Replace in Task"), [this](){
+    if (ReplaceInTask(*task_manager, waypoint))
+      CommitParentSearchAndCloseForm();
+  });
 
-    if (MapTaskManager::GetIndexInTask(*waypoint) >= 0)
-      AddButton(_("Remove from Task"), *this, REMOVE_FROM_TASK);
-  }
+  insert_button = AddButton(_("Insert in Task"), [this](){
+    if (InsertInTask(*task_manager, waypoint))
+      CommitParentSearchAndCloseForm();
+  });
 
-  AddButton(_("Set as New Home"), *this, SET_HOME);
-  AddButton(_("Pan to Waypoint"), *this, PAN);
-  AddButton(_("Set Active Frequency"), *this, SET_ACTIVE_FREQUENCY);
-  AddButton(_("Set Standby Frequency"), *this, SET_STANDBY_FREQUENCY);
+  append_button = AddButton(_("Append to Task"), [this](){
+    if (AppendToTask(*task_manager, waypoint))
+      CommitParentSearchAndCloseForm();
+  });
 
-  if (allow_edit)
-    AddButton(_("Edit"), *this, EDIT);
+  remove_button = AddButton(_("Remove from Task"), [this](){
+    if (RemoveFromTask(*task_manager, *waypoint))
+      CommitParentSearchAndCloseForm();
+  });
+
+  const char *home_label = is_simulator()
+    ? C_("Button", "Set as Startup Location")
+    : _("Set as New Home");
+
+  home_button = AddButton(home_label, [this](){
+    SetHome(waypoints, *waypoint);
+    CommitParentSearchAndCloseForm();
+  });
+
+  pan_button = AddButton(_("Pan to Waypoint"), [this](){
+    if (!ActivatePan(*waypoint) || form == nullptr)
+      return;
+    if (nesting.map_pan_from_details != nullptr)
+      *nesting.map_pan_from_details = true;
+    if (nesting.include_pan_in_parent_dismissal &&
+        nesting.state_change_committed != nullptr)
+      *nesting.state_change_committed = true;
+    form->SetModalResult(mrOK);
+  });
+
+
+  set_active_button = AddButton(_("Set Active Frequency"), [this](){
+    ActionInterface::SetActiveFrequency(waypoint->radio_frequency,
+                                        waypoint->name.c_str());
+  });
+
+  set_standby_button = AddButton(_("Set Standby Frequency"), [this](){
+    ActionInterface::SetStandbyFrequency(waypoint->radio_frequency,
+                                         waypoint->name.c_str());
+  });
+
+  edit_button = AddButton(_("Edit"), [this](){
+    Waypoint wp_copy = *waypoint;
+
+  /* move to user.cup */
+  wp_copy.origin = WaypointOrigin::USER;
+
+  if (dlgWaypointEditShowModal(wp_copy) == WaypointEditResult::MODIFIED) {
+    CommitParentSearchAndCloseForm();
+
+    {
+      ScopeSuspendAllThreads suspend;
+      waypoints->Replace(waypoint, std::move(wp_copy));
+      waypoints->Optimise();
+    }
+
+    try {
+      WaypointGlue::SaveWaypoints(*waypoints);
+    } catch (...) {
+      ShowError(std::current_exception(), _("Failed to save waypoints"));
+    }
+    }
+  });
+  UpdateButtons();
 }

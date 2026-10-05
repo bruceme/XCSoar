@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Dialogs/NumberEntry.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -30,15 +10,15 @@ Copyright_License {
 #include "UIGlobals.hpp"
 
 bool
-NumberEntryDialog(const TCHAR *caption,
+NumberEntryDialog(const char *caption,
                   int &value, unsigned length)
 {
   /* create the dialog */
 
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
-  dialog.CreatePreliminary(UIGlobals::GetMainWindow(), caption);
+  TWidgetDialog<FixedWindowWidget>
+    dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(), look, caption);
 
   ContainerWindow &client_area = dialog.GetClientAreaWindow();
 
@@ -48,41 +28,40 @@ NumberEntryDialog(const TCHAR *caption,
   control_style.Hide();
   control_style.TabStop();
 
-  DigitEntry entry(look);
-  entry.CreateSigned(client_area, client_area.GetClientRect(), control_style,
-                     length, 0);
-  entry.Resize(entry.GetRecommendedSize());
-  entry.SetValue(value);
+  auto entry = std::make_unique<DigitEntry>(look);
+  entry->CreateSigned(client_area, client_area.GetClientRect(), control_style,
+                      length, 0);
+  entry->Resize(entry->GetRecommendedSize());
+  entry->SetValue(value);
+  entry->SetCallback(dialog.MakeModalResultCallback(mrOK));
 
   /* create buttons */
 
-  dialog.AddButton(_("OK"), dialog, mrOK);
-  dialog.AddButton(_("Cancel"), dialog, mrCancel);
+  dialog.AddButton(_("OK"), mrOK);
+  dialog.AddButton(_("Cancel"), mrCancel);
 
   /* run it */
 
-  FixedWindowWidget widget(&entry);
-  dialog.FinishPreliminary(&widget);
+  dialog.SetWidget(std::move(entry));
 
   bool result = dialog.ShowModal() == mrOK;
-  dialog.StealWidget();
   if (!result)
     return false;
 
-  value = entry.GetIntegerValue();
+  value = ((DigitEntry &)dialog.GetWidget().GetWindow()).GetIntegerValue();
   return true;
 }
 
 bool
-NumberEntryDialog(const TCHAR *caption,
+NumberEntryDialog(const char *caption,
                   unsigned &value, unsigned length)
 {
   /* create the dialog */
 
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
-  dialog.CreatePreliminary(UIGlobals::GetMainWindow(), caption);
+  TWidgetDialog<FixedWindowWidget>
+    dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(), look, caption);
 
   ContainerWindow &client_area = dialog.GetClientAreaWindow();
 
@@ -92,40 +71,39 @@ NumberEntryDialog(const TCHAR *caption,
   control_style.Hide();
   control_style.TabStop();
 
-  DigitEntry entry(look);
-  entry.CreateUnsigned(client_area, client_area.GetClientRect(), control_style,
-                       length, 0);
-  entry.Resize(entry.GetRecommendedSize());
-  entry.SetValue(value);
+  auto entry = std::make_unique<DigitEntry>(look);
+  entry->CreateUnsigned(client_area, client_area.GetClientRect(), control_style,
+                        length, 0);
+  entry->Resize(entry->GetRecommendedSize());
+  entry->SetValue(value);
+  entry->SetCallback(dialog.MakeModalResultCallback(mrOK));
 
   /* create buttons */
 
-  dialog.AddButton(_("OK"), dialog, mrOK);
-  dialog.AddButton(_("Cancel"), dialog, mrCancel);
+  dialog.AddButton(_("OK"), mrOK);
+  dialog.AddButton(_("Cancel"), mrCancel);
 
   /* run it */
 
-  FixedWindowWidget widget(&entry);
-  dialog.FinishPreliminary(&widget);
+  dialog.SetWidget(std::move(entry));
 
   bool result = dialog.ShowModal() == mrOK;
-  dialog.StealWidget();
   if (!result)
     return false;
 
-  value = entry.GetUnsignedValue();
+  value = ((DigitEntry &)dialog.GetWidget().GetWindow()).GetUnsignedValue();
   return true;
 }
 
 bool
-AngleEntryDialog(const TCHAR *caption, Angle &value)
+AngleEntryDialog(const char *caption, Angle &value)
 {
   /* create the dialog */
 
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
-  dialog.CreatePreliminary(UIGlobals::GetMainWindow(), caption);
+  TWidgetDialog<FixedWindowWidget>
+    dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(), look, caption);
 
   ContainerWindow &client_area = dialog.GetClientAreaWindow();
 
@@ -135,26 +113,25 @@ AngleEntryDialog(const TCHAR *caption, Angle &value)
   control_style.Hide();
   control_style.TabStop();
 
-  DigitEntry entry(look);
-  entry.CreateAngle(client_area, client_area.GetClientRect(), control_style);
-  entry.Resize(entry.GetRecommendedSize());
-  entry.SetValue(value);
+  auto entry = std::make_unique<DigitEntry>(look);
+  entry->CreateAngle(client_area, client_area.GetClientRect(), control_style);
+  entry->Resize(entry->GetRecommendedSize());
+  entry->SetValue(value);
+  entry->SetCallback(dialog.MakeModalResultCallback(mrOK));
 
   /* create buttons */
 
-  dialog.AddButton(_("OK"), dialog, mrOK);
-  dialog.AddButton(_("Cancel"), dialog, mrCancel);
+  dialog.AddButton(_("OK"), mrOK);
+  dialog.AddButton(_("Cancel"), mrCancel);
 
   /* run it */
 
-  FixedWindowWidget widget(&entry);
-  dialog.FinishPreliminary(&widget);
+  dialog.SetWidget(std::move(entry));
 
   bool result = dialog.ShowModal() == mrOK;
-  dialog.StealWidget();
   if (!result)
     return false;
 
-  value = entry.GetAngleValue();
+  value = ((DigitEntry &)dialog.GetWidget().GetWindow()).GetAngleValue();
   return true;
 }

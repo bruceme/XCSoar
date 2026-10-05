@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 // leastsqs.c -- Implements a simple linear least squares best fit routine
 //
@@ -77,7 +57,7 @@ return the maximum least squares error:
 */
 
 void
-LeastSquares::Reset()
+LeastSquares::Reset() noexcept
 {
   StoreReset();
   sum_xxw = 0.;
@@ -90,7 +70,7 @@ LeastSquares::Reset()
 }
 
 void
-LeastSquares::Compute()
+LeastSquares::Compute() noexcept
 {
   auto denom = (sum_weights * sum_xxw - sum_xw * sum_xw);
 
@@ -103,21 +83,22 @@ LeastSquares::Compute()
 
   y_ave = sum_yw / sum_weights;
 
-  if (sum_n>1) {
-    x_var = x_S / (sum_n - 1);
-    y_var = y_S / (sum_n - 1);
-    xy_var = xy_C / (sum_n - 1);
+  const unsigned n = GetCount();
+  if (n>1) {
+    x_var = x_S / (n - 1);
+    y_var = y_S / (n - 1);
+    xy_var = xy_C / (n - 1);
   }
 }
 
 void
-LeastSquares::Update(double y)
+LeastSquares::Update(double y) noexcept
 {
-  Update(double(sum_n + 1), y);
+  Update(double(GetCount() + 1), y);
 }
 
 void
-LeastSquares::Update(double x, double y, double weight)
+LeastSquares::Update(double x, double y, double weight) noexcept
 {
   // Add new point
   Add(x, y, weight);
@@ -132,13 +113,13 @@ LeastSquares::Update(double x, double y, double weight)
 }
 
 void
-LeastSquares::UpdateError()
+LeastSquares::UpdateError() noexcept
 {
   rms_error = sqrt(sum_error / sum_weights);
 }
 
 void
-LeastSquares::Add(double x, double y, double weight)
+LeastSquares::Add(double x, double y, double weight) noexcept
 {
   StoreAdd(x, y, weight);
 
@@ -146,17 +127,18 @@ LeastSquares::Add(double x, double y, double weight)
   sum_xyw += x * y * weight;
 
   // See Knuth TAOCP vol 2, 3rd edition, page 232
-  if (sum_n == 1) {
+  const unsigned n = GetCount();
+  if (n == 1) {
     x_mean = x;
     y_mean = y;
   } else {
     auto dx = x-x_mean;
     auto dy = y-y_mean;
 
-    x_mean += dx / sum_n;
+    x_mean += dx / n;
     x_S += dx * (x - x_mean);
 
-    y_mean += dy / sum_n;
+    y_mean += dy / n;
     y_S += dy * (y - y_mean);
 
     xy_C += dx * (y - y_mean);
@@ -164,16 +146,14 @@ LeastSquares::Add(double x, double y, double weight)
 }
 
 void
-LeastSquares::Remove(const unsigned i)
+LeastSquares::Remove(const unsigned i) noexcept
 {
-  assert(i< sum_n);
+  assert(i < GetCount());
 
-  const auto &pt = slots[i];
+  const auto &s = GetSlots();
+  const auto &pt = s[i];
   // Remove weighted point
-  double weight = 1;
-#ifdef LEASTSQS_WEIGHT_STORE
-  weight = pt.weight;
-#endif
+  const auto weight = pt.weight;
 
   sum_xxw -= Square(pt.x) * weight;
   sum_xyw -= (pt.x * pt.y * weight);
@@ -185,7 +165,7 @@ LeastSquares::Remove(const unsigned i)
 }
 
 ErrorEllipse
-LeastSquares::GetErrorEllipse() const
+LeastSquares::GetErrorEllipse() const noexcept
 {
   /*
     A = a b = cov(x,x)   cov(x,y)

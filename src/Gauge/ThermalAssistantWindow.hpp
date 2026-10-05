@@ -1,30 +1,9 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef THERMAL_ASSISTENT_WINDOW_HPP
-#define THERMAL_ASSISTENT_WINDOW_HPP
-
-#include "Screen/AntiFlickerWindow.hpp"
+#include "ui/window/AntiFlickerWindow.hpp"
 #include "ThermalAssistantRenderer.hpp"
 
 struct ThermalAssistantLook;
@@ -44,15 +23,14 @@ public:
    */
   ThermalAssistantWindow(const ThermalAssistantLook &look,
                          unsigned _padding, bool _small = false,
-                         bool transparent=false);
+                         bool transparent=false) noexcept;
 
-  void Update(const AttitudeState &attitude, const DerivedInfo &_derived);
+  void Update(const AttitudeState &attitude,
+              const DerivedInfo &_derived) noexcept;
 
 protected:
-  void DrawCircle(Canvas &canvas);
+  void DrawCircle(Canvas &canvas) noexcept;
 
-  virtual void OnResize(PixelSize new_size) override;
-  virtual void OnPaintBuffer(Canvas &canvas) override;
+  virtual void OnResize(PixelSize new_size) noexcept override;
+  virtual void OnPaintBuffer(Canvas &canvas) noexcept override;
 };
-
-#endif

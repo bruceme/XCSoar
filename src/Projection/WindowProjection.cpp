@@ -1,90 +1,65 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WindowProjection.hpp"
+#include "Geo/Quadrilateral.hpp"
 
-bool
-WindowProjection::GeoVisible(const GeoPoint &loc) const
+std::optional<PixelPoint>
+WindowProjection::GeoToScreenIfVisible(const GeoPoint &loc) const noexcept
 {
-  return screen_bounds.IsInside(loc);
-}
+  if (!GeoVisible(loc))
+    return {};
 
-bool
-WindowProjection::GeoToScreenIfVisible(const GeoPoint &loc, PixelPoint &sc) const
-{
-  if (GeoVisible(loc)) {
-    sc = GeoToScreen(loc);
-    return ScreenVisible(sc);
-  }
+  auto p = GeoToScreen(loc);
+  if (!ScreenVisible(p))
+    return {};
 
-  return false;
-}
-
-bool
-WindowProjection::ScreenVisible(const PixelPoint &P) const
-{
-  assert(screen_size_initialised);
-
-  return P.x >= 0 && (unsigned)P.x < screen_size.x &&
-    P.y >= 0 && (unsigned)P.y < screen_size.y;
+  return p;
 }
 
 void
-WindowProjection::SetScaleFromRadius(double radius)
+WindowProjection::SetScaleFromRadius(double radius) noexcept
 {
   SetScale(double(GetMinScreenDistance()) / (radius * 2));
 }
 
 double
-WindowProjection::GetMapScale() const
+WindowProjection::GetMapScale() const noexcept
 {
   return DistancePixelsToMeters(GetMapResolutionFactor());
 }
 
 double
-WindowProjection::GetScreenDistanceMeters() const
+WindowProjection::GetScreenDistanceMeters() const noexcept
 {
   return DistancePixelsToMeters(GetScreenDistance());
 }
 
 GeoPoint
-WindowProjection::GetGeoScreenCenter() const
+WindowProjection::GetGeoScreenCenter() const noexcept
 {
-  return ScreenToGeo(GetScreenWidth() / 2, GetScreenHeight() / 2);
+  return ScreenToGeo(GetScreenCenter());
+}
+
+GeoQuadrilateral
+WindowProjection::GetGeoQuadrilateral() const noexcept
+{
+  const auto r = GetScreenRect();
+  return {
+    ScreenToGeo(r.GetTopLeft()),
+    ScreenToGeo(r.GetTopRight()),
+    ScreenToGeo(r.GetBottomLeft()),
+    ScreenToGeo(r.GetBottomRight()),
+  };
 }
 
 void
-WindowProjection::UpdateScreenBounds()
+WindowProjection::UpdateScreenBounds() noexcept
 {
   assert(screen_size_initialised);
 
   if (!IsValid())
     return;
 
-  GeoBounds sb(ScreenToGeo(0, 0));
-  sb.Extend(ScreenToGeo(screen_size.x, 0));
-  sb.Extend(ScreenToGeo(screen_size.x, screen_size.y));
-  sb.Extend(ScreenToGeo(0, screen_size.y));
-
-  screen_bounds = sb;
+  screen_bounds = GetGeoQuadrilateral().GetBounds();
 }

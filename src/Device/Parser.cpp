@@ -1,36 +1,20 @@
-/*
-
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Parser.hpp"
+#include "Atmosphere/Pressure.hpp"
+#include "Atmosphere/Temperature.hpp"
 #include "Geo/Geoid.hpp"
 #include "NMEA/Info.hpp"
 #include "NMEA/Checksum.hpp"
 #include "NMEA/InputLine.hpp"
 #include "Units/System.hpp"
 #include "Driver/FLARM/StaticParser.hpp"
-#include "Util/CharUtil.hxx"
+#include "util/CharUtil.hxx"
+#include "util/NumberParser.hxx"
+#include "util/StringSplit.hxx"
+
+using std::string_view_literals::operator""sv;
 
 NMEAParser::NMEAParser()
 {
@@ -42,74 +26,100 @@ NMEAParser::Reset()
 {
   real = true;
   use_geoid = true;
-  last_time = 0;
+  last_time = {};
 }
 
 bool
 NMEAParser::ParseLine(const char *string, NMEAInfo &info)
 {
-  assert(info.clock > 0);
+  assert(info.clock.IsDefined());
 
   if (string[0] != '$')
     return false;
 
-  if (!NMEAChecksum(string))
+  if (!VerifyNMEAChecksum(string))
     return false;
 
   NMEAInputLine line(string);
 
-  char type[16];
-  line.Read(type, 16);
+  const auto type = line.ReadView();
+  if (type.size() < 6)
+    return false;
+
+  if (type == "$LK8EX1"sv)
+    return LK8EX1(line, info);
 
   if (IsAlphaASCII(type[1]) && IsAlphaASCII(type[2])) {
-    if (StringIsEqual(type + 3, "GSA"))
+    const auto type2 = type.substr(3);
+
+    if (type2 == "GSA"sv)
       return GSA(line, info);
 
-    if (StringIsEqual(type + 3, "GLL"))
+    if (type2 == "GLL"sv)
       return GLL(line, info);
 
-    if (StringIsEqual(type + 3, "RMC"))
+    if (type2 == "RMC"sv)
       return RMC(line, info);
 
-    if (StringIsEqual(type + 3, "GGA"))
+    if (type2 == "GGA"sv)
       return GGA(line, info);
 
-    if (StringIsEqual(type + 3, "HDM"))
+    if (type2 == "HDM"sv)
       return HDM(line, info);
 
-    if (StringIsEqual(type + 3, "MWV"))
+    if (type2 == "MWV"sv)
       return MWV(line, info);
   }
 
   // if (proprietary sentence) ...
   if (type[1] == 'P') {
+    const auto type2 = type.substr(1);
+
     // Airspeed and vario sentence
-    if (StringIsEqual(type + 1, "PTAS1"))
+    if (type2 == "PTAS1"sv)
       return PTAS1(line, info);
 
     // FLARM sentences
-    if (StringIsEqual(type + 1, "PFLAE")) {
+    if (type2 == "PFLAE"sv) {
       ParsePFLAE(line, info.flarm.error, info.clock);
       return true;
     }
 
-    if (StringIsEqual(type + 1, "PFLAV")) {
+    if (type2 == "PFLAV"sv) {
       ParsePFLAV(line, info.flarm.version, info.clock);
       return true;
     }
 
-    if (StringIsEqual(type + 1, "PFLAA")) {
-      ParsePFLAA(line, info.flarm.traffic, info.clock);
+    if (type2 == "PFLAA"sv) {
+      RangeFilter range;
+      range.horizontal=0;
+      range.vertical=0;
+      ParsePFLAA(line, info.flarm.traffic, info.clock, range);
       return true;
     }
 
-    if (StringIsEqual(type + 1, "PFLAU")) {
+    if (type2 == "PFLAU"sv) {
       ParsePFLAU(line, info.flarm.status, info.clock);
       return true;
     }
 
+    if (type2 == "PFLAJ"sv) {
+      ParsePFLAJ(line, info.flarm.state, info.clock);
+      return true;
+    }
+
+    if (type2 == "PFLAQ"sv) {
+      ParsePFLAQ(line, info.flarm.progress, info.clock);
+      return true;
+    }
+
+    if (type2 == "PFLAM"sv) {
+      ParsePFLAM(line);
+      return true;
+    }
+
     // Garmin altitude sentence
-    if (StringIsEqual(type + 1, "PGRMZ"))
+    if (type2 == "PGRMZ"sv)
       return RMZ(line, info);
 
     return false;
@@ -130,23 +140,6 @@ NAVWarn(char c)
 }
 
 /**
- * Parses non-negative floating-point angle value in degrees.
- */
-static bool
-ReadBearing(NMEAInputLine &line, Angle &value_r)
-{
-  double value;
-  if (!line.ReadChecked(value))
-    return false;
-
-  if (value < 0 || value > 360)
-    return false;
-
-  value_r = Angle::Degrees(value).AsBearing();
-  return true;
-}
-
-/**
  * Parses an angle in the form "DDDMM.SSS".  Minutes are 0..59, and
  * seconds are 0..999.
  */
@@ -157,19 +150,18 @@ ReadGeoAngle(NMEAInputLine &line, Angle &a)
   line.Read(buffer, sizeof(buffer));
 
   char *dot = strchr(buffer, '.');
-  if (dot < buffer + 3)
+  if (dot == nullptr || dot < buffer + 3)
     return false;
 
   double x = strtod(dot - 2, &endptr);
   if (x < 0 || x >= 60 || *endptr != 0)
     return false;
 
-  dot[-2] = 0;
-  long y = strtol(buffer, &endptr, 10);
-  if (y < 0 || y > 180 || endptr == buffer || *endptr != 0)
+  const auto degrees = ParseInteger<unsigned>(buffer, dot - 2);
+  if (!degrees || *degrees > 180)
     return false;
 
-  a = Angle::Degrees(y + x / 60.);
+  a = Angle::Degrees(*degrees + x / 60.);
   return true;
 }
 
@@ -248,31 +240,26 @@ ReadAltitude(NMEAInputLine &line, double &value_r)
 }
 
 bool
-NMEAParser::TimeHasAdvanced(double this_time, NMEAInfo &info)
+NMEAParser::TimeHasAdvanced(TimeStamp this_time, NMEAInfo &info) noexcept
 {
   return TimeHasAdvanced(this_time, last_time, info);
 }
 
-gcc_const
-static bool
-IsMidnightWraparound(double this_time, double last_time)
+static constexpr bool
+IsMidnightWraparound(TimeStamp this_time, TimeStamp last_time) noexcept
 {
-  constexpr unsigned SECONDS_PER_HOUR = 60 * 60;
-  constexpr unsigned SECONDS_PER_DAY = 24 * SECONDS_PER_HOUR;
-
-  return this_time < SECONDS_PER_HOUR &&
-    last_time >= SECONDS_PER_DAY - SECONDS_PER_HOUR;
+  return this_time < TimeStamp{std::chrono::hours{1}} && last_time >= TimeStamp{std::chrono::hours{23}};
 }
 
-gcc_const
-static bool
-TimeHasAdvanced(double this_time, double last_time)
+static constexpr bool
+TimeHasAdvanced(TimeStamp this_time, TimeStamp last_time) noexcept
 {
   return this_time >= last_time || IsMidnightWraparound(this_time, last_time);
 }
 
 bool
-NMEAParser::TimeHasAdvanced(double this_time, double &last_time, NMEAInfo &info)
+NMEAParser::TimeHasAdvanced(TimeStamp this_time, TimeStamp &last_time,
+                            NMEAInfo &info)
 {
   if (!::TimeHasAdvanced(this_time, last_time)) {
     last_time = this_time;
@@ -317,6 +304,10 @@ NMEAParser::GSA(NMEAInputLine &line, NMEAInfo &info)
 
   info.gps.satellite_ids_available.Update(info.clock);
 
+  info.gps.pdop = line.Read(-1.);
+  info.gps.hdop = line.Read(-1.);
+  info.gps.vdop = line.Read(-1.);
+
   return true;
 }
 
@@ -340,7 +331,7 @@ NMEAParser::GLL(NMEAInputLine &line, NMEAInfo &info)
   GeoPoint location;
   bool valid_location = ReadGeoPoint(line, location);
 
-  double this_time;
+  TimeStamp this_time;
   if (!ReadTime(line, info.date_time_utc, this_time))
     return true;
 
@@ -358,9 +349,7 @@ NMEAParser::GLL(NMEAInputLine &line, NMEAInfo &info)
     info.location = location;
 
   info.gps.real = real;
-#if defined(ANDROID) || defined(__APPLE__)
   info.gps.nonexpiring_internal_gps = false;
-#endif
 
   return true;
 }
@@ -368,18 +357,21 @@ NMEAParser::GLL(NMEAInputLine &line, NMEAInfo &info)
 bool
 NMEAParser::ReadDate(NMEAInputLine &line, BrokenDate &date)
 {
-  char buffer[9];
-  line.Read(buffer, 9);
+  const auto s = line.ReadView();
+  if (s.size() != 6)
+    return false;
 
-  if (strlen(buffer) != 6)
+  const auto day = ParseInteger<unsigned>(s.substr(0, 2));
+  const auto month = ParseInteger<unsigned>(s.substr(2, 2));
+  const auto year = ParseInteger<unsigned>(s.substr(4, 2));
+
+  if (!day || !month || !year)
     return false;
 
   BrokenDate new_value;
-  new_value.year = atoi(buffer + 4) + 2000;
-  buffer[4] = '\0';
-  new_value.month = atoi(buffer + 2);
-  buffer[2] = '\0';
-  new_value.day = atoi(buffer);
+  new_value.year = *year + 2000;
+  new_value.month = *month;
+  new_value.day = *day;
   new_value.day_of_week = -1;
 
   if (!new_value.IsPlausible())
@@ -391,7 +383,7 @@ NMEAParser::ReadDate(NMEAInputLine &line, BrokenDate &date)
 
 bool
 NMEAParser::ReadTime(NMEAInputLine &line, BrokenTime &broken_time,
-                     double &time_of_day_s)
+                     TimeStamp &time_of_day_s) noexcept
 {
   double value;
   if (!line.ReadChecked(value) || value < 0)
@@ -413,7 +405,7 @@ NMEAParser::ReadTime(NMEAInputLine &line, BrokenTime &broken_time,
     return false;
 
   broken_time = BrokenTime(hour, minute, (unsigned)second);
-  time_of_day_s = (hour * 3600 + minute * 60) + second;
+  time_of_day_s = TimeStamp{FloatDuration{hour * 3600 + minute * 60 + second}};
   return true;
 }
 
@@ -459,7 +451,7 @@ NMEAParser::RMC(NMEAInputLine &line, NMEAInfo &info)
    * 13) Checksum
    */
 
-  double this_time;
+  TimeStamp this_time;
   if (!ReadTime(line, info.date_time_utc, this_time))
     return true;
 
@@ -472,7 +464,7 @@ NMEAParser::RMC(NMEAInputLine &line, NMEAInfo &info)
   bool ground_speed_available = line.ReadChecked(speed);
 
   Angle track;
-  bool track_available = ReadBearing(line, track);
+  bool track_available = line.ReadBearing(track);
 
   // JMW get date info first so TimeModify is accurate
   ReadDate(line, info.date_time_utc);
@@ -504,15 +496,13 @@ NMEAParser::RMC(NMEAInputLine &line, NMEAInfo &info)
 
   if (!variation_available)
     info.variation_available.Clear();
-  else if (variation_available) {
+  else {
     info.variation = variation;
     info.variation_available.Update(info.clock);
   }
 
   info.gps.real = real;
-#if defined(ANDROID) || defined(__APPLE__)
   info.gps.nonexpiring_internal_gps = false;
-#endif
 
   return true;
 }
@@ -532,13 +522,13 @@ NMEAParser::HDM(NMEAInputLine &line, NMEAInfo &info)
    *  3) Checksum
    */
   Angle heading;
-  bool heading_available = ReadBearing(line, heading);
+  bool heading_available = line.ReadBearing(heading);
 
   if (!heading_available)
-    info.heading_available.Clear();
-  else if (heading_available) {
-    info.heading = heading;
-    info.heading_available.Update(info.clock);
+    info.attitude.heading_available.Clear();
+  else {
+    info.attitude.heading = heading;
+    info.attitude.heading_available.Update(info.clock);
   }
 
   return true;
@@ -583,7 +573,7 @@ NMEAParser::GGA(NMEAInputLine &line, NMEAInfo &info)
 
   GPSState &gps = info.gps;
 
-  double this_time;
+  TimeStamp this_time;
   if (!ReadTime(line, info.date_time_utc, this_time))
     return true;
 
@@ -617,11 +607,9 @@ NMEAParser::GGA(NMEAInputLine &line, NMEAInfo &info)
   */
 
   info.gps.real = real;
-#if defined(ANDROID) || defined(__APPLE__)
   info.gps.nonexpiring_internal_gps = false;
-#endif
 
-  gps.hdop = line.Read(0.);
+  gps.hdop = line.Read(-1.);
 
   bool altitude_available = ReadAltitude(line, info.gps_altitude);
   if (altitude_available)
@@ -630,7 +618,7 @@ NMEAParser::GGA(NMEAInputLine &line, NMEAInfo &info)
     info.gps_altitude_available.Clear();
 
   double geoid_separation;
-  if (ReadAltitude(line, geoid_separation)) {
+  if (ReadAltitude(line, geoid_separation) && (geoid_separation != 0)) {
     // No real need to parse this value,
     // but we do assume that no correction is required in this case
 
@@ -640,21 +628,29 @@ NMEAParser::GGA(NMEAInputLine &line, NMEAInfo &info)
          column.  That sucks! */
       info.gps_altitude = geoid_separation;
       info.gps_altitude_available.Update(info.clock);
+      if (use_geoid && info.location_available)
+          geoid_separation = EGM96::LookupSeparation(info.location);
+      else
+          geoid_separation = 0;
     }
+    info.gps_ellipsoid_altitude = info.gps_altitude + geoid_separation;
+    info.gps_ellipsoid_altitude_available.Update(info.clock);
   } else {
-    // need to estimate Geoid Separation internally (optional)
-    // FLARM uses MSL altitude
-    //
-    // Some others don't.
-    //
+    // FLARM reports MSL altitude & geoid separation in GGA sentence.
+    // Some others don't, or always report zero.
     // If the separation doesn't appear in the sentence,
-    // we can assume the GPS unit is giving ellipsoid height
-    //
-    if (use_geoid) {
+    // we can assume the GPS unit is giving ellipsoid height.
+    // Need to estimate Geoid Separation internally.
+    info.gps_ellipsoid_altitude = info.gps_altitude;
+    if (use_geoid && info.location_available) {
       // JMW TODO really need to know the actual device..
       geoid_separation = EGM96::LookupSeparation(info.location);
       info.gps_altitude -= geoid_separation;
     }
+    if (altitude_available)
+      info.gps_ellipsoid_altitude_available.Update(info.clock);
+    else
+      info.gps_ellipsoid_altitude_available.Clear();
   }
 
   return true;
@@ -673,7 +669,15 @@ NMEAParser::RMZ(NMEAInputLine &line, NMEAInfo &info)
          altitude above 1013.25 hPa - since the don't have a "FLARM"
          device driver, we use the auto-detected "isFlarm" flag
          here */
+      info.igc_pressure_altitude = value;
+      info.igc_pressure_altitude_available.Update(info.clock);
       info.ProvideWeakPressureAltitude(value);
+      if (!info.pressure_altitude_weak)
+        info.igc_pressure_altitude_available.Clear();
+
+      /* One parsed value: logger igc + weak pressure_altitude; strong pressure
+         skips weak (see NMEAInfo::ProvidePressureAltitude). Complement merge:
+         first valid igc wins across devices. */
 
       /* when a FLARM gets detected too late, the previous call to
          this function may have filled the PGRMZ value into
@@ -687,12 +691,6 @@ NMEAParser::RMZ(NMEAInputLine &line, NMEAInfo &info)
   }
 
   return true;
-}
-
-bool
-NMEAParser::NMEAChecksum(const char *string)
-{
-  return VerifyNMEAChecksum(string);
 }
 
 bool
@@ -741,33 +739,91 @@ NMEAParser::PTAS1(NMEAInputLine &line, NMEAInfo &info)
   return true;
 }
 
+bool
+NMEAParser::LK8EX1(NMEAInputLine &line, NMEAInfo &info)
+{
+  /*
+   * $LK8EX1,pressure,altitude,vario,temperature,battery*CS
+   *
+   * pressure: Pa (hPa×100), or 999999 if missing
+   * altitude: m QNE (ignored if pressure present), or 99999 if missing
+   * vario: cm/s, or 9999 if missing
+   * temperature: °C, or 99 if missing
+   * battery: volts, or 1000+percent, or 999 if missing
+   *
+   * @see https://github.com/LK8000/LK8000/blob/master/Docs/LK8EX1.txt
+   */
+
+  bool have_pressure = false;
+
+  double pressure;
+  if (line.ReadChecked(pressure) && pressure != 999999) {
+    info.ProvideStaticPressure(AtmosphericPressure::Pascal(pressure));
+    have_pressure = true;
+  }
+
+  double altitude;
+  if (line.ReadChecked(altitude)) {
+    if (!have_pressure && altitude != 99999)
+      info.ProvidePressureAltitude(altitude);
+  }
+
+  double vario_cm;
+  if (line.ReadChecked(vario_cm) && vario_cm != 9999)
+    info.ProvideNoncompVario(vario_cm / 100);
+
+  double temperature;
+  if (line.ReadChecked(temperature) && temperature != 99) {
+    info.temperature = Temperature::FromCelsius(temperature);
+    info.temperature_available.Update(info.clock);
+  }
+
+  double battery;
+  if (line.ReadChecked(battery) && battery != 999) {
+    if (battery >= 1000 && battery <= 1100) {
+      info.battery_level = battery - 1000;
+      info.battery_level_available.Update(info.clock);
+    } else {
+      info.voltage = battery;
+      info.voltage_available.Update(info.clock);
+    }
+  }
+
+  return true;
+}
+
 inline bool
 NMEAParser::MWV(NMEAInputLine &line, NMEAInfo &info)
 {
   /*
-    * $--MWV,x.x,a,x.x,a,a,a,*hh
+    * $--MWV,x.x,a,x.x,a,a*hh
     *
     * Field Number:
-    *  1) wind angle
-    *  2) (R)elative or (T)rue
-    *  3) wind speed
-    *  4) K/M/N
-    *  5) Status A=valid
-    *  8) Checksum
+    *  1) Wind angle, 0 to 360 degrees
+    *  2) Reference, R = Relative, T = True
+    *  3) Wind speed
+    *  4) Wind speed units, K/M/N
+    *  5) Status, A = Data Valid, V = Data Invalid
+    *  6) Checksum
     */
 
   Angle winddir;
-  if (!ReadBearing(line, winddir))
+  if (!line.ReadBearing(winddir))
     return false;
 
-  char ch = line.ReadOneChar();
+  char reference = line.ReadOneChar();
+  if (reference != 'T')
+    /* only accept true wind; relative wind (referenced to vessel
+       heading) cannot be stored as external_wind which expects a
+       true bearing */
+    return true;
 
   double windspeed;
   if (!line.ReadChecked(windspeed))
     return false;
 
-  ch = line.ReadOneChar();
-  switch (ch) {
+  char unit = line.ReadOneChar();
+  switch (unit) {
   case 'N':
     windspeed = Units::ToSysUnit(windspeed, Unit::KNOTS);
     break;
@@ -783,6 +839,11 @@ NMEAParser::MWV(NMEAInputLine &line, NMEAInfo &info)
   default:
     return false;
   }
+
+  char status = line.ReadOneChar();
+  if (status != 'A')
+    /* reject invalid data */
+    return true;
 
   SpeedVector wind(winddir, windspeed);
   info.ProvideExternalWind(wind);

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/BorgeltB50.hpp"
 #include "Device/Driver/CAI302/PocketNav.hpp"
@@ -28,9 +8,12 @@ Copyright_License {
 #include "NMEA/Checksum.hpp"
 #include "NMEA/Info.hpp"
 #include "NMEA/InputLine.hpp"
-#include "Util/Clamp.hpp"
+
+#include <algorithm> // for std::clamp()
 
 #include <math.h>
+
+using std::string_view_literals::operator""sv;
 
 class B50Device : public AbstractDevice {
   Port &port;
@@ -94,7 +77,7 @@ PBB50(NMEAInputLine &line, NMEAInfo &info)
   // of max performance
 
   if (line.ReadChecked(value))
-    info.settings.ProvideBugs(1 - Clamp(value, 0., 30.) / 100.,
+    info.settings.ProvideBugs(1 - std::clamp(value, 0., 30.) / 100.,
                               info.clock);
 
   double ballast_overload;
@@ -112,9 +95,10 @@ PBB50(NMEAInputLine &line, NMEAInfo &info)
     break;
   }
 
-  info.temperature_available = line.ReadChecked(value);
-  if (info.temperature_available)
+  if (line.ReadChecked(value)) {
     info.temperature = Temperature::FromCelsius(value);
+    info.temperature_available.Update(info.clock);
+  }
 
   return true;
 }
@@ -126,10 +110,9 @@ B50Device::ParseNMEA(const char *String, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(String);
-  char type[16];
-  line.Read(type, 16);
 
-  if (StringIsEqual(type, "$PBB50"))
+  const auto type = line.ReadView();
+  if (type == "$PBB50"sv)
     return PBB50(line, info);
   else
     return false;
@@ -154,7 +137,7 @@ B50Device::PutBugs(double bugs, OperationEnvironment &env)
 }
 
 bool
-B50Device::PutBallast(double fraction, gcc_unused double overload,
+B50Device::PutBallast(double fraction, [[maybe_unused]] double overload,
                       OperationEnvironment &env)
 {
   /* the Borgelt B800 understands the CAI302 "!g" command for
@@ -164,14 +147,14 @@ B50Device::PutBallast(double fraction, gcc_unused double overload,
 }
 
 static Device *
-B50CreateOnPort(const DeviceConfig &config, Port &com_port)
+B50CreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &com_port)
 {
   return new B50Device(com_port);
 }
 
 const struct DeviceRegister b50_driver = {
-  _T("Borgelt B50"),
-  _T("Borgelt B50/B800"),
+  "Borgelt B50",
+  "Borgelt B50/B800",
   DeviceRegister::RECEIVE_SETTINGS | DeviceRegister::SEND_SETTINGS,
   B50CreateOnPort,
 };

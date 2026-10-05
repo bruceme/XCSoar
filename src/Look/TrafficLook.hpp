@@ -1,44 +1,35 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TRAFFIC_LOOK_HPP
-#define XCSOAR_TRAFFIC_LOOK_HPP
-
-#include "Screen/Color.hpp"
-#include "Screen/Pen.hpp"
-#include "Screen/Brush.hpp"
-#include "Screen/Icon.hpp"
+#include "ui/canvas/Color.hpp"
+#include "ui/canvas/Pen.hpp"
+#include "ui/canvas/Brush.hpp"
+#include "ui/canvas/Icon.hpp"
 
 class Font;
 
 struct TrafficLook {
-  Color safe_color;
-  Color warning_color;
-  Color alarm_color;
+  static constexpr Color safe_above_color{0x1d,0x9b,0xc5};
+  static constexpr Color safe_below_color{0x1d,0xc5,0x10};
+  static constexpr Color warning_color{0xfe,0x84,0x38};
+  static constexpr Color warning_in_altitude_range_color{0xff,0x00,0xff};
+  static constexpr Color alarm_color{0xfb,0x35,0x2f};
 
-  Brush safe_brush;
+  Brush safe_above_brush;
+  Brush safe_below_brush;
   Brush warning_brush;
+  Brush warning_in_altitude_range_brush;
   Brush alarm_brush;
+
+  static constexpr Color fading_outline_color = ColorWithAlpha({0x60, 0x60, 0x60}, 0xa0);
+  Pen fading_pen;
+
+#ifdef ENABLE_OPENGL
+  static constexpr Color fading_fill_color = ColorWithAlpha({0xc0, 0xc0, 0xc0}, 0x60);
+  Brush fading_brush;
+#endif
 
   static constexpr Color team_color_green = Color(0x74, 0xff, 0);
   static constexpr Color team_color_magenta = Color(0xff, 0, 0xcb);
@@ -56,5 +47,3 @@ struct TrafficLook {
 
   void Initialise(const Font &font);
 };
-
-#endif

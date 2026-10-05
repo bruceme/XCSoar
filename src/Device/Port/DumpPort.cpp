@@ -1,31 +1,11 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DumpPort.hpp"
+#include "Device/Error.hpp"
 #include "HexDump.hpp"
-#include "OS/Clock.hpp"
 
-#include <stdint.h>
+#include <cstdint>
 #include <stdio.h>
 
 #ifdef __clang__
@@ -33,34 +13,23 @@ Copyright_License {
 #pragma GCC diagnostic ignored "-Wnull-dereference"
 #endif
 
-DumpPort::DumpPort(Port *_port)
-  :Port(nullptr, *(DataHandler *)nullptr), port(_port),
-   until_ms(-1) {}
-
-DumpPort::~DumpPort()
-{
-  delete port;
-}
-
-void
-DumpPort::EnableTemporarily(unsigned duration_ms)
-{
-  until_ms = MonotonicClockMS() + duration_ms;
-}
+DumpPort::DumpPort(std::unique_ptr<Port> _port) noexcept
+  :Port(nullptr, *(DataHandler *)nullptr),
+   port(std::move(_port)) {}
 
 bool
-DumpPort::CheckEnabled()
+DumpPort::CheckEnabled() noexcept
 {
-  if (until_ms == 0)
+  if (until == std::chrono::steady_clock::time_point{})
     return false;
 
-  if (until_ms == unsigned(-1))
+  if (until == std::chrono::steady_clock::time_point::max())
     return true;
 
-  if (MonotonicClockMS() >= until_ms) {
+  if (std::chrono::steady_clock::now() >= until) {
     /* duration has just expired; clear to avoid calling
-       MonotonicClockMS() again in the next call */
-    until_ms = 0;
+       steady_clock::now() again in the next call */
+    until = std::chrono::steady_clock::time_point{};
     return false;
   }
 
@@ -68,7 +37,7 @@ DumpPort::CheckEnabled()
 }
 
 PortState
-DumpPort::GetState() const
+DumpPort::GetState() const noexcept
 {
   return port->GetState();
 }
@@ -79,18 +48,25 @@ DumpPort::WaitConnected(OperationEnvironment &env)
   return port->WaitConnected(env);
 }
 
-size_t
-DumpPort::Write(const void *data, size_t length)
+std::size_t
+DumpPort::Write(std::span<const std::byte> src)
 {
   const bool enabled = CheckEnabled();
   if (enabled)
-    LogFormat("Write(%u)", (unsigned)length);
+    LogFmt("Write({})", src.size());
 
-  size_t nbytes = port->Write(data, length);
+  std::size_t nbytes;
+  try {
+    nbytes = port->Write(src);
+  } catch (...) {
+    if (enabled)
+      LogFmt("Write({})=error", src.size());
+    throw;
+  }
 
   if (enabled) {
-    LogFormat("Write(%u)=%u", (unsigned)length, (unsigned)nbytes);
-    HexDump("W ", data, nbytes);
+    LogFmt("Write({})={}", src.size(), nbytes);
+    HexDump("W ", src.first(nbytes));
   }
 
   return nbytes;
@@ -100,7 +76,7 @@ bool
 DumpPort::Drain()
 {
   if (CheckEnabled())
-    LogFormat("Drain");
+    LogString("Drain");
 
   return port->Drain();
 }
@@ -109,31 +85,31 @@ void
 DumpPort::Flush()
 {
   if (CheckEnabled())
-    LogFormat("Flush");
+    LogString("Flush");
 
   port->Flush();
 }
 
 unsigned
-DumpPort::GetBaudrate() const
+DumpPort::GetBaudrate() const noexcept
 {
   return port->GetBaudrate();
 }
 
-bool
+void
 DumpPort::SetBaudrate(unsigned baud_rate)
 {
   if (CheckEnabled())
-    LogFormat("SetBaudrate %u", baud_rate);
+    LogFmt("SetBaudrate {}", baud_rate);
 
-  return port->SetBaudrate(baud_rate);
+  port->SetBaudrate(baud_rate);
 }
 
 bool
 DumpPort::StopRxThread()
 {
   if (CheckEnabled())
-    LogFormat("StopRxThread");
+    LogString("StopRxThread");
 
   return port->StopRxThread();
 }
@@ -142,40 +118,45 @@ bool
 DumpPort::StartRxThread()
 {
   if (CheckEnabled())
-    LogFormat("StartRxThread");
+    LogString("StartRxThread");
 
   return port->StartRxThread();
 }
 
-int
-DumpPort::Read(void *buffer, size_t size)
+std::size_t
+DumpPort::Read(std::span<std::byte> dest)
 {
   const bool enabled = CheckEnabled();
   if (enabled)
-    LogFormat("Read(%u)", (unsigned)size);
+    LogFmt("Read({})", dest.size());
 
-  int nbytes = port->Read(buffer, size);
+  auto nbytes = port->Read(dest);
 
   if (enabled) {
-    LogFormat("Read(%u)=%d", (unsigned)size, nbytes);
+    LogFmt("Read({})={}", dest.size(), nbytes);
     if (nbytes > 0)
-      HexDump("R ", buffer, nbytes);
+      HexDump("R ", dest.first(nbytes));
   }
 
   return nbytes;
 }
 
-Port::WaitResult
-DumpPort::WaitRead(unsigned timeout_ms)
+void
+DumpPort::WaitRead(std::chrono::steady_clock::duration timeout)
 {
   const bool enabled = CheckEnabled();
   if (enabled)
-    LogFormat("WaitRead %u", timeout_ms);
+    LogFmt("WaitRead {}", timeout.count());
 
-  Port::WaitResult result = port->WaitRead(timeout_ms);
-
-  if (enabled)
-    LogFormat("WaitRead %u = %d", timeout_ms, (int)result);
-
-  return result;
+  try {
+    port->WaitRead(timeout);
+  } catch (const DeviceTimeout &) {
+    if (enabled)
+      LogFmt("WaitRead {} = timeout", timeout.count());
+    throw;
+  } catch (...) {
+    if (enabled)
+      LogFmt("WaitRead {} = error", timeout.count());
+    throw;
+  }
 }

@@ -1,139 +1,246 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MAIN_WINDOW_HXX
-#define XCSOAR_MAIN_WINDOW_HXX
-
-#include "Screen/SingleWindow.hpp"
-#include "Screen/Timer.hpp"
+#include "ui/window/SingleWindow.hpp"
+#include "ui/window/Features.hpp" // for HAVE_FULL_SCREEN_SETTING
+#include "ui/event/PeriodicTimer.hpp"
+#include "ui/event/Notify.hpp"
+#include "ui/event/Timer.hpp"
 #include "BatteryTimer.hpp"
 #include "Widget/ManagedWidget.hpp"
 #include "UIUtil/GestureManager.hpp"
+#include "ProductName.hpp"
 
-#include <stdint.h>
-#include <assert.h>
+#include <cstdint>
+#include <cassert>
+#include <memory>
 
-#ifdef KOBO
-#define HAVE_SHOW_MENU_BUTTON
-#include "Menu/ShowMenuButton.hpp"
-#endif
+#include "Menu/ShowButton.hpp"
 
 struct ComputerSettings;
 struct MapSettings;
 struct UIState;
 struct Look;
+class Menu;
+class MenuBar;
 class GlueMapWindow;
 class Widget;
+class WindowWidget;
 class RasterTerrain;
 class TopographyStore;
 class MapWindowProjection;
 class PopupMessage;
+class PluggableOperationEnvironment;
+class StorageEventListener;
+struct StorageEventInfo;
+
 namespace InfoBoxLayout { struct Layout; }
 
 /**
  * The XCSoar main window.
  */
-class MainWindow : public SingleWindow {
-  enum class Command: uint8_t {
-    /**
-     * Called by the #MergeThread when new GPS data is available.
-     */
-    GPS_UPDATE,
+class MainWindow : public UI::SingleWindow {
+  static constexpr const char *title = PRODUCT_NAME;
 
-    /**
-     * Called by the calculation thread when new calculation results
-     * are available.  This updates the map and the info boxes.
-     */
-    CALCULATED_UPDATE,
+  Look *look = nullptr;
 
-    /**
-     * @see DeferredRestorePage()
-     */
-    RESTORE_PAGE,
-  };
+  MenuBar *menu_bar = nullptr;
 
-  static constexpr const TCHAR *title = _T("XCSoar");
+  ShowMenuButton *show_menu_button = nullptr;
+  ShowQuickMenuButton *show_quickmenu_button = nullptr;
+  ShowZoomButton *show_zoom_out_button = nullptr;
+  ShowZoomButton *show_zoom_in_button = nullptr;
 
-  Look *look;
-
-#ifdef HAVE_SHOW_MENU_BUTTON
-  ShowMenuButton *show_menu_button;
-#endif
-
-  GlueMapWindow *map;
+#ifdef ANDROID
+  ShowRotateButton *show_rotate_button = nullptr;
 
   /**
-   * A #Widget that is shown below the map.
+   * Called from the Java OrientationEventListener thread when the
+   * physical device orientation changes.
    */
-  Widget *bottom_widget;
+  UI::Notify rotation_suggestion_notify{
+    [this]{ OnRotationSuggestion(); }};
+
+  /**
+   * One-shot timer to auto-hide the rotate button after a timeout.
+   */
+  UI::Timer rotate_button_timer{
+    [this]{ OnRotateButtonTimeout(); }};
+#endif
+
+  GlueMapWindow *map = nullptr;
+
+  /**
+   * A #Widget that is shown above the main content.
+   */
+  Widget *top_widget = nullptr;
+
+  /**
+   * A #Widget that is shown below the main content.
+   */
+  Widget *bottom_widget = nullptr;
+
+  /**
+   * A transient #Widget between the main content and the configured
+   * bottom widget, or in a reserved screen-bottom strip while dialogs are open.
+   */
+  WindowWidget *bottom_banner_widget = nullptr;
 
   /**
    * A #Widget that is shown instead of the map.  The #GlueMapWindow
    * is hidden and the DrawThread is suspended while this attribute is
    * non-nullptr.
    */
-  Widget *widget;
+  Widget *widget = nullptr;
 
-  ManagedWidget vario;
+  ManagedWidget vario{*this};
 
-  ManagedWidget traffic_gauge;
-  bool suppress_traffic_gauge, force_traffic_gauge;
+  ManagedWidget traffic_gauge{*this};
+  bool suppress_traffic_gauge = false, force_traffic_gauge = false;
 
-  ManagedWidget thermal_assistant;
+  ManagedWidget thermal_assistant{*this};
 
-  bool dragging;
+  bool dragging = false;
   GestureManager gestures;
 
 public:
-  PopupMessage *popup;
+  PopupMessage *popup = nullptr;
 
 private:
-  WindowTimer timer;
+  std::unique_ptr<StorageEventListener> storage_event_adapter_;
+
+  /**
+   * Called by #StorageManager from a background thread when the
+   * device list may have changed.  Marshals to the UI thread.
+   */
+  UI::Notify storage_notify_{[this]{ OnStorageNotify(); }};
+
+  UI::Notify terrain_loader_notify{[this]{ OnTerrainLoaded(); }};
+
+  std::unique_ptr<PluggableOperationEnvironment> terrain_loader_env;
+
+  /**
+   * Called by the #MergeThread when new GPS data is available.
+   */
+  UI::Notify gps_notify{[this]{ OnGpsNotify(); }};
+
+  /**
+   * Called by the calculation thread when new calculation results are
+   * available.  This updates the map and the info boxes.
+   */
+  UI::Notify calculated_notify{[this]{ OnCalculatedNotify(); }};
+
+  /**
+   * @see DeferredRestorePage()
+   */
+  UI::Notify restore_page_notify{[this]{ OnRestorePageNotify(); }};
+
+  UI::Notify refresh_info_boxes_notify{[this]{ OnRefreshInfoBoxesNotify(); }};
+  UI::Notify page_actions_update_notify{[this]{ OnPageActionsUpdateNotify(); }};
+
+  UI::PeriodicTimer timer{[this]{ RunTimer(); }};
+
+  /**
+   * One-shot timer that re-checks the safe area on the next event
+   * loop iteration, which is when the system has applied a change we
+   * asked for.
+   *
+   * @see CheckSafeAreaChange()
+   */
+  UI::Timer safe_area_timer{[this]{ CheckSafeAreaChange(); }};
 
   BatteryTimer battery_timer;
 
   PixelRect map_rect;
-  bool FullScreen;
+
+  /**
+   * The part of #map_rect that is covered neither by InfoBoxes nor
+   * by system UI: the stack of the top area, the main area and the
+   * bottom area.
+   *
+   * @see GetAreaStackRect()
+   */
+  PixelRect area_stack_rect{0, 0, 0, 0};
+
+  /**
+   * #area_stack_rect without the top and bottom areas; the HUD
+   * elements are drawn here.
+   *
+   * @see GetHudRect()
+   */
+  PixelRect hud_rect{0, 0, 0, 0};
+
+  /**
+   * The safe area the current layout was calculated for.  The system
+   * applies changes to it asynchronously (e.g. after the status bar
+   * has been hidden during startup), so poll for them.
+   *
+   * @see CheckSafeAreaChange()
+   */
+  PixelRect safe_area_rect{0, 0, 0, 0};
+
+  bool FullScreen = false;
+
+  /**
+   * Nesting count for #BeginCoalesceMapLayout() /
+   * #EndCoalesceMapLayout().  While non-zero, #LayoutMapArea() only
+   * sets #map_layout_pending.
+   */
+  unsigned coalesce_map_layout = 0;
+
+  /** A #LayoutMapArea() was requested while coalescing was active. */
+  bool map_layout_pending = false;
+
+  /**
+   * True when #BeginCoalesceMapLayout() also started map full-redraw
+   * coalescing.  End must use this rather than re-testing #map, which
+   * may appear or disappear between the pair of calls.
+   */
+  bool coalesce_map_redraw = false;
 
 #ifndef ENABLE_OPENGL
   /**
    * This variable tracks whether the #DrawThread was suspended
    * because the map was replaced by a #Widget.
    */
-  bool draw_suspended;
+  bool draw_suspended = false;
+#else
+  /**
+   * Number of frames which must still be repainted with a cleared
+   * background to erase what the #GlueMapWindow (gesture trail) or
+   * the InfoBox arrange overlay (dragged InfoBox) has painted outside
+   * its own rectangle.  Sized from the swap-chain depth so every
+   * presentation buffer gets a clean frame.
+   *
+   * @see OnPaint()
+   * @see TopWindow::GetPresentationBufferCount()
+   */
+  unsigned clear_trail_frames = 0;
 #endif
 
-  bool restore_page_pending;
+  bool restore_page_pending = false;
+  bool refresh_info_boxes_pending = false;
+  bool page_actions_update_pending = false;
+  bool vario_bar_redraw_pending = false;
+
+  /**
+   * Has "late" initialization been done already?  Those are things
+   * that must be run from inside the main event loop.  It will be
+   * checked and set by OnTimer().
+   */
+  bool late_initialised = false;
 
 public:
-  MainWindow();
-  virtual ~MainWindow();
+  explicit MainWindow(UI::Display &display) noexcept;
+  ~MainWindow() noexcept override;
 
 protected:
   /**
    * Is XCSoar already up and running?
    */
-  bool IsRunning() {
+  bool IsRunning() noexcept {
     /* it is safe enough to say that XCSoar initialization is complete
        after the MapWindow has been created */
     return map != nullptr;
@@ -143,14 +250,21 @@ protected:
    * Destroy the current Widget, but don't reactivate the map.  The
    * caller is responsible for reactivating the map or another Widget.
    */
-  void KillWidget();
+  void KillWidget() noexcept;
 
-  bool HaveBottomWidget() const {
-    /* currently, the bottom widget is only visible below the map, but
-       not below a custom main widget */
-    /* TODO: eliminate this limitation; don't forget to remove the
-       "widget==nullptr" check from MainWindow::KillBottomWidget() */
-    return bottom_widget != nullptr && widget == nullptr;
+  bool HaveTopWidget() const noexcept {
+    return top_widget != nullptr;
+  }
+
+  /**
+   * Destroy the current "top" Widget, but don't resize the main area.
+   * The caller is responsible for doing that or installing a new top
+   * Widget.
+   */
+  void KillTopWidget() noexcept;
+
+  bool HaveBottomWidget() const noexcept {
+    return bottom_widget != nullptr;
   }
 
   /**
@@ -158,133 +272,304 @@ protected:
    * area.  The caller is responsible for doing that or installing a
    * new bottom Widget.
    */
-  void KillBottomWidget();
+  void KillBottomWidget() noexcept;
+
+  bool HaveBottomBannerWidget() const noexcept {
+    return bottom_banner_widget != nullptr;
+  }
+
+  /**
+   * Destroy the current bottom banner Widget, but don't resize the main
+   * area.  The caller is responsible for doing that or installing a new
+   * bottom banner Widget.
+   */
+  void KillBottomBannerWidget() noexcept;
+
+  /** Keep the banner above page content, below menu buttons and dialogs. */
+  void RaiseBottomBannerWidget() noexcept;
 
 public:
-  void Create(PixelSize size, TopWindowStyle style=TopWindowStyle());
+  Widget *GetBottomWidget() const noexcept {
+    return bottom_widget;
+  }
+  void Create(PixelSize size, UI::TopWindowStyle style={});
 
-  void Destroy();
+  void Destroy() noexcept;
 
   void Initialise();
   void InitialiseConfigured();
 
   /**
+   * Wire up the StorageEventDispatcher to the StorageManager
+   * owned by BackendComponents.  Must be called after
+   * BackendComponents is initialised.
+   */
+  void InitialiseStorage() noexcept;
+
+  /**
+   * Tear down storage event wiring.
+   * Must be called before BackendComponents is destroyed.
+   */
+  void DeinitialiseStorage() noexcept;
+
+  /**
+   * Send a storage change notification to the UI thread.
+   * Safe to call from any thread.
+   */
+  void SendStorageNotification() noexcept {
+    storage_notify_.SendNotification();
+  }
+
+  /**
    * Destroy the components of the main view (map, info boxes,
    * gauges).
    */
-  void Deinitialise();
+  void Deinitialise() noexcept;
 
 private:
-  gcc_pure
-  const PixelRect &GetMainRect(const PixelRect &full_rc) const {
-    return FullScreen ? full_rc : map_rect;
-  }
-
-  gcc_pure
-  PixelRect GetMainRect() const {
+  [[gnu::pure]]
+  PixelRect GetMainRect() const noexcept {
     return FullScreen ? GetClientRect() : map_rect;
   }
 
   /**
+   * The area in which everything except the map itself is laid out.
+   * This is the whole client area on the edges the user chose to
+   * stretch to, and the safe area on all others.
+   *
+   * @see DisplaySettings::infobox_area_stretch
+   */
+  [[gnu::pure]]
+  PixelRect GetInfoBoxAreaRect() const noexcept;
+
+  /**
+   * Re-run the layout if the system has changed the safe area behind
+   * our back.
+   */
+  void CheckSafeAreaChange() noexcept;
+
+  /**
+   * The stack of the top area, the main area and the bottom area,
+   * which is what the InfoBoxes and the system UI leave over.  What
+   * the top and bottom areas leave over is #GetHudRect().
+   *
+   * @see PageSettings
+   */
+  [[gnu::pure]]
+  PixelRect GetAreaStackRect() const noexcept;
+
+  /**
+   * The part of the main area that is covered neither by InfoBoxes,
+   * nor by the top and bottom areas, nor by system UI.  The HUD
+   * elements (compass, map scale, final glide bar, overlay buttons)
+   * are drawn here, and a #Widget shown instead of the map (FLARM
+   * radar, analysis, ...) is laid out here.  The map itself may
+   * extend beyond it, behind the InfoBoxes, behind the widgets and
+   * behind the system bars and the display cutout.
+   *
+   * Updated by #LayoutMapArea().
+   */
+  [[gnu::pure]]
+  PixelRect GetHudRect() const noexcept;
+
+  /**
+   * The visible #GlueMapWindow area.  After layout, this is
+   * #GlueMapWindow::GetPosition(); otherwise it is computed from
+   * #GetMainRect() and top/bottom widgets.
+   */
+  [[gnu::pure]]
+  PixelRect GetMapAreaRect() const noexcept;
+
+  /**
+   * Return the banner rectangle inside the InfoBox boundaries, above the
+   * configured bottom widget, for both map and custom pages.  While a dialog
+   * is open, use a full-width strip at the bottom of the client area instead.
+   */
+  [[gnu::pure]]
+  PixelRect GetBottomBannerRect() const noexcept;
+
+  /**
+   * Lay out the top/bottom widgets, banner and active main content inside
+   * #GetMainRect().  The hidden map follows the same content rectangle.
+   */
+  void LayoutMapArea() noexcept;
+
+  /**
+   * Move everything that follows #GetHudRect(): the current widget,
+   * the overlapped gauges and the status messages.  #LayoutMapArea()
+   * computes that rectangle, and must have run.
+   */
+  void LayoutHudElements() noexcept;
+
+  /**
    * Adjust the flarm radar position
+   *
+   * @param rc the InfoBox area; the positions that do not avoid the
+   * InfoBoxes are laid out in it, the others in #GetHudRect()
    */
   void ReinitialiseLayout_flarm(PixelRect rc,
-                                const InfoBoxLayout::Layout &ib_layout);
+                                const InfoBoxLayout::Layout &ib_layout) noexcept;
 
   /**
    * Adjust vario
    */
-  void ReinitialiseLayout_vario(const InfoBoxLayout::Layout &layout);
+  void ReinitialiseLayout_vario(const InfoBoxLayout::Layout &layout) noexcept;
 
-  void ReinitialiseLayoutTA(PixelRect rc, const InfoBoxLayout::Layout &layout);
+  /**
+   * Adjust the thermal assistant position
+   *
+   * @param rc the InfoBox area; the positions that do not avoid the
+   * InfoBoxes are laid out in it, the others in #GetHudRect()
+   */
+  void ReinitialiseLayoutTA(PixelRect rc,
+                            const InfoBoxLayout::Layout &layout) noexcept;
 
 public:
+  /**
+   * Create or destroy map overlay buttons to match the current
+   * UISettings, then update their positions.
+   */
+  void ReinitialiseMapOverlayButtons() noexcept;
+
+  /**
+   * Show or hide the map overlay buttons for the current page and
+   * keep the north arrow's clearance in step with them.
+   */
+  void UpdateMapOverlayButtonLayout() noexcept;
+
   /**
    * Called by XCSoarInterface::Startup() after startup has been
    * completed.
    */
-  void FinishStartup();
+  void FinishStartup() noexcept;
 
   /**
    * Called by XCSoarInterface::Shutdown() before shutdown begins.
    */
-  void BeginShutdown();
+  void BeginShutdown() noexcept;
 
   /**
    * Destroy and re-create all info boxes, and adjust the map
    * position/size.
    */
-  void ReinitialiseLayout();
+  void ReinitialiseLayout() noexcept;
+
+  /**
+   * Check whether the InfoBox geometry of the currently active panel
+   * differs from the one the InfoBoxes were created with, and
+   * reinitialise the layout if it does.  Cheap enough to be called
+   * whenever the display mode (and thus the panel) may have changed.
+   */
+  void CheckInfoBoxGeometry() noexcept;
+
+  /**
+   * Reinitialise the #Look after relevant #UISettings have been
+   * changed.
+   */
+  void ReinitialiseLook() noexcept;
 
   /**
    * Suspend threads that are owned by this object.
    */
-  void SuspendThreads();
+  void SuspendThreads() noexcept;
 
   /**
    * Resumt threads that are owned by this object.
    */
-  void ResumeThreads();
+  void ResumeThreads() noexcept;
+
+  /**
+   * Start loading the terrain file (asynchronously).
+   */
+  void LoadTerrain() noexcept;
 
   /**
    * Set the keyboard focus on the default element (i.e. the
    * MapWindow).
    */
-  void SetDefaultFocus();
+  void SetDefaultFocus() noexcept;
 
-  void FlushRendererCaches();
+  void FlushRendererCaches() noexcept;
 
   /**
    * Trigger a full redraw of the screen.
    */
-  void FullRedraw();
+  void FullRedraw() noexcept;
 
-  bool GetFullScreen() const {
+  bool GetFullScreen() const noexcept {
     return FullScreen;
   }
 
-  void SetFullScreen(bool _full_screen);
+  void SetFullScreen(bool _full_screen) noexcept;
 
-  void SendGPSUpdate() {
-    SendUser((unsigned)Command::GPS_UPDATE);
+#ifdef HAVE_FULL_SCREEN_SETTING
+  /**
+   * Apply DisplaySettings::full_screen and
+   * DisplaySettings::status_bar, i.e. hide or show the system bars
+   * (status bar, navigation bar, home indicator) and use the whole
+   * screen.
+   *
+   * Not to be confused with #SetFullScreen(), which hides the
+   * InfoBoxes.
+   */
+  void ApplyFullScreenSettings() noexcept;
+#endif
+
+  /**
+   * Coalesce map area layout (and map #FullRedraw) while a page layout
+   * is applied in several steps (InfoBoxes, bottom widget, …).
+   */
+  void BeginCoalesceMapLayout() noexcept;
+  void EndCoalesceMapLayout() noexcept;
+
+  void SendGPSUpdate(bool vario_bar_redraw=false) noexcept;
+
+  void SendCalculatedUpdate() noexcept {
+    calculated_notify.SendNotification();
   }
 
-  void SendCalculatedUpdate() {
-    SendUser((unsigned)Command::CALCULATED_UPDATE);
+#ifdef ANDROID
+  /**
+   * Called from any thread to show the rotate suggestion button.
+   * Thread-safe: uses UI::Notify to defer to the UI thread.
+   */
+  void SendRotationSuggestion() noexcept {
+    rotation_suggestion_notify.SendNotification();
   }
+#endif
 
-  void SetTerrain(RasterTerrain *terrain);
-  void SetTopography(TopographyStore *topography);
+  void SetTerrain(RasterTerrain *terrain) noexcept;
+  void SetTopography(TopographyStore *topography) noexcept;
 
-  const Look &GetLook() const {
+  const Look &GetLook() const noexcept {
     assert(look != nullptr);
 
     return *look;
   }
 
-  Look &SetLook() {
+  Look &SetLook() noexcept {
     assert(look != nullptr);
 
     return *look;
   }
 
-  void SetComputerSettings(const ComputerSettings &settings_computer);
-  void SetMapSettings(const MapSettings &settings_map);
-  void SetUIState(const UIState &ui_state);
+  void SetComputerSettings(const ComputerSettings &settings_computer) noexcept;
+  void SetMapSettings(const MapSettings &settings_map) noexcept;
+  void SetUIState(const UIState &ui_state) noexcept;
 
   /**
    * Returns the map even if it is not active.  May return nullptr if
    * there is no map.
    */
-  gcc_pure
-  GlueMapWindow *GetMap() {
+  [[gnu::pure]]
+  GlueMapWindow *GetMap() noexcept {
     return map;
   }
 
   /**
    * Is the map active, i.e. currently visible?
    */
-  bool IsMapActive() const {
+  bool IsMapActive() const noexcept {
     return widget == nullptr;
   }
 
@@ -292,34 +577,61 @@ public:
    * Returns the map if it is active, or nullptr if the map is not
    * active.
    */
-  gcc_pure
-  GlueMapWindow *GetMapIfActive();
+  [[gnu::pure]]
+  GlueMapWindow *GetMapIfActive() noexcept;
 
   /**
    * Activate the map and return a pointer to it.  May return nullptr if
    * there is no map.
    */
-  GlueMapWindow *ActivateMap();
+  GlueMapWindow *ActivateMap() noexcept;
 
   /**
    * Schedule a call to PageActions::Restore().  The function returns
    * immediately, and there is no guarantee that it succeeds.
    */
-  void DeferredRestorePage();
+  void DeferredRestorePage() noexcept;
 
   /**
-   * Show this #Widget below the map.  This replaces (deletes) the
+   * Defer InfoBox refresh to the next event-loop iteration (avoids
+   * reentrant layout while InfoBox content is updating).
+   */
+  void ScheduleRefreshInfoBoxes() noexcept;
+
+  /**
+   * Defer PageActions::Update() to the next event-loop iteration.
+   */
+  void SchedulePageActionsUpdate() noexcept;
+
+  /**
+   * Show this #Widget above the main content.  This replaces (deletes) the
+   * previous top widget, if any.  To disable this feature, call this
+   * method with widget==nullptr.
+   */
+  void SetTopWidget(Widget *widget) noexcept;
+
+  /**
+   * Show this #Widget below the main content.  This replaces (deletes) the
    * previous bottom widget, if any.  To disable this feature, call
    * this method with widget==nullptr.
    */
-  void SetBottomWidget(Widget *widget);
+  void SetBottomWidget(Widget *widget) noexcept;
+
+  /**
+   * Show a transient #Widget below the active main content, reserving space
+   * above the configured bottom widget on both map and custom pages.  This
+   * replaces (deletes) the previous bottom banner, if any.  To disable this
+   * feature, call this method with widget==nullptr.  Modal dialogs reserve
+   * space for the banner at the bottom of the screen.
+   */
+  void SetBottomBannerWidget(WindowWidget *widget) noexcept;
 
   /**
    * Replace the map with a #Widget.  The Widget instance gets deleted
    * when the map gets reactivated with ActivateMap() or if another
    * Widget gets set.
    */
-  void SetWidget(Widget *_widget);
+  void SetWidget(Widget *_widget) noexcept;
 
   /**
    * Returns the current #Widget, but only if the specified flavour is
@@ -327,44 +639,77 @@ public:
    *
    * @see InputEvents::IsFlavour(), InputEvents::SetFlavour()
    */
-  gcc_pure
-  Widget *GetFlavourWidget(const TCHAR *flavour);
+  [[gnu::pure]]
+  Widget *GetFlavourWidget(const char *flavour) noexcept;
 
-  void UpdateGaugeVisibility();
+  void ShowMenu(const Menu &menu, const Menu *overlay=nullptr,
+                bool full=true) noexcept;
 
-  gcc_pure
-  const MapWindowProjection &GetProjection() const;
+  [[gnu::pure]]
+  bool IsMenuButtonEnabled(unsigned idx) noexcept;
 
-  void ToggleSuppressFLARMRadar();
-  void ToggleForceFLARMRadar();
+  void UpdateGaugeVisibility() noexcept;
+
+  [[gnu::pure]]
+  const MapWindowProjection &GetProjection() const noexcept;
+
+  void ToggleSuppressFLARMRadar() noexcept;
+  void ToggleForceFLARMRadar() noexcept;
 
 private:
-  void UpdateVarioGaugeVisibility();
-  void UpdateTrafficGaugeVisibility();
+  void UpdateVarioGaugeVisibility() noexcept;
+  void UpdateTrafficGaugeVisibility() noexcept;
 
-  void StopDragging();
+  void StopDragging() noexcept;
 
-protected:
-  /* virtual methods from class Window */
-  virtual void OnDestroy() override;
-  virtual void OnResize(PixelSize new_size) override;
-  virtual void OnSetFocus() override;
-  virtual void OnCancelMode() override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
-  bool OnMouseDouble(PixelPoint p) override;
-  virtual bool OnKeyDown(unsigned key_code) override;
-  virtual bool OnUser(unsigned id) override;
-  virtual bool OnTimer(WindowTimer &timer) override;
-  virtual void OnPaint(Canvas &canvas) override;
+  void LateInitialise() noexcept;
 
-  /* virtual methods from class TopWindow */
-  virtual bool OnClose() override;
+  void RunTimer() noexcept;
+
+  void OnGpsNotify() noexcept;
+  void OnCalculatedNotify() noexcept;
+  void OnRestorePageNotify() noexcept;
+  void OnRefreshInfoBoxesNotify() noexcept;
+  void OnPageActionsUpdateNotify() noexcept;
+
+  void OnTerrainLoaded() noexcept;
+
+  void OnStorageNotify() noexcept;
+  void OnStorageEvent(const StorageEventInfo &info) noexcept;
 
 #ifdef ANDROID
-  virtual void OnPause() override;
+  void OnRotationSuggestion() noexcept;
+  void OnRotateButtonTimeout() noexcept;
+#endif
+
+protected:
+  void OnDialogChanged() noexcept override;
+
+  /* virtual methods from class Window */
+  void OnDestroy() noexcept override;
+  void OnResize(PixelSize new_size) noexcept override;
+  void OnSetFocus() noexcept override;
+  void OnCancelMode() noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
+  bool OnMouseDouble(PixelPoint p) noexcept override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
+  void OnPaint(Canvas &canvas) noexcept override;
+  PixelRect GetShowMenuButtonRect(const PixelRect rc) noexcept;
+  PixelRect GetShowQuickMenuButtonRect(const PixelRect rc) noexcept;
+  PixelRect GetShowZoomButtonRect(const PixelRect rc,
+                                  ShowZoomButton::Sign sign) noexcept;
+
+#ifdef ANDROID
+  static PixelRect GetShowRotateButtonRect(const PixelRect rc) noexcept;
+#endif
+
+  /* virtual methods from class TopWindow */
+  bool OnClose() noexcept override;
+
+#ifdef ANDROID
+  void OnLook() noexcept override;
+  void OnTaskReceived() noexcept override;
 #endif
 };
-
-#endif

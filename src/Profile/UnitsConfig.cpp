@@ -1,28 +1,8 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "UnitsConfig.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "Map.hpp"
 #include "Units/Settings.hpp"
 #include "Units/UnitsGlue.hpp"
@@ -40,9 +20,8 @@ ApplyUnit(Unit &value, Unit new_value)
 /**
  * Convert XCSoar <= 6.2 profile value.
  */
-gcc_const
-static Unit
-ImportSpeedUnit(unsigned tmp)
+static constexpr Unit
+ImportSpeedUnit(unsigned tmp) noexcept
 {
   switch (tmp) {
   case 0:
@@ -60,15 +39,14 @@ ImportSpeedUnit(unsigned tmp)
 }
 
 static bool
-GetLegacySpeedUnit(const ProfileMap &map, const char *key, Unit &value)
+GetLegacySpeedUnit(const ProfileMap &map, std::string_view key, Unit &value)
 {
   unsigned tmp;
   return map.Get(key, tmp) && ApplyUnit(value, ImportSpeedUnit(tmp));
 }
 
-gcc_const
-static bool
-ValidSpeedUnit(Unit unit)
+static constexpr bool
+ValidSpeedUnit(Unit unit) noexcept
 {
   return unit == Unit::KILOMETER_PER_HOUR || unit == Unit::KNOTS ||
     unit == Unit::STATUTE_MILES_PER_HOUR || unit == Unit::METER_PER_SECOND ||
@@ -76,7 +54,8 @@ ValidSpeedUnit(Unit unit)
 }
 
 static bool
-GetSpeedUnit(const ProfileMap &map, const char *key, const char *legacy_key,
+GetSpeedUnit(const ProfileMap &map, std::string_view key,
+             std::string_view legacy_key,
              Unit &value_r)
 {
   Unit tmp;
@@ -94,9 +73,8 @@ GetSpeedUnit(const ProfileMap &map, const char *key, const char *legacy_key,
 /**
  * Convert XCSoar <= 6.2 profile value.
  */
-gcc_const
-static Unit
-ImportVerticalSpeedUnit(unsigned tmp)
+static constexpr Unit
+ImportVerticalSpeedUnit(unsigned tmp) noexcept
 {
   switch (tmp) {
   case 0:
@@ -114,14 +92,15 @@ ImportVerticalSpeedUnit(unsigned tmp)
 }
 
 static bool
-GetLegacyVerticalSpeedUnit(const ProfileMap &map, const char *key, Unit &value)
+GetLegacyVerticalSpeedUnit(const ProfileMap &map, std::string_view key,
+                           Unit &value)
 {
   unsigned tmp;
   return map.Get(key, tmp) && ApplyUnit(value, ImportVerticalSpeedUnit(tmp));
 }
 
 static bool
-GetVerticalSpeedUnit(const ProfileMap &map, const char *key,
+GetVerticalSpeedUnit(const ProfileMap &map, std::string_view key,
                      const char *legacy_key, Unit &value_r)
 {
   Unit tmp;
@@ -139,9 +118,8 @@ GetVerticalSpeedUnit(const ProfileMap &map, const char *key,
 /**
  * Convert XCSoar <= 6.2 profile value.
  */
-gcc_const
-static Unit
-ImportDistanceUnit(unsigned tmp)
+static constexpr Unit
+ImportDistanceUnit(unsigned tmp) noexcept
 {
   switch (tmp) {
   case 0:
@@ -159,15 +137,14 @@ ImportDistanceUnit(unsigned tmp)
 }
 
 static bool
-GetLegacyDistanceUnit(const ProfileMap &map, const char *key, Unit &value)
+GetLegacyDistanceUnit(const ProfileMap &map, std::string_view key, Unit &value)
 {
   unsigned tmp;
   return map.Get(key, tmp) && ApplyUnit(value, ImportDistanceUnit(tmp));
 }
 
-gcc_const
-static bool
-ValidDistanceUnit(Unit unit)
+static constexpr bool
+ValidDistanceUnit(Unit unit) noexcept
 {
   return unit == Unit::KILOMETER || unit == Unit::NAUTICAL_MILES ||
     unit == Unit::STATUTE_MILES || unit == Unit::METER ||
@@ -175,7 +152,8 @@ ValidDistanceUnit(Unit unit)
 }
 
 static bool
-GetDistanceUnit(const ProfileMap &map, const char *key, const char *legacy_key,
+GetDistanceUnit(const ProfileMap &map, std::string_view key,
+                std::string_view legacy_key,
                 Unit &value_r)
 {
   Unit tmp;
@@ -193,9 +171,8 @@ GetDistanceUnit(const ProfileMap &map, const char *key, const char *legacy_key,
 /**
  * Convert XCSoar <= 6.2 profile value.
  */
-gcc_const
-static Unit
-ImportAltitudeUnit(unsigned tmp)
+static constexpr Unit
+ImportAltitudeUnit(unsigned tmp) noexcept
 {
   switch (tmp) {
   case 0:
@@ -210,14 +187,14 @@ ImportAltitudeUnit(unsigned tmp)
 }
 
 static bool
-GetLegacyAltitudeUnit(const ProfileMap &map, const char *key, Unit &value)
+GetLegacyAltitudeUnit(const ProfileMap &map, std::string_view key, Unit &value)
 {
   unsigned tmp;
   return map.Get(key, tmp) && ApplyUnit(value, ImportAltitudeUnit(tmp));
 }
 
 static bool
-GetAltitudeUnit(const ProfileMap &map, const char *key, const char *legacy_key,
+GetAltitudeUnit(const ProfileMap &map, std::string_view key, const char *legacy_key,
                 Unit &value_r)
 {
   Unit tmp;
@@ -235,9 +212,8 @@ GetAltitudeUnit(const ProfileMap &map, const char *key, const char *legacy_key,
 /**
  * Convert XCSoar <= 6.2 profile value.
  */
-gcc_const
-static Unit
-ImportTemperatureUnit(unsigned tmp)
+static constexpr Unit
+ImportTemperatureUnit(unsigned tmp) noexcept
 {
   switch (tmp) {
   case 0:
@@ -252,23 +228,23 @@ ImportTemperatureUnit(unsigned tmp)
 }
 
 static bool
-GetLegacyTemperatureUnit(const ProfileMap &map, const char *key, Unit &value)
+GetLegacyTemperatureUnit(const ProfileMap &map, std::string_view key,
+                         Unit &value)
 {
   unsigned tmp;
   return map.Get(key, tmp) &&
     ApplyUnit(value, ImportTemperatureUnit(tmp));
 }
 
-gcc_const
-static bool
-ValidTemperatureUnit(Unit unit)
+static constexpr bool
+ValidTemperatureUnit(Unit unit) noexcept
 {
   return unit == Unit::KELVIN || unit == Unit::DEGREES_CELCIUS ||
     unit == Unit::DEGREES_FAHRENHEIT;
 }
 
 static bool
-GetTemperatureUnit(const ProfileMap &map, const char *key,
+GetTemperatureUnit(const ProfileMap &map, std::string_view key,
                    const char *legacy_key, Unit &value_r)
 {
   Unit tmp;
@@ -283,16 +259,15 @@ GetTemperatureUnit(const ProfileMap &map, const char *key,
   return true;
 }
 
-gcc_const
-static bool
-ValidPressureUnit(Unit unit)
+static constexpr bool
+ValidPressureUnit(Unit unit) noexcept
 {
   return unit == Unit::HECTOPASCAL || unit == Unit::MILLIBAR ||
     unit == Unit::TORR || unit == Unit::INCH_MERCURY;
 }
 
 static bool
-GetPressureUnit(const ProfileMap &map, const char *key, Unit &value)
+GetPressureUnit(const ProfileMap &map, std::string_view key, Unit &value)
 {
   Unit tmp;
   if (!map.GetEnum(key, tmp) || !ValidPressureUnit(tmp))
@@ -309,7 +284,7 @@ ValidWingLoadingUnit(Unit unit)
 }
 
 static bool
-GetWingLoadingUnit(const ProfileMap &map, const char *key, Unit &value)
+GetWingLoadingUnit(const ProfileMap &map, std::string_view key, Unit &value)
 {
   Unit tmp;
   if (!map.GetEnum(key, tmp) || !ValidWingLoadingUnit(tmp))
@@ -326,10 +301,27 @@ ValidMassUnit(Unit unit)
 }
 
 static bool
-GetMassUnit(const ProfileMap &map, const char *key, Unit &value)
+GetMassUnit(const ProfileMap &map, std::string_view key, Unit &value)
 {
   Unit tmp;
   if (!map.GetEnum(key, tmp) || !ValidMassUnit(tmp))
+    return false;
+
+  value = tmp;
+  return true;
+}
+
+static constexpr bool
+ValidRotationUnit(Unit unit) noexcept
+{
+  return unit == Unit::HZ || unit == Unit::RPM;
+}
+
+static bool
+GetRotationUnit(const ProfileMap &map, std::string_view key, Unit &value)
+{
+  Unit tmp;
+  if (!map.GetEnum(key, tmp) || !ValidRotationUnit(tmp))
     return false;
 
   value = tmp;
@@ -357,4 +349,5 @@ Profile::LoadUnits(const ProfileMap &map, UnitSetting &config)
   GetWingLoadingUnit(map, ProfileKeys::WingLoadingUnitValue,
                      config.wing_loading_unit);
   GetMassUnit(map, ProfileKeys::MassUnitValue, config.mass_unit);
+  GetRotationUnit(map, ProfileKeys::RotationUnitValue, config.rotation_unit);
 }

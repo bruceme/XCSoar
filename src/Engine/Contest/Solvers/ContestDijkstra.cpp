@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ContestDijkstra.hpp"
 #include "../ContestResult.hpp"
@@ -27,7 +7,7 @@ Copyright_License {
 #include "Cast.hpp"
 
 #include <algorithm>
-#include <assert.h>
+#include <cassert>
 
 // set size of reserved queue elements (may differ from Dijkstra default)
 static constexpr unsigned CONTEST_QUEUE_SIZE = 5000;
@@ -35,20 +15,22 @@ static constexpr unsigned CONTEST_QUEUE_SIZE = 5000;
 ContestDijkstra::ContestDijkstra(const Trace &_trace,
                                  bool _continuous,
                                  const unsigned n_legs,
-                                 const unsigned finish_alt_diff)
+                                 const unsigned finish_alt_diff,
+                                 const double _min_distance) noexcept
   :AbstractContest(finish_alt_diff),
    NavDijkstra(n_legs + 1),
    TraceManager(_trace),
    continuous(_continuous),
-   incremental(false)
+   min_distance(_min_distance)
 {
   assert(num_stages <= MAX_STAGES);
+  assert(min_distance >= 0.0);
 
   std::fill_n(stage_weights, num_stages - 1, 5);
 }
 
 void
-ContestDijkstra::UpdateTrace(bool force)
+ContestDijkstra::UpdateTrace(bool force) noexcept
 {
   if (IsMasterAppended()) return; /* unmodified */
 
@@ -84,7 +66,7 @@ ContestDijkstra::UpdateTrace(bool force)
 }
 
 SolverResult
-ContestDijkstra::Solve(bool exhaustive)
+ContestDijkstra::Solve(bool exhaustive) noexcept
 {
   assert(num_stages <= MAX_STAGES);
 
@@ -144,7 +126,7 @@ ContestDijkstra::Solve(bool exhaustive)
 }
 
 void
-ContestDijkstra::Reset()
+ContestDijkstra::Reset() noexcept
 {
   dijkstra.Clear();
   ClearTrace();
@@ -154,7 +136,7 @@ ContestDijkstra::Reset()
 }
 
 bool
-ContestDijkstra::SaveSolution()
+ContestDijkstra::SaveSolution() noexcept
 {
   solution.resize(num_stages);
 
@@ -172,7 +154,7 @@ ContestDijkstra::SaveSolution()
 }
 
 ContestResult
-ContestDijkstra::CalculateResult(const ContestTraceVector &solution) const
+ContestDijkstra::CalculateResult(const ContestTraceVector &solution) const noexcept
 {
   assert(num_stages <= MAX_STAGES);
 
@@ -188,7 +170,7 @@ ContestDijkstra::CalculateResult(const ContestTraceVector &solution) const
     previous = current;
   }
 
-  #define FIFTH 0.0002
+  static constexpr double FIFTH = 0.0002;
   result.score *= FIFTH;
   result.score = ApplyHandicap(result.score);
 
@@ -196,13 +178,13 @@ ContestDijkstra::CalculateResult(const ContestTraceVector &solution) const
 }
 
 ContestResult
-ContestDijkstra::CalculateResult() const
+ContestDijkstra::CalculateResult() const noexcept
 {
   return CalculateResult(solution);
 }
 
 void
-ContestDijkstra::AddStartEdges()
+ContestDijkstra::AddStartEdges() noexcept
 {
   assert(num_stages <= MAX_STAGES);
   assert(n_points > 0);
@@ -222,7 +204,7 @@ ContestDijkstra::AddStartEdges()
 
 void
 ContestDijkstra::AddEdges(const ScanTaskPoint origin,
-                          const unsigned first_point)
+                          const unsigned first_point) noexcept
 {
   ScanTaskPoint destination(origin.GetStageNumber() + 1,
                             std::max(origin.GetPointIndex(), first_point));
@@ -237,46 +219,55 @@ ContestDijkstra::AddEdges(const ScanTaskPoint origin,
        search */
     destination.SetPointIndex(first_finish_candidate);
 
+  const auto &origin_tp = GetPoint(origin);
   const unsigned weight = GetStageWeight(origin.GetStageNumber());
 
   bool previous_above = false;
   for (const ScanTaskPoint end(destination.GetStageNumber(), n_points);
        destination != end; destination.IncrementPointIndex()) {
-    bool above = GetPoint(destination).GetIntegerAltitude() >= min_altitude;
+    const auto destination_tp = GetPoint(destination);
+    const bool above = destination_tp.GetIntegerAltitude() >= min_altitude;
 
-    if (above) {
-      const unsigned d = weight * CalcEdgeDistance(origin, destination);
-      Link(destination, origin, d);
-    } else if (previous_above) {
-      /* After excessive thinning, the exact TracePoint that matches
-         the required altitude difference may be gone, and the
-         calculated result becomes overly pessimistic.  This code path
-         makes it optimistic, by checking if the previous point
-         matches. */
+    /* Check if the distance is withing the minimum distance.
+       Also allows zero distance legs, because if a minimum distance is set not
+       all solutions will use all legs. */
+    if (origin_tp.GetFlatLocation() == destination_tp.GetFlatLocation() ||
+        CheckMinDistance(origin_tp.GetLocation(),
+                         destination_tp.GetLocation())) {
+      if (above) {
+        const value_type d = weight * CalcEdgeDistance(origin, destination);
+        Link(destination, origin, d);
+      } else if (previous_above) {
+        /* After excessive thinning, the exact TracePoint that matches
+           the required altitude difference may be gone, and the
+           calculated result becomes overly pessimistic.  This code path
+           makes it optimistic, by checking if the previous point
+           matches. */
 
-      /* TODO: interpolate the distance */
-      const unsigned d = weight * CalcEdgeDistance(origin, destination);
-      Link(destination, origin, d);
+        /* TODO: interpolate the distance */
+        const value_type d = weight * CalcEdgeDistance(origin, destination);
+        Link(destination, origin, d);
+      }
     }
 
     previous_above = above;
   }
 
   if (IsFinal(destination) && predicted.IsDefined()) {
-    const unsigned d = weight * GetPoint(origin).FlatDistanceTo(predicted);
+    const value_type d = weight * origin_tp.FlatDistanceTo(predicted);
     destination.SetPointIndex(predicted_index);
     Link(destination, origin, d);
   }
 }
 
 void
-ContestDijkstra::AddEdges(const ScanTaskPoint origin)
+ContestDijkstra::AddEdges(const ScanTaskPoint origin) noexcept
 {
   AddEdges(origin, 0);
 }
 
 void
-ContestDijkstra::AddIncrementalEdges(unsigned first_point)
+ContestDijkstra::AddIncrementalEdges(unsigned first_point) noexcept
 {
   assert(first_point < n_points);
   assert(continuous);
@@ -318,16 +309,16 @@ ContestDijkstra::AddIncrementalEdges(unsigned first_point)
   AddStartEdges();
 }
 
-void
-ContestDijkstra::CopySolution(ContestTraceVector &result) const
+const ContestTraceVector &
+ContestDijkstra::GetCurrentPath() const noexcept
 {
   assert(num_stages <= MAX_STAGES);
 
-  result = solution;
+  return solution;
 }
 
-void 
-ContestDijkstra::StartSearch()
+void
+ContestDijkstra::StartSearch() noexcept
 {
   // nothing required by default
 }
@@ -362,7 +353,8 @@ OLC league:
 - Sprint arrival height is the altitude at the sprint end point.
 - The average speed (points) of each individual flight is the sum of
   the distances from sprint start, around up to three turnpoints, to the
-  sprint end divided DAeC index increased by 100, multiplied by 200 and
-  divided by 2.5h: [formula: Points = km / 2,5 * 200 / (Index+100)
+  sprint end divided by weighted (75%) DAeC index increased by 100, multiplied by 100 and
+  divided by 2h: [formula: Points = (km / 2.0) * 100 / ((Index-100) * 0.75 + 100)
 
+  https://www.onlinecontest.org/olc-3.0/segelflugszene/cms.html?url=rules_overview/b5_de
 */

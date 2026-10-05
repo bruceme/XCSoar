@@ -1,70 +1,58 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Client.hpp"
 #include "Handler.hpp"
 #include "Assemble.hpp"
 #include "Protocol.hpp"
 #include "Import.hpp"
-#include "OS/ByteOrder.hpp"
-#include "Net/StaticSocketAddress.hxx"
+#include "TrafficExtensions.hpp"
+#include "util/ByteOrder.hxx"
 #include "Math/Angle.hpp"
 #include "Geo/GeoPoint.hpp"
-#include "Util/CRC.hpp"
-#include "Util/ConstBuffer.hxx"
-#include "IO/Async/AsioUtil.hpp"
-#include "Util/UTF8.hpp"
-#include "Util/ConvertString.hpp"
+#include "event/Call.hxx"
+#include "net/StaticSocketAddress.hxx"
+#include "net/UniqueSocketDescriptor.hxx"
+#include "util/CRC16CCITT.hpp"
+#include "util/UTF8.hpp"
 
+#include <span>
 #include <string>
 
 void
-SkyLinesTracking::Client::Open(boost::asio::ip::udp::resolver::query query)
+SkyLinesTracking::Client::Open(Cares::Channel &cares, const char *server,
+                               unsigned port)
 {
-  Close();
+  BlockingCall(GetEventLoop(), [this, &cares, server, port](){
+    InternalClose();
 
-  const ScopeLock protect(mutex);
-  resolving = true;
-  resolver.async_resolve(query,
-                         std::bind(&Client::OnResolved, this,
-                                   std::placeholders::_1,
-                                   std::placeholders::_2));
+    Cares::SimpleHandler &resolver_handler = *this;
+    resolver.emplace(resolver_handler, port);
+    resolver->Start(cares, server);
+  });
 }
 
 bool
-SkyLinesTracking::Client::Open(boost::asio::ip::udp::endpoint _endpoint)
+SkyLinesTracking::Client::Open(SocketAddress _address)
 {
+  assert(_address.IsDefined());
+
   Close();
 
-  endpoint = _endpoint;
+  address = _address;
 
-  boost::system::error_code ec;
-  socket.open(endpoint.protocol(), ec);
-  if (ec)
+  UniqueSocketDescriptor socket;
+  if (!socket.Create(address.GetFamily(), SOCK_DGRAM, 0))
     return false;
 
+  // TODO: bind?
+
   if (handler != nullptr) {
-    AsyncReceive();
+    BlockingCall(GetEventLoop(), [&socket, this](){
+      socket_event.Open(socket.Release());
+      socket_event.ScheduleRead();
+    });
+
     handler->OnSkyLinesReady();
   }
 
@@ -72,19 +60,17 @@ SkyLinesTracking::Client::Open(boost::asio::ip::udp::endpoint _endpoint)
 }
 
 void
+SkyLinesTracking::Client::InternalClose() noexcept
+{
+  const std::lock_guard lock{mutex};
+  socket_event.Close();
+  resolver.reset();
+}
+
+void
 SkyLinesTracking::Client::Close()
 {
-  const ScopeLock protect(mutex);
-
-  if (socket.is_open()) {
-    CancelWait(socket.get_io_service(), socket);
-    socket.close();
-  }
-
-  if (resolving) {
-    CancelWait(socket.get_io_service(), resolver);
-    resolving = false;
-  }
+  BlockingCall(GetEventLoop(), [this](){ InternalClose(); });
 }
 
 void
@@ -152,17 +138,24 @@ SkyLinesTracking::Client::OnTrafficReceived(const TrafficResponsePacket &packet,
     return;
 
   const unsigned n = packet.traffic_count;
-  const ConstBuffer<TrafficResponsePacket::Traffic>
+  const std::span<const TrafficResponsePacket::Traffic>
     list((const TrafficResponsePacket::Traffic *)(&packet + 1), n);
 
   if (length != sizeof(packet) + n * sizeof(list.front()))
     return;
 
-  for (const auto &traffic : list)
+  for (const auto &traffic : list) {
+    const auto ext = TrafficExtensions::FromWire(traffic.reserved,
+                                                 traffic.reserved2);
     handler->OnTraffic(FromBE32(traffic.pilot_id),
                        FromBE32(traffic.time),
                        ImportGeoPoint(traffic.location),
-                       (int16_t)FromBE16(traffic.altitude));
+                       (int16_t)FromBE16(traffic.altitude),
+                       ext.altitude_valid,
+                       traffic_source,
+                       ext.track_deg, ext.track_valid,
+                       ext.flarm_id, ext.aircraft_type);
+  }
 }
 
 inline void
@@ -178,8 +171,7 @@ SkyLinesTracking::Client::OnUserNameReceived(const UserNameResponsePacket &packe
   if (!ValidateUTF8(name.c_str()))
     return;
 
-  UTF8ToWideConverter tname(name.c_str());
-  handler->OnUserName(FromBE32(packet.user_id), tname);
+  handler->OnUserName(FromBE32(packet.user_id), name.c_str());
 }
 
 inline void
@@ -190,8 +182,8 @@ SkyLinesTracking::Client::OnWaveReceived(const WaveResponsePacket &packet,
     return;
 
   const unsigned n = packet.wave_count;
-  ConstBuffer<Wave> waves((const Wave *)(&packet + 1), n);
-  if (length != sizeof(packet) + waves.size * sizeof(waves.front()))
+  std::span<const Wave> waves((const Wave *)(&packet + 1), n);
+  if (length != sizeof(packet) + waves.size() * sizeof(waves.front()))
     return;
 
   for (const auto &wave : waves)
@@ -207,8 +199,8 @@ SkyLinesTracking::Client::OnThermalReceived(const ThermalResponsePacket &packet,
     return;
 
   const unsigned n = packet.thermal_count;
-  ConstBuffer<Thermal> thermals((const Thermal *)(&packet + 1), n);
-  if (length != sizeof(packet) + thermals.size * sizeof(thermals.front()))
+  std::span<const Thermal> thermals((const Thermal *)(&packet + 1), n);
+  if (length != sizeof(packet) + thermals.size() * sizeof(thermals.front()))
     return;
 
   for (const auto &thermal : thermals)
@@ -276,57 +268,44 @@ SkyLinesTracking::Client::OnDatagramReceived(void *data, size_t length)
 }
 
 void
-SkyLinesTracking::Client::OnReceive(const boost::system::error_code &ec,
-                                    size_t size)
+SkyLinesTracking::Client::OnSocketReady(unsigned) noexcept
 {
-  if (ec) {
-    if (ec == boost::asio::error::operation_aborted)
-      return;
+  std::byte buffer[4096];
+  ssize_t nbytes;
+  StaticSocketAddress source_address;
 
-    {
-      const ScopeLock protect(mutex);
-      socket.close();
-    }
+  while ((nbytes = GetSocket().ReadNoWait(std::span{buffer}, source_address)) > 0)
+    if (source_address == address)
+      OnDatagramReceived(buffer, nbytes);
 
-    if (handler != nullptr)
-      handler->OnSkyLinesError(boost::system::system_error(ec));
-    return;
-  }
-
-  if (sender_endpoint == endpoint)
-    OnDatagramReceived(buffer, size);
-
-  AsyncReceive();
+  // TODO check for errors?
 }
 
 void
-SkyLinesTracking::Client::AsyncReceive()
+SkyLinesTracking::Client::OnResolverSuccess(std::forward_list<AllocatedSocketAddress> addresses) noexcept
 {
-  const ScopeLock protect(mutex);
-  socket.async_receive_from(boost::asio::buffer(buffer, sizeof(buffer)),
-                            sender_endpoint,
-                            std::bind(&Client::OnReceive, this,
-                                      std::placeholders::_1,
-                                      std::placeholders::_2));
-}
-
-void
-SkyLinesTracking::Client::OnResolved(const boost::system::error_code &ec,
-                                     boost::asio::ip::udp::resolver::iterator i)
-{
-  if (ec == boost::asio::error::operation_aborted)
-    return;
-
   {
-    const ScopeLock protect(mutex);
-    resolving = false;
+    const std::lock_guard lock{mutex};
+    resolver.reset();
   }
 
-  if (ec) {
+  if (addresses.empty()) {
     if (handler != nullptr)
-      handler->OnSkyLinesError(boost::system::system_error(ec));
+      handler->OnSkyLinesError(std::make_exception_ptr(std::runtime_error("No address")));
     return;
   }
 
-  Open(*i);
+  Open(addresses.front());
+}
+
+void
+SkyLinesTracking::Client::OnResolverError(std::exception_ptr error) noexcept
+{
+  {
+    const std::lock_guard lock{mutex};
+    resolver.reset();
+  }
+
+  if (handler != nullptr)
+    handler->OnSkyLinesError(std::move(error));
 }

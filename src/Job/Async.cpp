@@ -1,33 +1,20 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Async.hpp"
 #include "Job.hpp"
 #include "Operation/ThreadedOperationEnvironment.hpp"
-#include "Event/Notify.hpp"
+#include "ui/event/Notify.hpp"
+
+#ifdef __GNUC__
+/* AsyncJobRunner only allocates and deletes this exact type. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdelete-non-virtual-dtor"
+#endif
 
 void
-AsyncJobRunner::Start(Job *_job, OperationEnvironment &_env, Notify *_notify)
+AsyncJobRunner::Start(Job *_job, OperationEnvironment &_env,
+                      UI::Notify *_notify)
 {
   assert(_job != NULL);
   assert(!IsBusy());
@@ -37,7 +24,16 @@ AsyncJobRunner::Start(Job *_job, OperationEnvironment &_env, Notify *_notify)
   notify = _notify;
 
   running.store(true, std::memory_order_relaxed);
-  Thread::Start();
+  try {
+    Thread::Start();
+  } catch (...) {
+    running.store(false, std::memory_order_relaxed);
+    job = nullptr;
+    notify = nullptr;
+    delete env;
+    env = nullptr;
+    throw;
+  }
 }
 
 void
@@ -53,19 +49,13 @@ AsyncJobRunner::Cancel()
     notify->ClearNotification();
 }
 
-#if CLANG_OR_GCC_VERSION(4,7)
-/* no, ThreadedOperationEnvironment really doesn't need a virtual
-   destructor */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdelete-non-virtual-dtor"
-#endif
-
 Job *
 AsyncJobRunner::Wait()
 {
   assert(IsBusy());
 
-  Thread::Join();
+  if (IsDefined())
+    Thread::Join();
 
   delete env;
 
@@ -77,12 +67,12 @@ AsyncJobRunner::Wait()
   return job;
 }
 
-#if CLANG_OR_GCC_VERSION(4,7)
+#ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
 
 void
-AsyncJobRunner::Run()
+AsyncJobRunner::Run() noexcept
 {
   assert(IsInside());
   assert(running.load(std::memory_order_relaxed));
@@ -95,8 +85,8 @@ AsyncJobRunner::Run()
     exception = std::current_exception();
   }
 
+  running.store(false, std::memory_order_relaxed);
+
   if (notify != NULL && !env->IsCancelled())
     notify->SendNotification();
-
-  running.store(false, std::memory_order_relaxed);
 }

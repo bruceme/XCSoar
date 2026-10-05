@@ -10,13 +10,12 @@
  * uses libzzip will still want to include this. The extension
  * write should make way to have the ISO C9X integer types defined.
  */
-#ifndef _ZZIP_LIB_H /* zzip.h */
-#define _ZZIP_LIB_H
+ 
+#pragma once
 
 #include <zzip/zzip.h>
 #include <zzip/plugin.h>
 #include <zzip/stdint.h>
-#include <zzip/zzip32.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,11 +74,9 @@ ZZIP_DIR*
 zzip_dir_fdopen_ext_io(int fd, zzip_error_t * errorcode_p,
                        zzip_strings_t* ext, const zzip_plugin_io_t io);
 
-ZZIP_DIR* /*depracated*/
+ZZIP_DIR* /*deprecated*/
 zzip_dir_alloc_ext_io (zzip_strings_t* ext, const zzip_plugin_io_t io);
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* _ZZIP_H */
-

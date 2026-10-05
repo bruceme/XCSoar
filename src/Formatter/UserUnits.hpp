@@ -1,34 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_USER_UNITS_FORMATTER_HPP
-#define XCSOAR_USER_UNITS_FORMATTER_HPP
+#pragma once
 
 #include "Units/Unit.hpp"
-#include "Util/StringBuffer.hxx"
-#include "Compiler.h"
+#include "util/StringBuffer.hxx"
+#include "util/Compiler.h"
 
-#include <tchar.h>
+#include <cstddef>
 
 class AtmosphericPressure;
 
@@ -39,8 +18,8 @@ class AtmosphericPressure;
  * @param size Size of the buffer
  */
 void
-FormatUserWingLoading(double value, TCHAR *buffer,
-                      bool include_unit = true);
+FormatUserWingLoading(double value, char *buffer, size_t size,
+                      bool include_unit = true) noexcept;
 
 /**
  * Converts a double-based mass into a formatted string
@@ -49,8 +28,8 @@ FormatUserWingLoading(double value, TCHAR *buffer,
  * @param size Size of the buffer
  */
 void
-FormatUserMass(double value, TCHAR *buffer,
-               bool include_unit = true);
+FormatUserMass(double value, char *buffer,
+               bool include_unit = true) noexcept;
 
 /**
  * Converts a double-based Altitude into a formatted string
@@ -59,14 +38,14 @@ FormatUserMass(double value, TCHAR *buffer,
  * @param size Size of the buffer
  */
 void
-FormatUserAltitude(double value, TCHAR *buffer,
-                   bool include_unit = true);
+FormatUserAltitude(double value, char *buffer,
+                   bool include_unit = true) noexcept;
 
-gcc_const
-static inline BasicStringBuffer<TCHAR, 32>
-FormatUserAltitude(double value)
+[[gnu::const]]
+static inline auto
+FormatUserAltitude(double value) noexcept
 {
-  BasicStringBuffer<TCHAR, 32> buffer;
+  BasicStringBuffer<char, 32> buffer;
   FormatUserAltitude(value, buffer.data());
   return buffer;
 }
@@ -79,8 +58,8 @@ FormatUserAltitude(double value)
  * @param size Size of the buffer
  */
 void
-FormatAlternateUserAltitude(double value, TCHAR *buffer,
-                            bool include_unit = true);
+FormatAlternateUserAltitude(double value, char *buffer,
+                            bool include_unit = true) noexcept;
 
 /**
  * Converts a double-based Arrival Altitude into a formatted string
@@ -89,8 +68,8 @@ FormatAlternateUserAltitude(double value, TCHAR *buffer,
  * @param size Size of the buffer
  */
 void
-FormatRelativeUserAltitude(double value, TCHAR *buffer,
-                           bool include_unit = true);
+FormatRelativeUserAltitude(double value, char *buffer,
+                           bool include_unit = true) noexcept;
 
 /**
  * Converts a distance into a formatted string
@@ -100,8 +79,18 @@ FormatRelativeUserAltitude(double value, TCHAR *buffer,
  * @param precision the number of decimal places
  */
 void
-FormatUserDistance(double value, TCHAR *buffer,
-                   bool include_unit = true, int precision = 0);
+FormatUserDistance(double value, char *buffer,
+                   bool include_unit = true, int precision = 0) noexcept;
+
+[[gnu::const]]
+static inline auto
+FormatUserDistance(double value,
+                   bool include_unit = true, int precision = 0) noexcept
+{
+  BasicStringBuffer<char, 32> buffer;
+  FormatUserDistance(value, buffer.data(), include_unit, precision);
+  return buffer;
+}
 
 /**
  * Converts a distance into a formatted string using the smaller version
@@ -114,8 +103,8 @@ FormatUserDistance(double value, TCHAR *buffer,
  * @return the unit used for output formatting
  */
 Unit
-FormatSmallUserDistance(TCHAR *buffer, double value,
-                        bool include_unit = true, int precision = 0);
+FormatSmallUserDistance(char *buffer, double value,
+                        bool include_unit = true, int precision = 0) noexcept;
 
 /**
  * Converts a double-based horizontal Distance into a formatted string
@@ -124,23 +113,26 @@ FormatSmallUserDistance(TCHAR *buffer, double value,
  * @param size Size of the buffer
  */
 Unit
-FormatUserDistanceSmart(double value, TCHAR *buffer,
+FormatUserDistanceSmart(double value, char *buffer,
                         bool include_unit = true,
                         double small_unit_threshold = 0,
-                        double precision_threshold = 100);
+                        double precision_threshold = 100) noexcept;
 
-gcc_const
-static inline BasicStringBuffer<TCHAR, 32>
-FormatUserDistanceSmart(double value)
+[[gnu::const]]
+static inline auto
+FormatUserDistanceSmart(double value, bool include_unit = true,
+                        double small_unit_threshold = 0,
+                        double precision_threshold = 100) noexcept
 {
-  BasicStringBuffer<TCHAR, 32> buffer;
-  FormatUserDistanceSmart(value, buffer.data());
+  BasicStringBuffer<char, 32> buffer;
+  FormatUserDistanceSmart(value, buffer.data(), include_unit,
+                          small_unit_threshold, precision_threshold);
   return buffer;
 }
 
 Unit
-FormatUserMapScale(double value, TCHAR *buffer,
-                   bool include_unit = true);
+FormatUserMapScale(double value, char *buffer,
+                   bool include_unit = true) noexcept;
 
 /**
  * Converts a double-based Speed into a formatted string
@@ -150,14 +142,14 @@ FormatUserMapScale(double value, TCHAR *buffer,
  * @return True if buffer long enough, False otherwise
  */
 void
-FormatUserSpeed(double value, TCHAR *buffer,
-                bool include_unit = true, bool Precision = true);
+FormatUserSpeed(double value, char *buffer,
+                bool include_unit = true, bool Precision = true) noexcept;
 
-gcc_const
-static inline BasicStringBuffer<TCHAR, 32>
-FormatUserSpeed(double value, bool precision=true)
+[[gnu::const]]
+static inline auto
+FormatUserSpeed(double value, bool precision=true) noexcept
 {
-  BasicStringBuffer<TCHAR, 32> buffer;
+  BasicStringBuffer<char, 32> buffer;
   FormatUserSpeed(value, buffer.data(), true, precision);
   return buffer;
 }
@@ -170,8 +162,17 @@ FormatUserSpeed(double value, bool precision=true)
  * @return True if buffer long enough, False otherwise
  */
 void
-FormatUserWindSpeed(double value, TCHAR *buffer,
-                    bool include_unit = true, bool Precision = true);
+FormatUserWindSpeed(double value, char *buffer,
+                    bool include_unit = true, bool Precision = true) noexcept;
+
+[[gnu::const]]
+static inline auto
+FormatUserWindSpeed(double value, bool include_unit = true, bool precision=true) noexcept
+{
+  BasicStringBuffer<char, 32> buffer;
+  FormatUserWindSpeed(value, buffer.data(), include_unit, precision);
+  return buffer;
+}
 
 /**
  * Convert a speed [m/s] to the user's task speed and format it into
@@ -180,14 +181,14 @@ FormatUserWindSpeed(double value, TCHAR *buffer,
  * @param value the speed value [m/s]
  */
 void
-FormatUserTaskSpeed(double value, TCHAR *buffer,
-                    bool include_unit=true, bool precision=true);
+FormatUserTaskSpeed(double value, char *buffer,
+                    bool include_unit=true, bool precision=true) noexcept;
 
-gcc_const
-static inline BasicStringBuffer<TCHAR, 32>
-FormatUserTaskSpeed(double value, bool precision=true)
+[[gnu::const]]
+static inline auto
+FormatUserTaskSpeed(double value, bool precision=true) noexcept
 {
-  BasicStringBuffer<TCHAR, 32> buffer;
+  BasicStringBuffer<char, 32> buffer;
   FormatUserTaskSpeed(value, buffer.data(), true, precision);
   return buffer;
 }
@@ -198,15 +199,16 @@ FormatUserTaskSpeed(double value, bool precision=true)
  * @param include_sign include the sign into the string?
  * @return the format
  */
-const TCHAR* GetUserVerticalSpeedFormat(bool include_unit = false,
-                                        bool include_sign = true);
+const char *
+GetUserVerticalSpeedFormat(bool include_unit = false,
+                           bool include_sign = true) noexcept;
 
 /**
  * Give the basic step for pressure editing
  * @return the step
  */
 double
-GetUserVerticalSpeedStep();
+GetUserVerticalSpeedStep() noexcept;
 
 /**
  * Converts a double-based vertical Speed into a formatted string
@@ -217,8 +219,17 @@ GetUserVerticalSpeedStep();
  * @return True if buffer long enough, False otherwise
  */
 void
-FormatUserVerticalSpeed(double value, TCHAR *buffer,
-                        bool include_unit = true, bool include_sign = true);
+FormatUserVerticalSpeed(double value, char *buffer,
+                        bool include_unit = true, bool include_sign = true) noexcept;
+
+[[gnu::const]]
+static inline auto
+FormatUserVerticalSpeed(double value, bool include_unit = true, bool include_sign = true) noexcept
+{
+  BasicStringBuffer<char, 32> buffer;
+  FormatUserVerticalSpeed(value, buffer.data(), include_unit, include_sign);
+  return buffer;
+}
 
 /**
  * Converts a temperature into a formatted string
@@ -227,8 +238,8 @@ FormatUserVerticalSpeed(double value, TCHAR *buffer,
  * @param size Size of the buffer
  */
 void
-FormatUserTemperature(double value, TCHAR *buffer,
-                      bool include_unit = true);
+FormatUserTemperature(double value, char *buffer,
+                      bool include_unit = true) noexcept;
 
 /**
  * Converts a double-based Pressure into a formatted string
@@ -236,8 +247,8 @@ FormatUserTemperature(double value, TCHAR *buffer,
  * @param buffer buffer string to write to (pointer)
  * @param size Size of the buffer
  */
-void FormatUserPressure(AtmosphericPressure value, TCHAR *buffer,
-                        bool include_unit = true);
+void FormatUserPressure(AtmosphericPressure value, char *buffer,
+                        bool include_unit = true) noexcept;
 
 /**
  * Give the proper format to display the pressure
@@ -245,13 +256,12 @@ void FormatUserPressure(AtmosphericPressure value, TCHAR *buffer,
  * @param size Size of the buffer
  * @return True if buffer long enough, False otherwise
  */
-const TCHAR* GetUserPressureFormat(bool include_unit = false);
+const char *
+GetUserPressureFormat(bool include_unit = false) noexcept;
 
 /**
  * Give the basic step for pressure editing
  * @return the step
  */
 double
-GetUserPressureStep();
-
-#endif
+GetUserPressureStep() noexcept;

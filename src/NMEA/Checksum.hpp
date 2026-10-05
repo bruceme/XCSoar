@@ -1,32 +1,10 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_NMEA_CHECKSUM_HPP
-#define XCSOAR_NMEA_CHECKSUM_HPP
-
-#include "Compiler.h"
-
-#include <stdint.h>
+#include <cstdint>
+#include <string_view>
 
 /**
  * Calculates the checksum for the specified line (without the
@@ -34,10 +12,12 @@ Copyright_License {
  *
  * @param p a NULL terminated string
  */
-gcc_pure
-static inline uint8_t
-NMEAChecksum(const char *p)
+[[nodiscard]] [[gnu::pure]]
+static constexpr uint8_t
+NMEAChecksum(std::convertible_to<const char *> auto &&_src) noexcept
 {
+  const char *p = _src;
+
   uint8_t checksum = 0;
 
   /* skip the dollar sign at the beginning (the exclamation mark is
@@ -46,7 +26,7 @@ NMEAChecksum(const char *p)
     ++p;
 
   while (*p != 0)
-    checksum ^= *p++;
+    checksum ^= static_cast<uint8_t>(*p++);
 
   return checksum;
 }
@@ -58,40 +38,36 @@ NMEAChecksum(const char *p)
  * @param p a string
  * @param length the number of characters in the string
  */
-gcc_pure
-static inline uint8_t
-NMEAChecksum(const char *p, unsigned length)
+[[nodiscard]] [[gnu::pure]]
+static constexpr uint8_t
+NMEAChecksum(std::string_view src) noexcept
 {
   uint8_t checksum = 0;
 
-  unsigned i = 0;
-
   /* skip the dollar sign at the beginning (the exclamation mark is
      used by CAI302 */
-  if (length > 0 && (*p == '$' || *p == '!')) {
-    ++i;
-    ++p;
-  }
+  if (!src.empty() && (src.front() == '$' || src.front() == '!'))
+    src.remove_prefix(1);
 
-  for (; i < length; ++i)
-    checksum ^= *p++;
+  for (char ch : src)
+    checksum ^= static_cast<uint8_t>(ch);
 
   return checksum;
 }
 
 /**
  * Verify the NMEA checksum at the end of the specified string,
- * separated with an asterisk ('*').
+ * separated with an asterisk ('*').  As NMEA 0183 prescribes, the
+ * checksum must be exactly two hexadecimal digits (either case) and
+ * end the string.
  */
-gcc_pure
+[[nodiscard]] [[gnu::pure]]
 bool
-VerifyNMEAChecksum(const char *p);
+VerifyNMEAChecksum(std::string_view sentence) noexcept;
 
 /**
  * Caclulates the checksum of the specified string, and appends it at
  * the end, preceded by an asterisk ('*').
  */
 void
-AppendNMEAChecksum(char *p);
-
-#endif
+AppendNMEAChecksum(char *p) noexcept;

@@ -1,29 +1,9 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskSpeedRenderer.hpp"
 #include "ChartRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Units/Units.hpp"
 #include "NMEA/Info.hpp"
 #include "NMEA/Derived.hpp"
@@ -33,25 +13,33 @@ Copyright_License {
 #include "TaskLegRenderer.hpp"
 #include "GradientRenderer.hpp"
 #include "Engine/GlideSolvers/GlidePolar.hpp"
+#include "util/UTF8.hpp"
+
+#include <fmt/format.h>
 
 void
-TaskSpeedCaption(TCHAR *sTmp,
+TaskSpeedCaption(char *s_tmp, size_t buffer_size,
                  const FlightStatistics &fs,
                  const GlidePolar &glide_polar)
 {
+  if (s_tmp == nullptr || buffer_size == 0)
+    return;
+
   if (!glide_polar.IsValid() || fs.task_speed.IsEmpty()) {
-    *sTmp = _T('\0');
+    *s_tmp = '\0';
     return;
   }
 
-  _stprintf(sTmp,
-            _T("%s: %d %s\r\n%s: %d %s"),
-            _("Vave"),
-            (int)Units::ToUserTaskSpeed(fs.task_speed.GetAverageY()),
-            Units::GetTaskSpeedName(),
-            _("Vest"),
-            (int)Units::ToUserTaskSpeed(glide_polar.GetAverageSpeed()),
-            Units::GetTaskSpeedName());
+  auto result = fmt::format_to_n(s_tmp, buffer_size - 1,
+                                 "{}: {} {}\r\n{}: {} {}",
+                                 C_("Average velocity abbreviation", "Vave"),
+                                 (int)Units::ToUserTaskSpeed(fs.task_speed.GetAverageY()),
+                                 Units::GetTaskSpeedName(),
+                                 _("Vest"),
+                                 (int)Units::ToUserTaskSpeed(glide_polar.GetAverageSpeed()),
+                                 Units::GetTaskSpeedName());
+  *result.out = '\0';
+  CropIncompleteUTF8(s_tmp);
 }
 
 void
@@ -64,9 +52,13 @@ RenderSpeed(Canvas &canvas, const PixelRect rc,
             const GlidePolar &glide_polar)
 {
   ChartRenderer chart(chart_look, canvas, rc);
+  chart.SetXLabel("t", "hr");
+  chart.SetYLabel("V", Units::GetTaskSpeedName());
+  chart.Begin();
 
   if (!fs.task_speed.HasResult() || !task.CheckOrderedTask()) {
     chart.DrawNoData();
+    chart.Finish();
     return;
   }
 
@@ -78,7 +70,7 @@ RenderSpeed(Canvas &canvas, const PixelRect rc,
   chart.ScaleYFromValue(vref);
   chart.ScaleXFromValue(fs.task_speed.GetMinX());
   if (derived_info.flight.flying)
-    chart.ScaleXFromValue(derived_info.flight.flight_time/3600);
+    chart.ScaleXFromValue(derived_info.flight.flight_time / std::chrono::hours{1});
 
   // draw red area below average speed, blue area above
   {
@@ -86,14 +78,16 @@ RenderSpeed(Canvas &canvas, const PixelRect rc,
     rc_upper.bottom = chart.ScreenY(vref);
 
     DrawVerticalGradient(canvas, rc_upper,
-                         chart_look.color_positive, COLOR_WHITE, COLOR_WHITE);
+                         chart_look.color_positive, chart_look.background_color,
+                         chart_look.background_color);
   }
   {
     PixelRect rc_lower = chart.GetChartRect();
     rc_lower.top = chart.ScreenY(vref);
 
     DrawVerticalGradient(canvas, rc_lower,
-                         COLOR_WHITE, chart_look.color_negative, COLOR_WHITE);
+                         chart_look.background_color, chart_look.color_negative,
+                         chart_look.background_color);
   }
 
   RenderTaskLegs(chart, task, nmea_info, derived_info, 0.33);
@@ -101,22 +95,18 @@ RenderSpeed(Canvas &canvas, const PixelRect rc,
   chart.DrawXGrid(0.25, 0.25, ChartRenderer::UnitFormat::TIME);
   chart.DrawYGrid(Units::ToSysTaskSpeed(10), 10, ChartRenderer::UnitFormat::NUMERIC);
 
-  chart.DrawLine(chart.GetXMin(), vref,
-                 chart.GetXMax(), vref,
+  chart.DrawLine({chart.GetXMin(), vref},
+                 {chart.GetXMax(), vref},
                  ChartLook::STYLE_REDTHICKDASH);
 
   chart.DrawLineGraph(fs.task_speed, ChartLook::STYLE_BLACK);
   chart.DrawTrend(fs.task_speed, ChartLook::STYLE_BLUETHINDASH);
 
-  chart.DrawLabel(_T("Vest"),
-                  chart.GetXMin()*0.9+chart.GetXMax()*0.1,
-                  vref);
+  chart.DrawLabel({chart.GetXMin()*0.9+chart.GetXMax()*0.1, vref},
+                  "Vest");
 
   const double tref = chart.GetXMin()*0.5+chart.GetXMax()*0.5;
-  chart.DrawLabel(_T("Vave"),
-                  tref,
-                  fs.task_speed.GetYAt(tref));
+  chart.DrawLabel({tref, fs.task_speed.GetYAt(tref)}, "Vave");
 
-  chart.DrawXLabel(_T("t"), _T("hr"));
-  chart.DrawYLabel(_T("V"), Units::GetTaskSpeedName());
+  chart.Finish();
 }

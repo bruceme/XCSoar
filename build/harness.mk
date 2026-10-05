@@ -4,6 +4,7 @@ HARNESS_SOURCES = \
 	$(SRC)/NMEA/ExternalSettings.cpp \
 	$(SRC)/NMEA/Attitude.cpp \
 	$(SRC)/NMEA/Acceleration.cpp \
+	$(SRC)/NMEA/Gyroscope.cpp \
 	$(SRC)/NMEA/SwitchState.cpp \
 	$(SRC)/Computer/FlyingComputer.cpp \
 	$(SRC)/IGC/IGCParser.cpp \
@@ -16,8 +17,6 @@ HARNESS_SOURCES = \
 	$(SRC)/Logger/Settings.cpp \
 	$(SRC)/Computer/TraceComputer.cpp \
 	$(SRC)/Airspace/AirspaceComputerSettings.cpp \
-	$(SRC)/Units/Descriptor.cpp \
-	$(SRC)/Units/System.cpp \
 	$(TEST_SRC_DIR)/Printing.cpp \
 	$(TEST_SRC_DIR)/AirspacePrinting.cpp \
 	$(TEST_SRC_DIR)/TaskPrinting.cpp \
@@ -31,5 +30,7 @@ HARNESS_SOURCES = \
 	$(TEST_SRC_DIR)/harness_task2.cpp \
 	$(TEST_SRC_DIR)/TaskEventsPrint.cpp \
 	$(TEST_SRC_DIR)/tap.c
+
+HARNESS_DEPENDS = UNITS
 
 $(eval $(call link-library,harness,HARNESS))

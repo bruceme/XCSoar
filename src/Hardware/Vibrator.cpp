@@ -1,51 +1,69 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Vibrator.hpp"
 
-#ifdef ANDROID
+#ifdef HAVE_VIBRATOR
 
+#ifdef ANDROID
 #include "Android/Vibrator.hpp"
 #include "Android/Main.hpp"
-#include "Interface.hpp"
-#include "UISettings.hpp"
+#include "java/Global.hxx"
+#else
+#include "Apple/Vibrator.hpp"
+#endif
 
 bool
-HaveVibrator()
+HaveVibrator() noexcept
 {
+#ifdef ANDROID
   return vibrator != nullptr;
+#else
+  return Apple::HaveHapticFeedback();
+#endif
 }
+
+#ifdef ANDROID
+
+/**
+ * Android exposes only a plain vibration motor here, and the feedback
+ * types are approximated with different pulse lengths.
+ */
+static constexpr unsigned
+GetVibrationDuration(HapticFeedbackType type) noexcept
+{
+  switch (type) {
+  case HapticFeedbackType::SELECTION:
+    return 15;
+
+  case HapticFeedbackType::PRESS:
+    return 25;
+
+  case HapticFeedbackType::LONG_PRESS:
+  case HapticFeedbackType::GESTURE:
+    return 40;
+
+  case HapticFeedbackType::NOTIFICATION:
+    return 150;
+
+  case HapticFeedbackType::ALARM:
+    return 400;
+  }
+
+  return 25;
+}
+
+#endif /* ANDROID */
 
 void
-VibrateShort()
+Vibrate(HapticFeedbackType type) noexcept
 {
-  if (vibrator != nullptr) {
-    const UISettings &ui_settings = CommonInterface::GetUISettings();
-    if (ui_settings.haptic_feedback == UISettings::HapticFeedback::ON ||
-         (ui_settings.haptic_feedback == UISettings::HapticFeedback::DEFAULT &&
-          vibrator->IsOSHapticFeedbackEnabled()))
-      vibrator->Vibrate(Java::GetEnv(), 25);
-  }
+#ifdef ANDROID
+  if (vibrator != nullptr)
+    vibrator->Vibrate(Java::GetEnv(), GetVibrationDuration(type));
+#else
+  Apple::Vibrate(type);
+#endif
 }
 
-#endif /* Android */
+#endif /* HAVE_VIBRATOR */

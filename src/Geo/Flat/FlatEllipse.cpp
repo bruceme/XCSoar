@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 // http://mathworld.wolfram.com/Circle-FlatLineIntersection.html
 // line two points (x1,y1), (x2,y2)
 // Circle radius r at (0,0)
@@ -29,7 +10,7 @@
 
 #include <algorithm>
 
-#include <assert.h>
+#include <cassert>
 
 FlatEllipse::FlatEllipse(const FlatPoint &_f1, const FlatPoint &_f2,
                          const FlatPoint &_ap)
@@ -68,8 +49,8 @@ FlatEllipse::Parametric(const double t) const
   return res;
 }
 
-bool 
-FlatEllipse::Intersect(const FlatLine &line, FlatPoint &i1, FlatPoint &i2) const
+std::optional<std::pair<FlatPoint, FlatPoint>>
+FlatEllipse::Intersect(const FlatLine &line) const noexcept
 {
   const double er = ab();
   const double ier = ba();
@@ -78,24 +59,22 @@ FlatEllipse::Intersect(const FlatLine &line, FlatPoint &i1, FlatPoint &i2) const
   s_line.Rotate(theta.Reciprocal());
   s_line.MultiplyY(er);
 
-  if (s_line.IntersectOriginCircle(a, i1, i2)) {
-    i1.MultiplyY(ier);
-    i1.Rotate(theta);
-    i1 += p;
-    
-    i2.MultiplyY(ier);
-    i2.Rotate(theta);
-    i2 += p;
-    
-    return true;
+  auto result = s_line.IntersectOriginCircle(a);
+  if (result) {
+    result->first.MultiplyY(ier);
+    result->first.Rotate(theta);
+    result->first += p;
+
+    result->second.MultiplyY(ier);
+    result->second.Rotate(theta);
+    result->second += p;
   }
 
-  return false;
+  return result;
 }
 
-bool
-FlatEllipse::IntersectExtended(const FlatPoint &pe, FlatPoint &i1,
-                                FlatPoint &i2) const
+std::optional<std::pair<FlatPoint, FlatPoint>>
+FlatEllipse::IntersectExtended(const FlatPoint &pe) const noexcept
 {
   const FlatLine l_f1p(f1, pe);
   const FlatLine l_pf2(pe, f2);
@@ -108,8 +87,8 @@ FlatEllipse::IntersectExtended(const FlatPoint &pe, FlatPoint &i1,
 
   FlatLine e_l(pe, FlatPoint(pe.x + d * can, pe.y + d * san));
   // e_l is the line extended from p in direction of f1-p 
-  
-  return Intersect(e_l, i1, i2);
+
+  return Intersect(e_l);
 }
 
 // define an ellipse by three points,

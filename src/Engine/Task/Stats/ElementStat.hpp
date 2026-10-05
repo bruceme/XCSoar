@@ -1,32 +1,14 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef ELEMENT_STAT_HPP
-#define ELEMENT_STAT_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "Geo/GeoPoint.hpp"
 #include "Geo/GeoVector.hpp"
 #include "GlideSolvers/GlideResult.hpp"
 #include "DistanceStat.hpp"
 #include "TaskVario.hpp"
+#include "time/Stamp.hpp"
 
 #include <type_traits>
 
@@ -38,7 +20,7 @@ struct ElementStat
 {
   /**
    * The remaining location, i.e. the result of
-   * ScoredTaskPoint::GetLocationRemaining().  Always check
+   * TaskPoint::GetLocationNavigation().  Always check
    * GeoPoint::IsValid() before using this attribute.  This is only
    * implemented for one leg (TaskStats::current_leg).
    */
@@ -59,24 +41,24 @@ struct ElementStat
    GeoVector next_leg_vector;
 
   /** Time (s) this element was started */
-  double time_started;
+  TimeStamp time_started;
   /** Time (s) since element was started */
-  double time_elapsed;
+  FloatDuration time_elapsed;
 
   /**
    * Time (s) remaining to element completion from now, including the
    * time to reach the start point (if task was not yet started).
    */
-  double time_remaining_now;
+  FloatDuration time_remaining_now;
 
   /**
-   * Time (s) remaining to element completion, counted from the start
-   * of the task.
+   * Time (s) remaining to element completion from now, excluding the
+   * time to reach the start point (if task was not yet started).
    */
-  double time_remaining_start;
+  FloatDuration time_remaining_start;
 
   /** Time (s) of overall element */
-  double time_planned;
+  FloatDuration time_planned;
 
   /** Gradient to element completion */
   double gradient;
@@ -105,7 +87,7 @@ struct ElementStat
   TaskVario vario;
 
   /** Resets all to zero. */
-  void Reset();
+  void Reset() noexcept;
 
   /**
    * Calculate element times
@@ -115,7 +97,8 @@ struct ElementStat
    * @param ts Start time of this element (s)
    * @param time monotonic time of day in seconds or -1 if unknown
    */
-  void SetTimes(double until_start_s, double ts, double time);
+  void SetTimes(FloatDuration until_start_s,
+                TimeStamp ts, TimeStamp time) noexcept;
 
   /**
    * Determine whether the task (or subtask) is able to be finished
@@ -123,11 +106,9 @@ struct ElementStat
    *
    * @return True if can finish the task
    */
-  bool IsAchievable() const {
+  bool IsAchievable() const noexcept {
     return solution_remaining.IsAchievable();
   }
 };
 
 static_assert(std::is_trivial<ElementStat>::value, "type is not trivial");
-
-#endif

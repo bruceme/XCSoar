@@ -1,36 +1,17 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "Hardware/Vibrator.hpp"
+#include "ui/window/PaintWindow.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_BUTTON_HPP
-#define XCSOAR_FORM_BUTTON_HPP
-
-#include "Screen/PaintWindow.hpp"
-
-#include <tchar.h>
-
+#include <functional>
+#include <memory>
+enum class ButtonState : int;
 struct ButtonLook;
+class ButtonPanel;
 class ContainerWindow;
-class ActionListener;
 class ButtonRenderer;
 
 /**
@@ -39,10 +20,13 @@ class ButtonRenderer;
 class Button : public PaintWindow {
   bool dragging, down;
 
-  ButtonRenderer *renderer;
+  std::unique_ptr<ButtonRenderer> renderer;
 
-  ActionListener *listener;
-  int id;
+public:
+  using Callback = std::function<void()>;
+
+private:
+  Callback callback;
 
   /**
    * This flag specifies whether the button is "selected".  The
@@ -53,49 +37,55 @@ class Button : public PaintWindow {
    */
   bool selected;
 
+  /**
+   * If non-null, #ButtonPanel::OnButtonGainedFocus keeps
+   * #SetSelected in sync with focus when the user tabs between
+   * #Button s.
+   */
+  ButtonPanel *cursor_key_group{nullptr};
+
 public:
   Button(ContainerWindow &parent, const PixelRect &rc,
-         WindowStyle style, ButtonRenderer *_renderer,
-         ActionListener &_listener, int _id) {
-    Create(parent, rc, style, _renderer, _listener, _id);
-  }
+         WindowStyle style, std::unique_ptr<ButtonRenderer> _renderer,
+         Callback _callback) noexcept;
 
   Button(ContainerWindow &parent, const ButtonLook &look,
-         const TCHAR *caption, const PixelRect &rc,
+         const char *caption, const PixelRect &rc,
          WindowStyle style,
-         ActionListener &_listener, int _id) {
-    Create(parent, look, caption, rc, style, _listener, _id);
-  }
+         Callback _callback) noexcept;
 
-  Button():listener(nullptr) {}
+  Button();
 
-  virtual ~Button();
+  ~Button() noexcept override;
 
   void Create(ContainerWindow &parent, const PixelRect &rc,
-              WindowStyle style, ButtonRenderer *_renderer);
+              WindowStyle style, std::unique_ptr<ButtonRenderer> _renderer);
 
   void Create(ContainerWindow &parent, const ButtonLook &look,
-              const TCHAR *caption, const PixelRect &rc,
+              const char *caption, const PixelRect &rc,
               WindowStyle style);
 
   void Create(ContainerWindow &parent, const PixelRect &rc,
-              WindowStyle style, ButtonRenderer *_renderer,
-              ActionListener &listener, int id);
+              WindowStyle style, std::unique_ptr<ButtonRenderer> _renderer,
+              Callback _callback) noexcept;
 
   void Create(ContainerWindow &parent, const ButtonLook &look,
-              const TCHAR *caption, const PixelRect &rc,
+              const char *caption, const PixelRect &rc,
               WindowStyle style,
-              ActionListener &listener, int id);
+              Callback _callback) noexcept;
 
   /**
    * Set the object that will receive click events.
    */
-  void SetListener(ActionListener &_listener, int _id) {
-    id = _id;
-    listener = &_listener;
+  void SetCallback(Callback _callback) noexcept {
+    callback = std::move(_callback);
   }
 
-  ButtonRenderer &GetRenderer() {
+  ButtonRenderer &GetRenderer() noexcept {
+    return *renderer;
+  }
+
+  const ButtonRenderer &GetRenderer() const noexcept {
     return *renderer;
   }
 
@@ -104,11 +94,19 @@ public:
    * #TextButtonRenderer and may only be used if created with a
    * #TextButtonRenderer instance.
    */
-  void SetCaption(const TCHAR *caption);
+  void SetCaption(const char *caption);
+
+  /**
+   * Update a menu bar button: symbol captions (+, -, arrows, …) use
+   * #SymbolButtonRenderer; other captions use #TextButtonRenderer.
+   */
+  void SetMenuCaption(const ButtonLook &look, const char *caption) noexcept;
 
   void SetSelected(bool _selected);
 
-  gcc_pure
+  void SetCursorKeyGroup(ButtonPanel *p) noexcept { cursor_key_group = p; }
+
+  [[gnu::pure]]
   unsigned GetMinimumWidth() const;
 
   /**
@@ -122,24 +120,31 @@ protected:
    * keyboard).  The default implementation invokes the OnClick
    * callback.
    */
-  virtual bool OnClicked();
+  virtual bool OnClicked() noexcept;
 
-/* virtual methods from class Window */
-  void OnDestroy() override;
+  /* virtual methods from class Window */
+  bool OnKeyCheck(unsigned key_code) const noexcept override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  void OnSetFocus() noexcept override;
+  void OnKillFocus() noexcept override;
+  void OnCancelMode() noexcept override;
 
-  bool OnKeyCheck(unsigned key_code) const override;
-  bool OnKeyDown(unsigned key_code) override;
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  void OnSetFocus() override;
-  void OnKillFocus() override;
-  void OnCancelMode() override;
-
-  void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 
 private:
   void SetDown(bool _down);
+
+  [[gnu::pure]]
+  ButtonState GetState() const noexcept;
 };
 
-#endif
+/**
+ * Vibrate if the user setting allows it.  Hardware/Vibrator must
+ * not read those settings; every press that should click goes
+ * through here.
+ */
+void PlayHapticFeedback(HapticFeedbackType type =
+                       HapticFeedbackType::PRESS) noexcept;

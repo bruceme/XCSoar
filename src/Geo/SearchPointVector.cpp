@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "SearchPointVector.hpp"
 #include "GeoBounds.hpp"
@@ -27,38 +8,38 @@
 #include "Flat/FlatRay.hpp"
 #include "Flat/FlatBoundingBox.hpp"
 
-bool 
-SearchPointVector::PruneInterior()
+#include <limits.h> // for UINT_MAX
+
+bool
+SearchPointVector::PruneInterior() noexcept
 {
-  GrahamScan gs(*this);
-  return gs.PruneInterior();
+  return ::PruneInterior(*this);
 }
 
 bool
-SearchPointVector::ThinToSize(const unsigned max_size)
+SearchPointVector::ThinToSize(const unsigned max_size) noexcept
 {
   static constexpr double tolerance = 1.0e-8;
-  unsigned i = 2;
+  double i = 2;
   bool retval = false;
   while (size() > max_size) {
-    GrahamScan gs(*this, tolerance * i);
-    retval |= gs.PruneInterior();
+    retval |= ::PruneInterior(*this, tolerance * i);
     i *= i;
   }
   return retval;
 }
 
-void 
-SearchPointVector::Project(const FlatProjection &tp)
+void
+SearchPointVector::Project(const FlatProjection &tp) noexcept
 {
   for (auto &i : *this)
     i.Project(tp);
 }
 
-gcc_pure
+[[gnu::pure]]
 static FlatGeoPoint
 NearestPoint(const FlatGeoPoint &p1, const FlatGeoPoint &p2,
-              const FlatGeoPoint &p3)
+             const FlatGeoPoint &p3) noexcept
 {
   const FlatGeoPoint p12 = p2-p1;
   const double rsq(p12.DotProduct(p12));
@@ -67,7 +48,7 @@ NearestPoint(const FlatGeoPoint &p1, const FlatGeoPoint &p2,
 
   const FlatGeoPoint p13 = p3-p1;
   const double numerator(p13.DotProduct(p12));
-  
+
   if (numerator <= 0) {
     return p1;
   } else if (numerator>= rsq) {
@@ -78,11 +59,11 @@ NearestPoint(const FlatGeoPoint &p1, const FlatGeoPoint &p2,
   }
 }
 
-gcc_pure
+[[gnu::pure]]
 static FlatGeoPoint
 SegmentNearestPoint(const SearchPointVector& spv,
-                      const SearchPointVector::const_iterator i1,
-                      const FlatGeoPoint &p3)
+                    const SearchPointVector::const_iterator i1,
+                    const FlatGeoPoint &p3) noexcept
 {
   if (i1+1 == spv.end()) {
     return NearestPoint(i1->GetFlatLocation(),
@@ -95,11 +76,12 @@ SegmentNearestPoint(const SearchPointVector& spv,
   }
 }
 
-gcc_pure
+[[gnu::pure]]
 static FlatGeoPoint
-NearestPointNonConvex(const SearchPointVector& spv, const FlatGeoPoint &p3)
+NearestPointNonConvex(const SearchPointVector &spv,
+                      const FlatGeoPoint &p3) noexcept
 {
-  unsigned distance_min = 0-1;
+  unsigned distance_min = UINT_MAX;
   FlatGeoPoint point_best;
 
   for (auto i = spv.begin(); i!= spv.end(); ++i) {
@@ -115,7 +97,7 @@ NearestPointNonConvex(const SearchPointVector& spv, const FlatGeoPoint &p3)
 }
 
 SearchPointVector::const_iterator
-SearchPointVector::NearestIndexConvex(const FlatGeoPoint &p3) const
+SearchPointVector::NearestIndexConvex(const FlatGeoPoint &p3) const noexcept
 {
   unsigned distance_min = 0 - 1;
 
@@ -133,7 +115,7 @@ SearchPointVector::NearestIndexConvex(const FlatGeoPoint &p3) const
 }
 
 FlatGeoPoint
-SearchPointVector::NearestPoint(const FlatGeoPoint &p3) const
+SearchPointVector::NearestPoint(const FlatGeoPoint &p3) const noexcept
 {
   // special case
   if (empty())
@@ -146,7 +128,7 @@ SearchPointVector::NearestPoint(const FlatGeoPoint &p3) const
 }
 
 bool
-SearchPointVector::IntersectsWith(const FlatRay &ray) const
+SearchPointVector::IntersectsWith(const FlatRay &ray) const noexcept
 {
   for (auto it = begin(); it + 1 != end(); ++it) {
     const FlatRay r_seg(it->GetFlatLocation(), (it + 1)->GetFlatLocation());
@@ -158,7 +140,7 @@ SearchPointVector::IntersectsWith(const FlatRay &ray) const
 }
 
 FlatBoundingBox
-SearchPointVector::CalculateBoundingbox() const
+SearchPointVector::CalculateBoundingbox() const noexcept
 {
   if (empty())
     return FlatBoundingBox(FlatGeoPoint(0,0),FlatGeoPoint(0,0));
@@ -171,7 +153,7 @@ SearchPointVector::CalculateBoundingbox() const
 }
 
 GeoBounds
-SearchPointVector::CalculateGeoBounds() const
+SearchPointVector::CalculateGeoBounds() const noexcept
 {
   GeoBounds bb = GeoBounds::Invalid();
   for (const auto &i : *this)
@@ -181,32 +163,32 @@ SearchPointVector::CalculateGeoBounds() const
 }
 
 SearchPointVector::const_iterator
-SearchPointVector::NextCircular(const_iterator i) const
+SearchPointVector::NextCircular(const_iterator i) const noexcept
 {
-  i++;
+  ++i;
   if (i == end())
     i = begin();
   return i;
 }
 
 SearchPointVector::const_iterator
-SearchPointVector::PreviousCircular(const_iterator i) const
+SearchPointVector::PreviousCircular(const_iterator i) const noexcept
 {
   if (i == begin())
     i = begin() + size() - 1;
   else
-    i--;
+    --i;
   return i;
 }
 
 bool
-SearchPointVector::IsInside(const GeoPoint &pt) const
+SearchPointVector::IsInside(const GeoPoint &pt) const noexcept
 {
   return PolygonInterior(pt, begin(), end());
 }
 
 bool
-SearchPointVector::IsInside(const FlatGeoPoint &pt) const
+SearchPointVector::IsInside(const FlatGeoPoint &pt) const noexcept
 {
   return PolygonInterior(pt, begin(), end());
 }

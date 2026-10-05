@@ -49,7 +49,7 @@ In den Konfigurationseinstellungen kann weiterhin eingestellt werden, ob währen
 Wenn die Darstellung \emph{Norden oben} oder \emph{Ziel nach oben} gewählt ist, wird das Segelflugzeugsymbol in der Karte zentriert dargestellt. Normalerweise dagegen ist das Symbol ca.\ 20\% vom unteren Rand der Karte positioniert, um einen guten Überblick in Flugrichtung zu gewährleisten. Auch diese Position und eine evtl.\ Verschiebung relativ zum Ziel oder zum Kurs kann in den Konfigurationseinstellungen geändert werden.
 %%%%%%%%%%%%%%%%%%%%%%%%
 \section{Zoom und Kartenmaßstab}\label{zoom}\label{kartenmasstab}\index{Zoom}\index{Karte!Maßstab}\index{Maßstab}
-Um den Kartenmaßstab zu ändern  (für \textsf{PC}  und  \textsf{Pocket PC} ):
+Um den Kartenmaßstab zu ändern:
 \begin{enumerate}
 \item Es kann eine Geste benutzt werden, Die Geste \gesture{Hoch/Runter}
      ''Hoch'' zoomt herein,  ''Runter'' zoomt heraus.
@@ -158,18 +158,18 @@ Die Symbole sind in untenstehender Tabelle aufgelistet.
 %
  
 Die Wegpunkte können nach mehreren Abkürzungsregeln beschriftet werden, um auf \config{labels}
-\menulabel{\bmenut{Anzeige}{2/3}\blink\bmenut{Beschriftung}{Aufgabe}} der Karte nicht so viel Platz zu verschwenden und den Bildschirm  übersichtlicher darstellen zu können. 
+\menulabel{\bmenut{Anzeige}{2/3}\blink\bmenut{Beschriftung}{Aufgabe}} der Karte nicht so viel Platz zu verschwenden und den Bildschirm übersichtlicher darstellen zu können. 
 So können die Beschriftung der Wegpunkte nur für die Aufgabe, für Aufgabe und Landeplätze oder aber für alle Wegpunkte aktiviert weren.
 
 
-\xc berechnet kontinierlich und unter Berücksichtigung des Windes, welche Wegpunkte sich innerhalb des Gleitpfades befinden und stellt dies entsprechend der eingestellten Optionen dar.
+\xc berechnet kontinierlich und unter Berücksichtigung des Windes, welche Wegpunkte mit dem berechneten Gleitpfad erreichbar sind und stellt dies entsprechend der eingestellten Optionen dar.
 
-Die angenommene Ankunftshöhe {\em oberhalb der Sicherheitshöhe} der erreichbaren  Wegpunkte wird neben dem Wegpunkt  angezeigt. Diese Ankunftshöhe wird berechnet aus der entsprechenden Leistung des Segelflugzeuges und dem MacCready Wert. 
+Die angenommene Ankunftshöhe {\em oberhalb der Sicherheitshöhe} der erreichbaren Wegpunkte wird neben dem Wegpunkt angezeigt. Diese Ankunftshöhe wird berechnet aus der entsprechenden Leistung des Segelflugzeuges und dem MacCready Wert. 
 
 \config{reachpolar} Hierbei kann gewählt werden, ob die Berechnung mit einem Sicherheits-MacCready Wert, oder aber streng nach der Polare erfolgt.
 
 \subsection*{Nicht landbare Wegpunkte}
-Wenn in der  Wegpunktdatenbank bzw. in der Beschreibung des einzelnen Wegpunktes informatiuonen zu dessen beschaffen heit angegeben sind, so werden diese von \xc   entsprechend dargestellt. In der folgenden Tabelle  sind die nicht landbaren Wegpunkte aufgelistet. 
+Wenn in der Wegpunktdatenbank bzw. in der Beschreibung des einzelnen Wegpunktes Informationen zu dessen Beschaffenheit angegeben sind, so werden diese von \xc   entsprechend dargestellt. In der folgenden Tabelle sind die nicht landbaren Wegpunkte aufgelistet. 
 
 \vspace{9em}
 \begin{center}
@@ -414,7 +414,7 @@ Einige Einschränkungen und Limitierung bezüglich des Routenplanungssystems sin
 \begin{itemize}
 \item Wenn Kurbeln notwendig ist, um das Ziel zu erreichen,  wird angenommen, daß das Steigen zu Beginn der Route ist. 
 
-Hintergrund: eine Einstellung von  MacCready gleich 0 bedeutet, daß (streng nach der MC-Theorie) kein Steigen erwartet wird!  Andernfalls würde die Rechenalgorythmen in  die Irre geführt werden!   
+Hintergrund: eine Einstellung von  MacCready gleich 0 bedeutet, daß (streng nach der MC-Theorie) kein Steigen erwartet wird!  Andernfalls würde die Rechenalgorithmen in  die Irre geführt werden!   
 \item Strecken mit Steigen im Geradeausflug werden auf einer konstanten Höhe angenommen, gleichbedeutend mit vielen kleinen Steigen verteilt entlang der Strecke
 \item Kurven und Schlenker zwischen den einzelnen Streckensegmenten mit Ablagen größer 90$^\circ$ sind erlaubt
 \item Fehler des Rechenalgorithmus innerhalb der Route können dazu führen, daß der Anflug in einem direkten Anflug auf das Ziel zurückgeführt wird.
@@ -482,7 +482,7 @@ Die Querschnittfunktion funktioniert derzeit \textbf{nicht} in Verbindung mit de
 Kartenausschnitt!
 
 \warning {\textbf{Aufgrund technischer
-Probleme mit den diversen Betriebsystemen (insbesondere Windows und PPC / Mobile) ist es
+Probleme mit den diversen Betriebsystemen (insbesondere Windows) ist es
 derzeit nicht möglich, die Gesten \emph{innerhalb} dieser Area des Bildschirmes beginnen bzw.
 Enden zu lassen.}} 
 

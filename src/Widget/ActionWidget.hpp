@@ -1,69 +1,30 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ACTION_WIDGET_HPP
-#define XCSOAR_ACTION_WIDGET_HPP
-
-#include "Screen/Features.hpp"
-
-#ifdef HAVE_CLIPPING
-#include "PanelWidget.hpp"
-#else
 #include "Widget.hpp"
-#endif
 
-class ActionListener;
+#include <functional>
 
 /**
- * A #Widget implementation that triggers an action via
- * #ActionListener when clicked.
+ * A #Widget implementation that calls a function when clicked.
+ *
+ * A #NullWidget avoids creating a panel window. The parent already
+ * paints the dialog background.
  */
-class ActionWidget
-#ifdef HAVE_CLIPPING
-/* need PanelWidget on GDI so dialog background gets rendered in the
-   Widget area just in case this Widget becomes "visible", to avoid
-   uninitialised screen area */
-  : public PanelWidget
-#else
-/* on OpenGL, we can avoid the overhead of creating a panel window */
-  : public NullWidget
-#endif
+class ActionWidget : public NullWidget
 {
-  ActionListener &listener;
-  const int id;
+  const std::function<void()> callback;
 
 public:
-  ActionWidget(ActionListener &_listener, int _id)
-    :listener(_listener), id(_id) {}
+  explicit ActionWidget(std::function<void()> _callback) noexcept
+    :callback(std::move(_callback)) {}
 
 public:
-  bool Click() override;
-  void ReClick() override;
+  bool Click() noexcept override;
+  void ReClick() noexcept override;
 
-#ifndef HAVE_CLIPPING
-  void Show(const PixelRect &rc) override;
-  void Hide() override;
-#endif
+  void Show(const PixelRect &rc) noexcept override;
+  void Hide() noexcept override;
 };
-
-#endif

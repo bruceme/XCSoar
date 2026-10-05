@@ -1,49 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef TRACE_POINT_HPP
-#define TRACE_POINT_HPP
-
-#include "Util/TypeTraits.hpp"
+#include "util/TypeTraits.hpp"
 #include "Geo/SearchPoint.hpp"
 #include "Rough/RoughAltitude.hpp"
 #include "Rough/RoughVSpeed.hpp"
-#include "Compiler.h"
+#include "time/Stamp.hpp"
 
-#include <assert.h>
-#include <stdint.h>
+#include <cassert>
+#include <chrono>
+#include <cstdint>
 
 struct MoreData;
 struct AircraftState;
 
 /**
- * Class for points used in traces (snail trail, OLC scans)
+ * Class for points used in traces (snail trail, contest scans)
  * Internally, keeps track of predecessors as a kind of a linked-list
  */
 class TracePoint : public SearchPoint
 {
+public:
+  using Time = std::chrono::duration<unsigned>;
+
+  static constexpr Time INVALID_TIME = Time::max();
+
+private:
   /** Time of sample */
-  unsigned time;
+  Time time;
 
   /**
    * The NavAltitude [m].
@@ -74,7 +60,7 @@ public:
   TracePoint() = default;
 
   template<typename A, typename V>
-  TracePoint(const GeoPoint &location, unsigned _time,
+  TracePoint(const GeoPoint &location, std::chrono::duration<unsigned> _time,
              const A &_altitude, const V &_vario,
              unsigned _drift_factor)
     :SearchPoint(location), time(_time),
@@ -93,50 +79,49 @@ public:
    */
   explicit TracePoint(const AircraftState &state);
 
-  gcc_const
-  static TracePoint Invalid() {
+  static constexpr TracePoint Invalid() noexcept {
     TracePoint point;
     point.Clear();
     ((SearchPoint &)point).SetInvalid();
     return point;
   }
 
-  void Clear() {
-    time = (unsigned)(0 - 1);
+  constexpr void Clear() noexcept {
+    time = INVALID_TIME;
   }
 
-  bool IsDefined() const {
-    return time != (unsigned)(0 - 1);
+  constexpr bool IsDefined() const noexcept {
+    return time != INVALID_TIME;
   }
 
-  unsigned GetTime() const {
+  constexpr Time GetTime() const noexcept {
     return time;
   }
 
-  bool IsOlderThan(const TracePoint &other) const {
+  constexpr bool IsOlderThan(const TracePoint &other) const noexcept {
     return time < other.time;
   }
 
-  bool IsNewerThan(const TracePoint &other) const {
+  constexpr bool IsNewerThan(const TracePoint &other) const noexcept {
     return time > other.time;
   }
 
-  unsigned DeltaTime(const TracePoint &previous) const {
+  constexpr Time DeltaTime(const TracePoint &previous) const noexcept {
     assert(!IsOlderThan(previous));
 
     return time - previous.time;
   }
 
-  double CalculateDrift(double now) const {
-    const double dt = now - time;
+  constexpr double CalculateDrift(TimeStamp now) const noexcept {
+    const double dt = (now.ToDuration() - std::chrono::duration_cast<FloatDuration>(time)).count();
     return dt * drift_factor / 256;
   }
 
-  double GetAltitude() const {
+  constexpr double GetAltitude() const {
     return altitude;
   }
 
-  unsigned GetEngineNoiseLevel() const {
+  constexpr unsigned GetEngineNoiseLevel() const {
     return engine_noise_level;
   }
 
@@ -144,15 +129,17 @@ public:
    * Returns the altitude as an integer.  Some calculations may not
    * need the fractional part.
    */
-  int GetIntegerAltitude() const {
+  constexpr int GetIntegerAltitude() const noexcept {
     return (int)altitude;
   }
 
-  double GetVario() const {
+  constexpr double GetVario() const noexcept {
     return vario;
+  }
+
+  constexpr unsigned GetDriftFactor() const noexcept {
+    return drift_factor;
   }
 };
 
 static_assert(is_trivial_ndebug<TracePoint>::value, "type is not trivial");
-
-#endif

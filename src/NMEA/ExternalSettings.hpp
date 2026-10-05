@@ -1,31 +1,14 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_EXTERNAL_SETTINGS_HPP
-#define XCSOAR_EXTERNAL_SETTINGS_HPP
-
-#include "NMEA/Validity.hpp"
+#include "time/Validity.hpp"
 #include "Atmosphere/Pressure.hpp"
+#include "Radio/RadioFrequency.hpp"
+#include "Radio/TransponderCode.hpp"
+#include "Radio/TransponderMode.hpp"
+#include "util/StaticString.hxx"
 
 #include <stdlib.h>
 #include <math.h>
@@ -54,6 +37,14 @@ struct ExternalSettings {
 
   Validity wing_loading_available;
 
+  /**
+   * amount of water ballast in kg (or litres) when altered in external device
+   * from external device (if available)
+   */
+  double ballast_litres;
+
+  Validity ballast_litres_available;
+
   /** Wing loading information (kg/m^2) of external device (if available) */
   double wing_loading;
 
@@ -72,8 +63,71 @@ struct ExternalSettings {
   /** the volume of the device [0-100%] */
   unsigned volume;
 
+  Validity vario_filter_period_available;
+
+  /** Vario display filter time constant from device [s] */
+  double vario_filter_period;
+
+  Validity elevation_available;
+
+  /** the elevation setting [meters] */
+  int elevation;
+
+  /** POLAR data from device */
+  Validity polar_coefficients_available;
+  double polar_a;
+  double polar_b;
+  double polar_c;
+
+  Validity polar_load_available;
+  /** Wing loading (kg/m²) from device POLAR sentence */
+  double polar_load;
+
+  Validity polar_reference_mass_available;
+  /** Reference mass (polar weight) from device POLAR sentence [kg] */
+  double polar_reference_mass;
+
+  Validity polar_maximum_mass_available;
+  /** Maximum mass (max weight) from device POLAR sentence [kg] */
+  double polar_maximum_mass;
+
+  Validity polar_pilot_weight_available;
+  /** Pilot weight from device POLAR sentence [kg] */
+  double polar_pilot_weight;
+
+  Validity polar_empty_weight_available;
+  /** Empty weight from device POLAR sentence [kg] */
+  double polar_empty_weight;
+
+  /** the radio frequencies of the device */
+  Validity has_active_frequency;
+  RadioFrequency active_frequency;
+  StaticString<32> active_freq_name;
+
+  Validity has_standby_frequency;
+  RadioFrequency standby_frequency;
+  StaticString<32> standby_freq_name;
+
+  Validity swap_frequencies;
+
+  /** Glider identity from device (e.g. declaration H-records) */
+  Validity glider_registration_available;
+  StaticString<32> glider_registration;
+
+  Validity glider_competition_id_available;
+  StaticString<6> glider_competition_id;
+
+  Validity glider_type_available;
+  StaticString<32> glider_type;
+
+  /** transponder */
+  Validity has_transponder_code;
+  TransponderCode transponder_code;
+  Validity has_transponder_mode;
+  TransponderMode transponder_mode;
+
   void Clear();
-  void Expire(double time);
+  void Expire(TimeStamp time) noexcept;
   void Complement(const ExternalSettings &add);
 
   /**
@@ -121,6 +175,17 @@ struct ExternalSettings {
   }
 
   /**
+   * Compare the absolure ballast in kg (litres) setting with the specified value.
+   *
+   * @return true if the current setting is the same, false if the
+   * value is different or if there is no value
+   */
+  bool CompareBallastLitres(double value) const {
+    return ballast_litres_available &&
+      fabs(ballast_litres - value) <= 0.05;
+  }
+
+  /**
    * Compare the wing loading setting with the specified value.
    *
    * @return true if the current setting is the same, false if the
@@ -162,19 +227,75 @@ struct ExternalSettings {
     return volume_available && abs(int(volume) - int(value)) < 3;
   }
 
+  bool CompareVarioFilterPeriod(double value) const {
+    return vario_filter_period_available &&
+      fabs(vario_filter_period - value) <= 0.05;
+  }
+
+  /**
+   * Compare the elevation setting with the specified value.
+   *
+   * @return true if the current setting is the same, false if the
+   * value is different or if there is no value
+   */
+  bool CompareElevation(int value) const {
+    return elevation_available && abs(elevation - value) <= 1;
+  }
+
+  bool ComparePolarCoefficients(double a, double b, double c) const {
+    return polar_coefficients_available &&
+      fabs(polar_a - a) <= 0.0001 &&
+      fabs(polar_b - b) <= 0.0001 &&
+      fabs(polar_c - c) <= 0.0001;
+  }
+
+  bool ComparePolarLoad(double value) const {
+    return polar_load_available && fabs(polar_load - value) <= 0.01;
+  }
+
+  bool ComparePolarReferenceMass(double value) const {
+    return polar_reference_mass_available &&
+      fabs(polar_reference_mass - value) <= 0.1;
+  }
+
+  bool ComparePolarMaximumMass(double value) const {
+    return polar_maximum_mass_available &&
+      fabs(polar_maximum_mass - value) <= 0.1;
+  }
+
+  bool ComparePolarPilotWeight(double value) const {
+    return polar_pilot_weight_available &&
+      fabs(polar_pilot_weight - value) <= 0.1;
+  }
+
+  bool ComparePolarEmptyWeight(double value) const {
+    return polar_empty_weight_available &&
+      fabs(polar_empty_weight - value) <= 0.1;
+  }
+
   /**
    * Sets a new MacCready value, but updates the time stamp only if
    * the value has changed.
    *
    * @return true if the value and the time stamp have been updated
    */
-  bool ProvideMacCready(double value, double time);
-  bool ProvideBallastFraction(double value, double time);
-  bool ProvideBallastOverload(double value, double time);
-  bool ProvideWingLoading(double value, double time);
-  bool ProvideBugs(double value, double time);
-  bool ProvideQNH(AtmosphericPressure value, double time);
-  bool ProvideVolume(unsigned value, double time);
+  bool ProvideMacCready(double value, TimeStamp time) noexcept;
+  bool ProvideBallastFraction(double value, TimeStamp time) noexcept;
+  bool ProvideBallastOverload(double value, TimeStamp time) noexcept;
+  bool ProvideBallastLitres(double value, TimeStamp time) noexcept;
+  bool ProvideWingLoading(double value, TimeStamp time) noexcept;
+  bool ProvideBugs(double value, TimeStamp time) noexcept;
+  bool ProvideQNH(AtmosphericPressure value, TimeStamp time) noexcept;
+  bool ProvideVolume(unsigned value, TimeStamp time) noexcept;
+  bool ProvideVarioFilterPeriod(double value, TimeStamp time) noexcept;
+  bool ProvideElevation(int value, TimeStamp time) noexcept;
+  bool ProvidePolarCoefficients(double a, double b, double c, TimeStamp time) noexcept;
+  bool ProvidePolarLoad(double value, TimeStamp time) noexcept;
+  bool ProvidePolarReferenceMass(double value, TimeStamp time) noexcept;
+  bool ProvidePolarMaximumMass(double value, TimeStamp time) noexcept;
+  bool ProvidePolarPilotWeight(double value, TimeStamp time) noexcept;
+  bool ProvidePolarEmptyWeight(double value, TimeStamp time) noexcept;
+  bool ProvideGliderRegistration(const char *value, TimeStamp time) noexcept;
+  bool ProvideGliderCompetitionId(const char *value, TimeStamp time) noexcept;
+  bool ProvideGliderType(const char *value, TimeStamp time) noexcept;
 };
-
-#endif

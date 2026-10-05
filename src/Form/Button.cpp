@@ -1,88 +1,131 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
-#include "Event/KeyCode.hpp"
+#include "Form/ButtonPanel.hpp"
+#include "LogFile.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "ui/window/ContainerWindow.hpp"
 #include "Asset.hpp"
 #include "Renderer/TextButtonRenderer.hpp"
+#include "Renderer/SymbolButtonRenderer.hpp"
+#include "util/StringAPI.hxx"
 #include "Hardware/Vibrator.hpp"
 
-Button::~Button() {
-  /* we must override ~Window(), because in ~Window(), our own
-     OnDestroy() method won't be called (during object destruction,
-     this object loses its identity) */
-  Destroy();
+#ifdef HAVE_VIBRATOR
+#include "Interface.hpp"
+#include "UISettings.hpp"
+#include "GlobalSettings.hpp"
+#endif
+
+Button::Button(ContainerWindow &parent, const PixelRect &rc,
+               WindowStyle style, std::unique_ptr<ButtonRenderer> _renderer,
+               Callback _callback) noexcept
+{
+  Create(parent, rc, style, std::move(_renderer), std::move(_callback));
+}
+
+Button::Button(ContainerWindow &parent, const ButtonLook &look,
+               const char *caption, const PixelRect &rc,
+               WindowStyle style,
+               Callback _callback) noexcept
+{
+  Create(parent, look, caption, rc, style, std::move(_callback));
+}
+
+Button::Button() = default;
+
+Button::~Button() noexcept = default;
+
+void
+PlayHapticFeedback([[maybe_unused]] HapticFeedbackType type) noexcept
+{
+#ifdef HAVE_VIBRATOR
+  const UISettings &ui_settings = CommonInterface::GetUISettings();
+  if (ui_settings.haptic_feedback == UISettings::HapticFeedback::ON ||
+      (ui_settings.haptic_feedback == UISettings::HapticFeedback::DEFAULT &&
+       GlobalSettings::haptic_feedback))
+    Vibrate(type);
+#endif
 }
 
 void
 Button::Create(ContainerWindow &parent,
                const PixelRect &rc,
                WindowStyle style,
-               ButtonRenderer *_renderer)
+               std::unique_ptr<ButtonRenderer> _renderer)
 {
   dragging = down = selected = false;
-  renderer = _renderer;
+  renderer = std::move(_renderer);
 
   PaintWindow::Create(parent, rc, style);
 }
 
 void
 Button::Create(ContainerWindow &parent, const ButtonLook &look,
-               const TCHAR *caption, const PixelRect &rc,
+               const char *caption, const PixelRect &rc,
                WindowStyle style)
 {
-  Create(parent, rc, style, new TextButtonRenderer(look, caption));
+  Create(parent, rc, style, std::make_unique<TextButtonRenderer>(look, caption));
 }
 
 void
 Button::Create(ContainerWindow &parent, const PixelRect &rc,
-               WindowStyle style, ButtonRenderer *_renderer,
-               ActionListener &_listener, int _id)
+               WindowStyle style, std::unique_ptr<ButtonRenderer> _renderer,
+               Callback _callback) noexcept
 {
-  listener = &_listener;
-  id = _id;
+  callback = std::move(_callback);
 
-  Create(parent, rc, style, _renderer);
+  Create(parent, rc, style, std::move(_renderer));
 }
 
 void
 Button::Create(ContainerWindow &parent, const ButtonLook &look,
-               const TCHAR *caption, const PixelRect &rc,
+               const char *caption, const PixelRect &rc,
                WindowStyle style,
-               ActionListener &_listener, int _id) {
+               Callback _callback) noexcept {
   Create(parent, rc, style,
-         new TextButtonRenderer(look, caption),
-         _listener, _id);
+         std::make_unique<TextButtonRenderer>(look, caption),
+         std::move(_callback));
 }
 
 void
-Button::SetCaption(const TCHAR *caption)
+Button::SetCaption(const char *caption)
 {
   assert(caption != nullptr);
 
-  TextButtonRenderer &r = *(TextButtonRenderer *)renderer;
+  auto &r = (TextButtonRenderer &)*renderer;
   r.SetCaption(caption);
+
+  Invalidate();
+}
+
+[[gnu::pure]]
+static const char *
+MenuSymbolCaption(const char *caption) noexcept
+{
+  if (SymbolButtonRenderer::IsSymbolCaption(caption))
+    return caption;
+
+  const char *nl = StringFind(caption, '\n');
+  if (nl == nullptr || nl[1] == '\0' || nl[2] != '\0')
+    return nullptr;
+
+  const char *symbol = nl + 1;
+  return SymbolButtonRenderer::IsSymbolCaption(symbol) ? symbol : nullptr;
+}
+
+void
+Button::SetMenuCaption(const ButtonLook &look, const char *caption) noexcept
+{
+  assert(caption != nullptr);
+
+  const char *symbol = MenuSymbolCaption(caption);
+  if (symbol != nullptr)
+    renderer = std::make_unique<SymbolButtonRenderer>(
+      look, symbol, SymbolButtonRenderer::Style::MENU);
+  else
+    renderer = std::make_unique<TextButtonRenderer>(look, caption);
 
   Invalidate();
 }
@@ -109,19 +152,23 @@ Button::SetDown(bool _down)
   if (_down == down)
     return;
 
-#ifdef HAVE_VIBRATOR
-  VibrateShort();
-#endif
+  if (_down)
+    PlayHapticFeedback();
 
   down = _down;
   Invalidate();
 }
 
 bool
-Button::OnClicked()
+Button::OnClicked() noexcept
 {
-  if (listener != nullptr) {
-    listener->OnAction(id);
+  if (callback) {
+    try {
+      callback();
+    } catch (...) {
+      LogError(std::current_exception(), "Button callback failed");
+    }
+
     return true;
   }
 
@@ -135,18 +182,8 @@ Button::Click()
   OnClicked();
 }
 
-void
-Button::OnDestroy()
-{
-  assert(renderer != nullptr);
-
-  delete renderer;
-
-  PaintWindow::OnDestroy();
-}
-
 bool
-Button::OnKeyCheck(unsigned key_code) const
+Button::OnKeyCheck(unsigned key_code) const noexcept
 {
   switch (key_code) {
   case KEY_RETURN:
@@ -158,7 +195,7 @@ Button::OnKeyCheck(unsigned key_code) const
 }
 
 bool
-Button::OnKeyDown(unsigned key_code)
+Button::OnKeyDown(unsigned key_code) noexcept
 {
   switch (key_code) {
   case KEY_RETURN:
@@ -166,13 +203,27 @@ Button::OnKeyDown(unsigned key_code)
     Click();
     return true;
 
-  default:
-    return PaintWindow::OnKeyDown(key_code);
+  case KEY_UP:
+    /* OnKeyCheck leaves Up/Down unclaimed so a modal form walks
+       the whole dialog: Up from Select Waypoint's Details returns
+       to the filter instead of wrapping inside Details/Close.
+       This path is for a button outside a form, such as the map
+       arrange overlay. */
+    if (auto *parent = GetParent())
+      return parent->FocusPreviousControl();
+    break;
+
+  case KEY_DOWN:
+    if (auto *parent = GetParent())
+      return parent->FocusNextControl();
+    break;
   }
+
+  return PaintWindow::OnKeyDown(key_code);
 }
 
 bool
-Button::OnMouseMove(PixelPoint p, unsigned keys)
+Button::OnMouseMove(PixelPoint p, unsigned keys) noexcept
 {
   if (dragging) {
     SetDown(IsInside(p));
@@ -182,7 +233,7 @@ Button::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 bool
-Button::OnMouseDown(PixelPoint p)
+Button::OnMouseDown([[maybe_unused]] PixelPoint p) noexcept
 {
   if (IsTabStop())
     SetFocus();
@@ -194,7 +245,7 @@ Button::OnMouseDown(PixelPoint p)
 }
 
 bool
-Button::OnMouseUp(PixelPoint p)
+Button::OnMouseUp([[maybe_unused]] PixelPoint p) noexcept
 {
   if (!dragging)
     return true;
@@ -210,21 +261,23 @@ Button::OnMouseUp(PixelPoint p)
 }
 
 void
-Button::OnSetFocus()
+Button::OnSetFocus() noexcept
 {
   PaintWindow::OnSetFocus();
+  if (cursor_key_group != nullptr)
+    cursor_key_group->OnButtonGainedFocus(*this);
   Invalidate();
 }
 
 void
-Button::OnKillFocus()
+Button::OnKillFocus() noexcept
 {
   PaintWindow::OnKillFocus();
   Invalidate();
 }
 
 void
-Button::OnCancelMode()
+Button::OnCancelMode() noexcept
 {
   dragging = false;
   SetDown(false);
@@ -233,15 +286,28 @@ Button::OnCancelMode()
 }
 
 void
-Button::OnPaint(Canvas &canvas)
+Button::OnPaint(Canvas &canvas) noexcept
 {
   assert(renderer != nullptr);
 
-  const bool pressed = down;
-  const bool focused = HasCursorKeys()
-    ? HasFocus() || (selected && !HasPointer())
-    : pressed;
+  renderer->DrawButton(canvas, GetClientRect(), GetState());
+}
 
-  renderer->DrawButton(canvas, GetClientRect(),
-                       IsEnabled(), focused, pressed);
+ButtonState
+Button::GetState() const noexcept
+{
+  if (!IsEnabled())
+    return ButtonState::DISABLED;
+  else if (down)
+    return ButtonState::PRESSED;
+  /* Real keyboard focus uses `look.focused`.  Armed cursor-selection
+     (list still focused, Left/Right chose an action) uses
+     `look.selected` so the list cursor and action stay visible
+     together — same model as Alternates. */
+  else if (HasCursorKeys() && HasFocus())
+    return ButtonState::FOCUSED;
+  else if (HasCursorKeys() && selected)
+    return ButtonState::SELECTED;
+  else
+    return ButtonState::ENABLED;
 }

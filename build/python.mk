@@ -10,20 +10,20 @@ PYTHON_SOURCES = \
 	$(ENGINE_SRC_DIR)/Trace/Point.cpp \
 	$(ENGINE_SRC_DIR)/Trace/Trace.cpp \
 	$(SRC)/Computer/CirclingComputer.cpp \
-        $(SRC)/Computer/Wind/Settings.cpp \
-        $(SRC)/Computer/Wind/WindEKF.cpp \
-        $(SRC)/Computer/Wind/WindEKFGlue.cpp \
-        $(SRC)/Computer/Wind/CirclingWind.cpp \
-        $(SRC)/Computer/Wind/Computer.cpp \
-        $(SRC)/Computer/Wind/MeasurementList.cpp \
-        $(SRC)/Computer/Wind/Store.cpp \
+	$(SRC)/Computer/Wind/Settings.cpp \
+	$(SRC)/Computer/Wind/WindEKF.cpp \
+	$(SRC)/Computer/Wind/WindEKFGlue.cpp \
+	$(SRC)/Computer/Wind/CirclingWind.cpp \
+	$(SRC)/Computer/Wind/Computer.cpp \
+	$(SRC)/Computer/Wind/MeasurementList.cpp \
+	$(SRC)/Computer/Wind/Store.cpp \
 	$(TEST_SRC_DIR)/FlightPhaseDetector.cpp \
 	$(PYTHON_SRC)/Flight/Flight.cpp \
 	$(PYTHON_SRC)/Flight/DebugReplayVector.cpp \
 	$(PYTHON_SRC)/Flight/FlightTimes.cpp \
 	$(PYTHON_SRC)/Flight/DouglasPeuckerMod.cpp \
 	$(PYTHON_SRC)/Flight/AnalyseFlight.cpp \
-        $(PYTHON_SRC)/Tools/GoogleEncode.cpp \
+	$(PYTHON_SRC)/Tools/GoogleEncode.cpp \
 	$(PYTHON_SRC)/PythonConverters.cpp \
 	$(PYTHON_SRC)/PythonGlue.cpp \
 	$(PYTHON_SRC)/Flight.cpp \
@@ -48,12 +48,11 @@ PYTHON_SOURCES = \
 	$(ENGINE_SRC_DIR)/Airspace/Airspaces.cpp \
 	$(ENGINE_SRC_DIR)/Airspace/AirspaceSorter.cpp \
 	$(ENGINE_SRC_DIR)/Airspace/AirspaceAircraftPerformance.cpp \
-	$(ENGINE_SRC_DIR)/Airspace/Predicate/AirspacePredicate.cpp \
 	$(SRC)/NMEA/Aircraft.cpp
 PYTHON_LDADD = $(DEBUG_REPLAY_LDADD)
-PYTHON_LDLIBS = $(shell python-config --ldflags)
+PYTHON_LDLIBS = $(shell python3-config --ldflags)
 PYTHON_DEPENDS = CONTEST WAYPOINT UTIL ZZIP GEO MATH TIME
-PYTHON_CPPFLAGS = $(shell python-config --includes) \
+PYTHON_CPPFLAGS = $(shell python3-config --includes) \
 	-I$(TEST_SRC_DIR) -Wno-write-strings
 PYTHON_NO_LIB_PREFIX = y
 $(eval $(call link-shared-library,xcsoar,PYTHON))

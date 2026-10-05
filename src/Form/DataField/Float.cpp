@@ -1,104 +1,67 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Float.hpp"
+#include "util/StringFormat.hpp"
 #include "ComboList.hpp"
 #include "Math/Util.hpp"
-#include "Util/NumberParser.hpp"
+#include "util/NumberParser.hpp"
 
 #include <stdio.h>
 
 static bool DataFieldKeyUp = false;
 
-int
-DataFieldFloat::GetAsInteger() const
+const char *
+DataFieldFloat::GetAsString() const noexcept
 {
-  return iround(mValue);
-}
-
-const TCHAR *
-DataFieldFloat::GetAsString() const
-{
-  _stprintf(mOutBuf, edit_format, (double)mValue);
+  StringFormat(mOutBuf, sizeof(mOutBuf), edit_format, (double)mValue);
   return mOutBuf;
 }
 
-const TCHAR *
-DataFieldFloat::GetAsDisplayString() const
+const char *
+DataFieldFloat::GetAsDisplayString() const noexcept
 {
-  _stprintf(mOutBuf, display_format, (double)mValue, unit.c_str());
+  StringFormat(mOutBuf, sizeof(mOutBuf), display_format, (double)mValue, unit.c_str());
   return mOutBuf;
 }
 
 void
-DataFieldFloat::SetAsInteger(int Value)
-{
-  SetAsFloat(Value);
-}
-
-void
-DataFieldFloat::SetAsFloat(double Value)
+DataFieldFloat::ModifyValue(double Value) noexcept
 {
   if (Value < mMin)
     Value = mMin;
   if (Value > mMax)
     Value = mMax;
-  if (mValue != Value) {
-    mValue = Value;
+  if (Value != GetValue()) {
+    SetValue(Value);
     Modified();
   }
 }
 
 void
-DataFieldFloat::SetAsString(const TCHAR *Value)
-{
-  SetAsFloat(ParseDouble(Value));
-}
-
-void
-DataFieldFloat::Inc()
+DataFieldFloat::Inc() noexcept
 {
   // no keypad, allow user to scroll small values
   if (mFine && mValue < 0.95 && mStep >= 0.5 &&
       mMin >= 0)
-    SetAsFloat(mValue + 0.1);
+    ModifyValue(mValue + 0.1);
   else
-    SetAsFloat(mValue + mStep * SpeedUp(true));
+    ModifyValue(mValue + mStep * SpeedUp(true));
 }
 
 void
-DataFieldFloat::Dec()
+DataFieldFloat::Dec() noexcept
 {
   // no keypad, allow user to scroll small values
   if (mFine && mValue <= 1 && mStep >= 0.5 &&
       mMin >= 0)
-    SetAsFloat(mValue - 0.1);
+    ModifyValue(mValue - 0.1);
   else
-    SetAsFloat(mValue - mStep * SpeedUp(false));
+    ModifyValue(mValue - mStep * SpeedUp(false));
 }
 
 double
-DataFieldFloat::SpeedUp(bool keyup)
+DataFieldFloat::SpeedUp(bool keyup) noexcept
 {
   if (keyup != DataFieldKeyUp) {
     mSpeedup = 0;
@@ -107,10 +70,10 @@ DataFieldFloat::SpeedUp(bool keyup)
     return 1;
   }
 
-  if (!last_step.Check(200)) {
+  if (!last_step.Check(std::chrono::milliseconds(200))) {
     mSpeedup++;
     if (mSpeedup > 5) {
-      last_step.UpdateWithOffset(350);
+      last_step.UpdateWithOffset(std::chrono::milliseconds(350));
       return 10;
     }
   } else
@@ -122,22 +85,23 @@ DataFieldFloat::SpeedUp(bool keyup)
 }
 
 void
-DataFieldFloat::SetFromCombo(int iDataFieldIndex, const TCHAR *sValue)
+DataFieldFloat::SetFromCombo([[maybe_unused]] int iDataFieldIndex, const char *sValue) noexcept
 {
-  SetAsString(sValue);
+  ModifyValue(ParseDouble(sValue));
 }
 
 void
-DataFieldFloat::AppendComboValue(ComboList &combo_list, double value) const
+DataFieldFloat::AppendComboValue(ComboList &combo_list,
+                                 double value) const noexcept
 {
-  TCHAR a[edit_format.capacity()], b[display_format.capacity()];
-  _stprintf(a, edit_format, (double)value);
-  _stprintf(b, display_format, (double)value, unit.c_str());
+  char a[decltype(edit_format)::capacity()], b[decltype(display_format)::capacity()];
+  StringFormat(a, sizeof(a), edit_format, (double)value);
+  StringFormat(b, sizeof(b), display_format, (double)value, unit.c_str());
   combo_list.Append(a, b);
 }
 
 ComboList
-DataFieldFloat::CreateComboList(const TCHAR *reference_string) const
+DataFieldFloat::CreateComboList(const char *reference_string) const noexcept
 {
   const auto reference = reference_string != nullptr
     ? ParseDouble(reference_string)
@@ -158,7 +122,7 @@ DataFieldFloat::CreateComboList(const TCHAR *reference_string) const
   auto first = corrected_value - surrounding_items * mStep;
   if (first > mMin + epsilon)
     /* there are values before "first" - give the user a choice */
-    combo_list.Append(ComboList::Item::PREVIOUS_PAGE, _T("<<More Items>>"));
+    combo_list.Append(ComboList::Item::PREVIOUS_PAGE, "<<More Items>>");
   else if (first < mMin - epsilon)
     first = int(mMin / mStep) * mStep;
 
@@ -218,7 +182,7 @@ DataFieldFloat::CreateComboList(const TCHAR *reference_string) const
 
   if (last < mMax - epsilon)
     /* there are values after "last" - give the user a choice */
-    combo_list.Append(ComboList::Item::NEXT_PAGE, _T("<<More Items>>"));
+    combo_list.Append(ComboList::Item::NEXT_PAGE, "<<More Items>>");
 
   return combo_list;
 }

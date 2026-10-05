@@ -1,44 +1,62 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CLOUD_SENDER_HPP
-#define XCSOAR_CLOUD_SENDER_HPP
+#pragma once
 
 #include "Tracking/SkyLines/Server.hpp"
 #include "Tracking/SkyLines/Protocol.hpp"
-#include "OS/ByteOrder.hpp"
+#include "util/ByteOrder.hxx"
+#include "net/StaticSocketAddress.hxx"
 
-#include <boost/asio/ip/udp.hpp>
+#include <array>
+#include <cstdint>
 
 struct GeoPoint;
+struct OGNTrafficEntry;
+
+/**
+ * Packed extensions for #SkyLinesTracking::TrafficResponsePacket::Traffic
+ * reserved fields (host byte order here; converted in #TrafficResponseSender).
+ *
+ * - reserved: bit 15 TRACK_VALID; bits 0-8 ground track [deg]; bits 9-13 aircraft
+ *   type (0-31); bit 14 ALTITUDE_VALID.
+ * - reserved2: bit 31 FLARM_VALID; bits 0-23 FLARM address when valid.
+ *
+ * For OGN traffic with a known FLARM address, pilot_id uses
+ * #OGNPilotIdFromFlarm() (0x80000000 | flarm_id).
+ *
+ * Pre-extension XCSoar and SkyLines clients ignore reserved/reserved2
+ * and read only the fixed traffic fields; keep those zero unless
+ * optional extension data is present.
+ */
+struct TrafficRecordExtensions {
+  uint16_t reserved = 0;
+  uint32_t reserved2 = 0;
+
+  static TrafficRecordExtensions FromOgn(unsigned track_deg, bool track_valid,
+                                         unsigned aircraft_type,
+                                         uint32_t flarm_id,
+                                         bool flarm_valid,
+                                         bool altitude_valid) noexcept;
+
+  static TrafficRecordExtensions
+  FromOgn(const OGNTrafficEntry &t) noexcept;
+};
 
 class TrafficResponseSender {
   SkyLinesTracking::Server &server;
-  const boost::asio::ip::udp::endpoint &endpoint;
+  const SocketAddress address;
 
   static constexpr size_t MAX_TRAFFIC_SIZE = 1024;
+  static_assert(sizeof(SkyLinesTracking::TrafficResponsePacket) <
+                  MAX_TRAFFIC_SIZE,
+                "TrafficResponsePacket header exceeds response size");
   static constexpr size_t MAX_TRAFFIC =
-    MAX_TRAFFIC_SIZE / sizeof(SkyLinesTracking::TrafficResponsePacket::Traffic);
+    (MAX_TRAFFIC_SIZE - sizeof(SkyLinesTracking::TrafficResponsePacket)) /
+    sizeof(SkyLinesTracking::TrafficResponsePacket::Traffic);
+
+  static_assert(MAX_TRAFFIC > 0,
+                "TrafficResponsePacket header leaves no room for traffic");
 
   struct Packet {
     SkyLinesTracking::TrafficResponsePacket header;
@@ -49,11 +67,11 @@ class TrafficResponseSender {
 
 public:
   TrafficResponseSender(SkyLinesTracking::Server &_server,
-                        const SkyLinesTracking::Server::Client &client)
-    :server(_server), endpoint(client.endpoint) {
+                        SocketAddress client_address, uint64_t key)
+    :server(_server), address(client_address) {
     data.header.header.magic = ToBE32(SkyLinesTracking::MAGIC);
     data.header.header.type = ToBE16(SkyLinesTracking::Type::TRAFFIC_RESPONSE);
-    data.header.header.key = ToBE64(client.key);
+    data.header.header.key = ToBE64(key);
 
     data.header.reserved = 0;
     data.header.reserved2 = 0;
@@ -61,17 +79,30 @@ public:
   }
 
   void Add(uint32_t pilot_id, uint32_t time,
-           GeoPoint location, int altitude);
+           GeoPoint location, int altitude,
+           TrafficRecordExtensions ext = {});
   void Flush();
 };
 
+void
+SendUserNameResponse(SkyLinesTracking::Server &server,
+                     SocketAddress address, uint64_t key,
+                     uint32_t user_id, std::string_view name) noexcept;
+
 class ThermalResponseSender {
   SkyLinesTracking::Server &server;
-  const boost::asio::ip::udp::endpoint &endpoint;
+  const SocketAddress address;
 
   static constexpr size_t MAX_THERMAL_SIZE = 1024;
+  static_assert(sizeof(SkyLinesTracking::ThermalResponsePacket) <
+                  MAX_THERMAL_SIZE,
+                "ThermalResponsePacket header exceeds response size");
   static constexpr size_t MAX_THERMAL =
-    MAX_THERMAL_SIZE / sizeof(SkyLinesTracking::Thermal);
+    (MAX_THERMAL_SIZE - sizeof(SkyLinesTracking::ThermalResponsePacket)) /
+    sizeof(SkyLinesTracking::Thermal);
+
+  static_assert(MAX_THERMAL > 0,
+                "ThermalResponsePacket header leaves no room for thermals");
 
   struct Packet {
     SkyLinesTracking::ThermalResponsePacket header;
@@ -82,11 +113,11 @@ class ThermalResponseSender {
 
 public:
   ThermalResponseSender(SkyLinesTracking::Server &_server,
-                        const SkyLinesTracking::Server::Client &client)
-    :server(_server), endpoint(client.endpoint) {
+                        SocketAddress client_address, uint64_t key) noexcept
+    :server(_server), address(client_address) {
     data.header.header.magic = ToBE32(SkyLinesTracking::MAGIC);
     data.header.header.type = ToBE16(SkyLinesTracking::Type::THERMAL_RESPONSE);
-    data.header.header.key = ToBE64(client.key);
+    data.header.header.key = ToBE64(key);
 
     data.header.reserved1 = 0;
     data.header.reserved2 = 0;
@@ -96,5 +127,3 @@ public:
   void Add(SkyLinesTracking::Thermal t);
   void Flush();
 };
-
-#endif

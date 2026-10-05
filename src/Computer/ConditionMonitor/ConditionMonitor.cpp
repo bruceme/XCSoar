@@ -1,26 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ConditionMonitor.hpp"
 #include "NMEA/Info.hpp"
@@ -28,7 +7,7 @@ Copyright_License {
 
 void
 ConditionMonitor::Update(const NMEAInfo &basic, const DerivedInfo &calculated,
-                         const ComputerSettings &settings)
+                         const ComputerSettings &settings) noexcept
 {
   if (!calculated.flight.flying)
     return;
@@ -51,12 +30,12 @@ ConditionMonitor::Update(const NMEAInfo &basic, const DerivedInfo &calculated,
 }
 
 bool
-ConditionMonitor::Ready_Time_Notification(double T)
+ConditionMonitor::Ready_Time_Notification(TimeStamp T) const noexcept
 {
-  if (T <= 0)
+  if (!T.IsDefined())
     return false;
 
-  if (LastTime_Notification < 0 || T < LastTime_Notification)
+  if (!LastTime_Notification.IsDefined() || T < LastTime_Notification)
     return true;
 
   if (T >= LastTime_Notification + Interval_Notification)
@@ -66,13 +45,13 @@ ConditionMonitor::Ready_Time_Notification(double T)
 }
 
 bool
-ConditionMonitor::Ready_Time_Check(double T, bool *restart)
+ConditionMonitor::Ready_Time_Check(TimeStamp T, bool *restart) noexcept
 {
-  if (T <= 0)
+  if (!T.IsDefined())
     return false;
 
-  if (LastTime_Check < 0 || T < LastTime_Check) {
-    LastTime_Notification = -1;
+  if (!LastTime_Check.IsDefined() || T < LastTime_Check) {
+    LastTime_Notification = TimeStamp::Undefined();
     *restart = true;
     return true;
   }

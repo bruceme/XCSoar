@@ -1,34 +1,14 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_SETTINGS_MAP_HPP
-#define XCSOAR_DEVICE_SETTINGS_MAP_HPP
-
-#include "Util/Serial.hpp"
-#include "Time/TimeoutClock.hpp"
-#include "Thread/Mutex.hpp"
-#include "Thread/Cond.hxx"
+#include "util/Serial.hpp"
+#include "time/TimeoutClock.hpp"
+#include "thread/Mutex.hxx"
+#include "thread/Cond.hxx"
 #include "Operation/Operation.hpp"
+#include "Operation/Cancelled.hpp"
 
 #include <map>
 #include <string>
@@ -45,6 +25,7 @@ Copyright_License {
 template<typename V>
 class DeviceSettingsMap {
   Mutex mutex;
+
   Cond cond;
 
   struct Item {
@@ -52,10 +33,12 @@ class DeviceSettingsMap {
 
     bool old;
 
-    explicit Item(const V &_value):value(_value) {}
+    template<typename VV>
+    explicit constexpr Item(VV &&_value) noexcept
+      :value(std::forward<VV>(_value)) {}
   };
 
-  typedef std::map<std::string, Item> Map;
+  using Map = std::map<std::string, Item, std::less<>>;
 
   Map map;
 
@@ -64,100 +47,90 @@ public:
     typename Map::const_iterator i;
 
   public:
-    explicit const_iterator(typename Map::const_iterator _i):i(_i) {}
+    explicit constexpr const_iterator(typename Map::const_iterator _i) noexcept
+      :i(_i) {}
 
-    const V &operator*() const {
+    constexpr const V &operator*() const noexcept {
       return i->second.value;
     }
 
-    const V *operator->() const {
+    constexpr const V *operator->() const noexcept {
       return &i->second.value;
     }
 
-    bool operator==(const const_iterator &other) const {
+    constexpr bool operator==(const const_iterator &other) const noexcept {
       return i == other.i;
     }
 
-    bool operator!=(const const_iterator &other) const {
+    constexpr bool operator!=(const const_iterator &other) const noexcept {
       return i != other.i;
     }
   };
 
-  void Lock() {
-    mutex.Lock();
-  }
-
-  void Unlock() {
-    mutex.Unlock();
-  }
-
-  operator Mutex &() const {
+  operator Mutex &() const noexcept {
     return const_cast<Mutex &>(mutex);
   }
 
   template<typename K>
-  void MarkOld(const K &key) {
-    auto i = map.find(key);
-    if (i != map.end())
+  void MarkOld(const K &key) noexcept {
+    if (auto i = map.find(key); i != map.end())
       i->second.old = true;
   }
 
   template<typename K>
-  const_iterator Wait(const K &key, OperationEnvironment &env,
+  const_iterator Wait(std::unique_lock<Mutex> &lock,
+                      const K &key, OperationEnvironment &env,
                       TimeoutClock timeout) {
     while (true) {
-      auto i = map.find(key);
-      if (i != map.end() && !i->second.old)
+      if (auto i = map.find(key); i != map.end() && !i->second.old)
         return const_iterator(i);
 
       if (env.IsCancelled())
+        throw OperationCancelled{};
+
+      const auto remaining = timeout.GetRemainingSigned();
+      if (remaining.count() <= 0)
         return end();
 
-      int remaining = timeout.GetRemainingSigned();
-      if (remaining <= 0)
-        return end();
-
-      cond.timed_wait(*this, remaining);
+      cond.wait_for(lock, remaining);
     }
   }
 
-  template<typename K>
-  const_iterator Wait(const K &key, OperationEnvironment &env,
-                      unsigned timeout_ms) {
-    TimeoutClock timeout(timeout_ms);
-    return Wait(key, env, timeout);
+  template<typename K, class Rep, class Period>
+  const_iterator Wait(std::unique_lock<Mutex> &lock,
+                      const K &key, OperationEnvironment &env,
+                      const std::chrono::duration<Rep,Period> &_timeout) {
+    TimeoutClock timeout(_timeout);
+    return Wait(lock, key, env, timeout);
   }
 
   template<typename K>
-  gcc_pure
-  const_iterator find(const K &key) const {
+  [[gnu::pure]]
+  const_iterator find(const K &key) const noexcept {
     return const_iterator(map.find(key));
   }
 
-  gcc_pure
-  const_iterator end() const {
+  [[gnu::pure]]
+  const_iterator end() const noexcept {
     return const_iterator(map.end());
   }
 
-  template<typename K>
-  void Set(const K &key, const V &value) {
-    auto i = map.insert(std::make_pair(key, Item(value)));
-    Item &item = i.first->second;
+  template<typename K, typename VV>
+  void Set(K &&key, VV &&value) {
+    auto [it, _] = map.insert_or_assign(std::forward<K>(key),
+                                        Item{std::forward<VV>(value)});
+    Item &item = it->second;
     item.old = false;
-    if (!i.second)
-      item.value = value;
 
-    cond.broadcast();
+    cond.notify_all();
   }
 
   template<typename K>
-  void erase(const K &key) {
+  void erase(const K &key) noexcept {
     map.erase(key);
   }
 
-  void clear() {
+  void clear() noexcept {
     map.clear();
   }
 };
-
-#endif

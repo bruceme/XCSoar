@@ -1,29 +1,9 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskDialogs.hpp"
 #include "Dialogs/ListPicker.hpp"
-#include "Form/List.hpp"
+#include "ui/control/List.hpp"
 #include "Look/DialogLook.hpp"
 #include "UIGlobals.hpp"
 #include "Renderer/TextRowRenderer.hpp"
@@ -32,13 +12,13 @@ Copyright_License {
 #include "Engine/Task/Ordered/OrderedTask.hpp"
 #include "Engine/Task/Ordered/Points/OrderedTaskPoint.hpp"
 #include "Language/Language.hpp"
-#include "Util/TrivialArray.hxx"
+#include "util/TrivialArray.hxx"
 
-#include <assert.h>
+#include <cassert>
 
 static TrivialArray<TaskPointFactoryType, LegalPointSet::N> point_types;
 
-static const TCHAR *
+static const char *
 TPTypeItemHelp(unsigned i)
 {
   return OrderedTaskPointDescription(point_types[i]);
@@ -57,17 +37,18 @@ public:
     return row_renderer.CalculateLayout(*look.list.font);
   }
 
-  void OnPaintItem(Canvas &canvas, const PixelRect rc, unsigned i) override;
+  void OnPaintItem(Canvas &canvas, const PixelRect rc,
+                   unsigned i) noexcept override;
 };
 
 void
 MutateTaskPointRenderer::OnPaintItem(Canvas &canvas, PixelRect rc,
-                                     unsigned DrawListIndex)
+                                     unsigned DrawListIndex) noexcept
 {
   assert(DrawListIndex < point_types.size());
 
   if (point_types[DrawListIndex] == current_type)
-    rc.left = row_renderer.DrawColumn(canvas, rc, _T("*"));
+    rc.left = row_renderer.DrawColumn(canvas, rc, "*");
 
   row_renderer.DrawTextRow(canvas, rc,
                            OrderedTaskPointName(point_types[DrawListIndex]));
@@ -87,17 +68,11 @@ SetPointType(OrderedTask &task, unsigned index,
     // no change
     return false;
 
-  bool task_modified = false;
-
   auto point = factory.CreateMutatedPoint(old_point, type);
   if (point == nullptr)
     return false;
 
-  if (factory.Replace(*point, index, true))
-    task_modified = true;
-  delete point;
-
-  return task_modified;
+  return factory.Replace(*point, index, true);
 }
 
 bool

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
 #include "harness_aircraft.hpp"
 #include "TaskEventsPrint.hpp"
 #include "Replay/IgcReplay.hpp"
@@ -6,13 +9,13 @@
 #include "Engine/Task/Ordered/OrderedTask.hpp"
 #include "Computer/FlyingComputer.hpp"
 #include "NMEA/FlyingState.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "OS/FileUtil.hpp"
-#include "IO/FileLineReader.hpp"
+#include "system/ConvertPathName.hpp"
+#include "system/FileUtil.hpp"
+#include "io/FileLineReader.hpp"
 #include "Task/LoadFile.hpp"
 #include "NMEA/Info.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
-#include "Util/PrintException.hxx"
+#include "util/PrintException.hxx"
 #include "test_debug.hpp"
 
 #include <fstream>
@@ -21,14 +24,13 @@ extern "C" {
 #include "tap.h"
 }
 
-static OrderedTask *
+static std::unique_ptr<OrderedTask>
 task_load(const TaskBehaviour &task_behaviour)
 {
-  auto *task = LoadTask(task_file, task_behaviour);
+  auto task = LoadTask(task_file, task_behaviour);
   if (task != nullptr) {
     task->UpdateStatsGeometry();
-    if (!task->CheckTask()) {
-      delete task;
+    if (IsError(task->CheckTask())) {
       return nullptr;
     }
   }
@@ -46,7 +48,7 @@ public:
   AircraftState state;
 
   void print(std::ostream &f) {
-    f << (double)state.time << " " 
+    f << (double)state.time.ToDuration().count() << " "
       <<  (double)state.location.longitude.Degrees() << " "
       <<  (double)state.location.latitude.Degrees() << " "
       <<  (double)state.altitude << "\n";
@@ -59,14 +61,14 @@ protected:
 
   void OnAdvance(const GeoPoint &loc,
                  const double speed, const Angle bearing,
-                 const double alt, const double baroalt, const double t) {
-
+                 const double alt, [[maybe_unused]] const double baroalt,
+                 const TimeStamp t) noexcept {
     state.location = loc;
     state.ground_speed = speed;
     state.track = bearing;
     state.altitude = alt;
     state.time = t;
-    if (t > 0) {
+    if (t.ToDuration().count() > 0) {
       started = true;
     }
   }
@@ -75,7 +77,7 @@ protected:
 static bool
 test_replay()
 {
-  Directory::Create(Path(_T("output/results")));
+  Directory::Create(Path("output/results"));
   std::ofstream f("output/results/res-sample.txt");
 
   GlidePolar glide_polar(4.0);
@@ -91,15 +93,15 @@ test_replay()
   TaskEventsPrint default_events(verbose);
   task_manager.SetTaskEvents(default_events);
 
-  glide_polar.SetBallast(1.0);
+  glide_polar.SetBallastFraction(1.0);
 
   task_manager.SetGlidePolar(glide_polar);
 
-  OrderedTask* t = task_load(task_behaviour);
+  auto t = task_load(task_behaviour);
   if (t) {
     task_manager.Commit(*t);
-    delete t;
-    task_manager.Resume();
+    if (!task_manager.Resume())
+      return false;
   } else {
     return false;
   }
@@ -164,15 +166,15 @@ test_replay()
 
   if (verbose) {
     PrintDistanceCounts();
-    printf("# task elapsed %d (s)\n", (int)task_manager.GetStats().total.time_elapsed);
+    printf("# task elapsed %d (s)\n", (int)task_manager.GetStats().total.time_elapsed.count());
     printf("# task speed %3.1f (kph)\n", (int)task_manager.GetStats().total.travelled.GetSpeed()*3.6);
     printf("# travelled distance %4.1f (km)\n", 
            (double)task_manager.GetStats().total.travelled.GetDistance()/1000.0);
     printf("# scored distance %4.1f (km)\n", 
            (double)task_manager.GetStats().distance_scored/1000.0);
-    if (task_manager.GetStats().total.time_elapsed > 0) {
+    if (task_manager.GetStats().total.time_elapsed.count() > 0) {
       printf("# scored speed %3.1f (kph)\n", 
-             (double)task_manager.GetStats().distance_scored/(double)task_manager.GetStats().total.time_elapsed*3.6);
+             (double)task_manager.GetStats().distance_scored/(double)task_manager.GetStats().total.time_elapsed.count()*3.6);
     }
   }
   return true;
@@ -183,8 +185,8 @@ int main(int argc, char** argv)
 try {
   output_skip = 60;
 
-  replay_file = Path(_T("test/data/apf-bug554.igc"));
-  task_file = Path(_T("test/data/apf-bug554.tsk"));
+  replay_file = Path("test/data/apf-bug554.igc");
+  task_file = Path("test/data/apf-bug554.tsk");
 
   if (!ParseArgs(argc,argv)) {
     return 0;

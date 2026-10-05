@@ -61,28 +61,21 @@
  * __END_OF_JASPER_LICENSE__
  */
 
-/*
- * Fixed-Point Number Class
- *
- * $Id$
+/*!
+ * @file jas_fix.h
+ * @brief JasPer Fixed-Point Number Class
  */
 
-#ifndef JAS_FIX_H
-#define JAS_FIX_H
+#pragma once
 
 /******************************************************************************\
 * Includes.
 \******************************************************************************/
 
 /* The configuration header file should be included first. */
-#include <jasper/jas_config.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
+#include <jasper/jas_config.h> /* IWYU pragma: keep */
 
 #include <jasper/jas_types.h>
-#include <jasper/jas_debug.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,11 +87,11 @@ extern "C" {
 
 /* The representation of the value zero. */
 #define	JAS_FIX_ZERO(fix_t, fracbits) \
-	JAS_CAST(fix_t, 0)
+	JAS_INTTOFIX(fix_t, fracbits, 0)
 
 /* The representation of the value one. */
 #define	JAS_FIX_ONE(fix_t, fracbits) \
-	(JAS_CAST(fix_t, 1) << (fracbits))
+	JAS_INTTOFIX(fix_t, fracbits, 1)
 
 /* The representation of the value one half. */
 #define	JAS_FIX_HALF(fix_t, fracbits) \
@@ -110,7 +103,7 @@ extern "C" {
 
 /* Convert an int to a fixed-point number. */
 #define JAS_INTTOFIX(fix_t, fracbits, x) \
-	JAS_CAST(fix_t, (x) << (fracbits))
+	(JAS_CAST(fix_t, x) << (fracbits))
 
 /* Convert a fixed-point number to an int. */
 #define JAS_FIXTOINT(fix_t, fracbits, x) \
@@ -118,11 +111,11 @@ extern "C" {
 
 /* Convert a fixed-point number to a double. */
 #define JAS_FIXTODBL(fix_t, fracbits, x) \
-	(JAS_CAST(double, x) / (JAS_CAST(fix_t, 1) << (fracbits)))
+	(JAS_CAST(double, x) / JAS_FIX_ONE(fix_t, fracbits))
 
 /* Convert a double to a fixed-point number. */
 #define JAS_DBLTOFIX(fix_t, fracbits, x) \
-	JAS_CAST(fix_t, ((x) * JAS_CAST(double, JAS_CAST(fix_t, 1) << (fracbits))))
+	JAS_CAST(fix_t, ((x) * JAS_CAST(double, JAS_FIX_ONE(fix_t, fracbits))))
 
 /******************************************************************************\
 * Basic arithmetic operations.
@@ -333,13 +326,7 @@ extern "C" {
 /* Round a fixed-point number to the nearest integer in the direction of
   negative infinity (i.e., the floor function). */
 #define	JAS_FIX_FLOOR(fix_t, fracbits, x) \
-	((x) & (~((JAS_CAST(fix_t, 1) << (fracbits)) - 1)))
-
-/* Round a fixed-point number to the nearest integer in the direction
-  of zero. */
-#define JAS_FIX_TRUNC(fix_t, fracbits, x) \
-	(((x) >= 0) ? JAS_FIX_FLOOR(fix_t, fracbits, x) : \
-	  JAS_FIX_CEIL(fix_t, fracbits, x))
+	((x) & (~(JAS_FIX_ONE(fix_t, fracbits) - 1)))
 
 /******************************************************************************\
 * The below macros are for internal library use only.  Do not invoke them
@@ -356,6 +343,4 @@ extern "C" {
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

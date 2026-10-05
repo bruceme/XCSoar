@@ -1,47 +1,37 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ATMOSPHERE_AIRDENSITY_H
-#define XCSOAR_ATMOSPHERE_AIRDENSITY_H
-
-#include "Compiler.h"
+/** ICAO ISA sea-level density (kg/m³) */
+constexpr double ISA_SEA_LEVEL_DENSITY = 1.225;
 
 /**
  * Calculates the air density from a given QNH-based altitude
  * @param altitude QNH-based altitude (m)
  * @return Air density (kg/m^3)
  */
-gcc_const
+[[gnu::const]]
 double
-AirDensity(double altitude);
+AirDensity(double altitude) noexcept;
 
 /**
  * Divide TAS by this number to get IAS
  * @param altitude QNH-based altitude (m)
  * @return Ratio of TAS to IAS
  */
-gcc_const
+[[gnu::const]]
 double
-AirDensityRatio(double altitude);
+AirDensityRatio(double altitude) noexcept;
 
-#endif
+/**
+ * Indicated airspeed from pitot dynamic pressure.
+ *
+ * IAS = sqrt(2 q / rho0) with q in hPa and rho0 at ISA sea level.
+ *
+ * @param dynamic_pressure_hpa pitot minus static, hectopascal
+ * @return indicated airspeed (m/s)
+ */
+[[gnu::const]]
+double
+IndicatedAirspeedFromDynamicPressure(double dynamic_pressure_hpa) noexcept;

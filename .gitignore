@@ -32,3 +32,9 @@ build/local-config.mk
 *.pyc
 *.pyo
 *.bak
+.*.swp
+
+.idea
+.ccache
+messages.mo
+po/*.mo

@@ -1,43 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Util/StringCompare.hxx"
-#include "OS/Path.hpp"
-#include "Screen/Custom/LibTiff.hpp"
-#include "Screen/Custom/UncompressedImage.hpp"
+#include "util/StringCompare.hxx"
+#include "system/Path.hpp"
+#include "ui/canvas/custom/LibTiff.hpp"
+#include "ui/canvas/custom/UncompressedImage.hpp"
 #include "NativeView.hpp"
-
-#include <tchar.h>
+#include "Hardware/DisplayDPI.hpp"
 
 Java::TrivialClass NativeView::cls;
+jfieldID NativeView::ptr_field;
 jfieldID NativeView::textureNonPowerOfTwo_field;
-jmethodID NativeView::init_surface_method, NativeView::deinit_surface_method;
+jmethodID NativeView::getSurface_method;
+jmethodID NativeView::acquireWakeLock_method;
+jmethodID NativeView::setFullScreen_method;
 jmethodID NativeView::setRequestedOrientationID;
 jmethodID NativeView::loadResourceBitmap_method;
 jmethodID NativeView::loadFileBitmap_method;
 jmethodID NativeView::bitmapToTexture_method;
-jmethodID NativeView::open_file_method;
+jmethodID NativeView::shareText_method;
+jmethodID NativeView::openURL_method;
+jmethodID NativeView::openWifiSettings_method;
+jmethodID NativeView::openWaypointFile_method;
 jmethodID NativeView::getNetState_method;
+jmethodID NativeView::getWifiIpAddress_method;
+jmethodID NativeView::isAutoRotateEnabled_method;
+jmethodID NativeView::getPhysicalOrientation_method;
+jmethodID NativeView::getTopGestureClearance_method;
+jmethodID NativeView::startMyService_method;
+jmethodID NativeView::launchSAFTreePicker_method;
+jmethodID NativeView::reportSize_method;
 
 Java::TrivialClass NativeView::clsBitmap;
 jmethodID NativeView::createBitmap_method;
@@ -50,10 +42,16 @@ NativeView::Initialise(JNIEnv *env)
 {
   cls.Find(env, "org/xcsoar/NativeView");
 
+  ptr_field = env->GetFieldID(cls, "ptr", "J");
   textureNonPowerOfTwo_field =
     env->GetStaticFieldID(cls, "textureNonPowerOfTwo", "Z");
-  init_surface_method = env->GetMethodID(cls, "initSurface", "()Z");
-  deinit_surface_method = env->GetMethodID(cls, "deinitSurface", "()V");
+  getSurface_method = env->GetMethodID(cls, "getSurface", "()Landroid/view/Surface;");
+
+  acquireWakeLock_method = env->GetMethodID(cls, "acquireWakeLock", "()V");
+
+  setFullScreen_method =
+    env->GetMethodID(cls, "setFullScreen", "(Z)V");
+
   setRequestedOrientationID =
     env->GetMethodID(cls, "setRequestedOrientation", "(I)Z");
 
@@ -64,10 +62,41 @@ NativeView::Initialise(JNIEnv *env)
   bitmapToTexture_method = env->GetMethodID(cls, "bitmapToTexture",
                                             "(Landroid/graphics/Bitmap;Z[I)Z");
 
-  open_file_method = env->GetMethodID(cls, "openFile",
-                                      "(Ljava/lang/String;)V");
+  shareText_method = env->GetMethodID(cls, "shareText",
+                                          "(Ljava/lang/String;)V");
+
+  openURL_method = env->GetMethodID(cls, "openURL",
+                                    "(Ljava/lang/String;)Z");
+
+  openWifiSettings_method = env->GetMethodID(cls, "openWifiSettings",
+                                             "()Z");
+
+  openWaypointFile_method =
+    env->GetMethodID(cls, "openWaypointFile",
+                     "(ILjava/lang/String;)V");
 
   getNetState_method = env->GetMethodID(cls, "getNetState", "()I");
+
+  getWifiIpAddress_method = env->GetMethodID(cls, "getWifiIpAddress",
+                                             "()Ljava/lang/String;");
+
+  isAutoRotateEnabled_method =
+    env->GetMethodID(cls, "isAutoRotateEnabled", "()Z");
+
+  getPhysicalOrientation_method =
+    env->GetMethodID(cls, "getPhysicalOrientation", "()I");
+
+  getTopGestureClearance_method =
+    env->GetMethodID(cls, "getTopGestureClearance", "()I");
+
+  startMyService_method =
+    env->GetMethodID(cls, "startMyService", "()V");
+
+  launchSAFTreePicker_method =
+    env->GetMethodID(cls, "launchSAFTreePicker",
+                     "(Ljava/lang/String;)V");
+
+  reportSize_method = env->GetMethodID(cls, "reportSize", "(II)V");
 
   clsBitmap.Find(env, "android/graphics/Bitmap");
   createBitmap_method = env->GetStaticMethodID(
@@ -82,7 +111,21 @@ NativeView::Initialise(JNIEnv *env)
 void
 NativeView::Deinitialise(JNIEnv *env)
 {
+  clsBitmapConfig.Clear(env);
+  clsBitmap.Clear(env);
   cls.Clear(env);
+}
+
+NativeView::NativeView(JNIEnv *env, jobject _obj,
+                       unsigned _width, unsigned _height,
+                       unsigned _xdpi, unsigned _ydpi,
+                       jstring _product) noexcept
+  :obj(env, _obj),
+   width(_width), height(_height)
+{
+  Java::String::CopyTo(env, _product, product, sizeof(product));
+
+  Display::ProvideDPI(_xdpi, _ydpi);
 }
 
 static void
@@ -96,14 +139,16 @@ ConvertABGRToARGB(UncompressedImage &image)
   }
 }
 
-jobject NativeView::loadFileTiff(Path path)
+Java::LocalObject
+NativeView::LoadFileTiff(JNIEnv *env, Path path)
 {
   UncompressedImage image = LoadTiff(path);
 
   // create a Bitmap.Config enum
   Java::String config_name(env, "ARGB_8888");
-  jobject bitmap_config = env->CallStaticObjectMethod(
-    clsBitmapConfig, bitmapConfigValueOf_method, config_name.Get());
+  Java::LocalObject bitmap_config{env,
+    env->CallStaticObjectMethod(clsBitmapConfig, bitmapConfigValueOf_method,
+                                config_name.Get())};
 
   // convert ABGR to ARGB
   // TODO: I am not sure if this conversion depends on endianess. So
@@ -112,22 +157,61 @@ jobject NativeView::loadFileTiff(Path path)
 
   // create int array
   unsigned size = image.GetWidth() * image.GetHeight();
-  jintArray intArray = env->NewIntArray(size);
+  Java::LocalRef<jintArray> intArray{env, env->NewIntArray(size)};
   env->SetIntArrayRegion(intArray, 0, size, static_cast<const jint*>(image.GetData()));
 
   // call Bitmap.createBitmap()
-  jobject bitmap = env->CallStaticObjectMethod(
-    clsBitmap, createBitmap_method,
-    intArray, image.GetWidth(), image.GetHeight(),
-    bitmap_config);
-
-  env->DeleteLocalRef(intArray);
-  env->DeleteLocalRef(bitmap_config);
-  return bitmap;
+  return {env,
+    env->CallStaticObjectMethod(clsBitmap, createBitmap_method,
+                                intArray.Get(),
+                                image.GetWidth(), image.GetHeight(),
+                                bitmap_config.Get())};
 }
 
-jobject NativeView::loadFileBitmap(Path path)
+Java::LocalObject
+NativeView::LoadFileBitmap(JNIEnv *env, Path path)
 {
   Java::String path2(env, path.c_str());
-  return env->CallObjectMethod(obj, loadFileBitmap_method, path2.Get());
+  return {env, env->CallObjectMethod(obj, loadFileBitmap_method, path2.Get())};
+}
+
+void
+NativeView::ShareText(JNIEnv *env, const char *text) noexcept
+{
+  env->CallVoidMethod(obj, shareText_method,
+                      Java::String{env, text}.Get());
+}
+
+bool
+NativeView::OpenURL(JNIEnv *env, const char *url) noexcept
+{
+  return env->CallBooleanMethod(obj, openURL_method,
+                                Java::String{env, url}.Get());
+}
+
+bool
+NativeView::OpenWifiSettings(JNIEnv *env) noexcept
+{
+  return env->CallBooleanMethod(obj, openWifiSettings_method);
+}
+
+bool
+NativeView::GetWifiIpAddress(JNIEnv *env, char *buffer,
+                             size_t max_size) const noexcept
+{
+  const auto string = (jstring)env->CallObjectMethod(obj, getWifiIpAddress_method);
+  if (string == nullptr)
+    return false;
+
+  const bool success = Java::String::CopyTo(env, string, buffer, max_size) != nullptr;
+  env->DeleteLocalRef(string);
+  return success;
+}
+
+void
+NativeView::LaunchSAFTreePicker(JNIEnv *env,
+                                const char *volume_uuid) const noexcept
+{
+  env->CallVoidMethod(obj, launchSAFTreePicker_method,
+                      Java::String{env, volume_uuid}.Get());
 }

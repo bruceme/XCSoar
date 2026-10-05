@@ -1,70 +1,39 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_LOG_FILE_HPP
-#define XCSOAR_LOG_FILE_HPP
-
-#include "Compiler.h"
-
-#ifdef _UNICODE
-#include <tchar.h>
+#include "LogFileDecl.hpp"
+#include <fmt/core.h>
+#if FMT_VERSION >= 80000 && FMT_VERSION < 90000
+#include <fmt/format.h>
 #endif
 
-namespace std {
-  class exception;
-}
-
-/**
- * Write a formatted line to the log file.
- *
- * @param fmt the format string, which must not contain newline or
- * carriage return characters
- */
-gcc_printf(1, 2)
 void
-LogFormat(const char *fmt, ...);
+LogVFmt(fmt::string_view format_str, fmt::format_args args) noexcept;
 
-#ifdef _UNICODE
+template<typename S, typename... Args>
 void
-LogFormat(const TCHAR *fmt, ...);
+LogFmt(const S &format_str, Args&&... args) noexcept
+{
+#if FMT_VERSION >= 90000
+	return LogVFmt(format_str,
+		       fmt::make_format_args(args...));
+#else
+	return LogVFmt(fmt::to_string_view(format_str),
+		       fmt::make_args_checked<Args...>(format_str,
+						       args...));
 #endif
+}
 
 #if !defined(NDEBUG)
 
-#define LogDebug(...) LogFormat(__VA_ARGS__)
+#define LogDebug(...) LogFmt(__VA_ARGS__)
 
 #else /* NDEBUG */
 
 /* not using an empty inline function here because we don't want to
    evaluate the parameters */
-#define LogDebug(...)
+#define LogDebug(...) do {} while (false)
 
 #endif /* NDEBUG */
-
-void
-LogError(const std::exception &exception);
-
-void
-LogError(const char *msg, const std::exception &exception);
-
-#endif

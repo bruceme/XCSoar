@@ -1,54 +1,53 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "CalculationThread.hpp"
 #include "Computer/GlideComputer.hpp"
 #include "Protection.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
-#include "Components.hpp"
+#include "Asset.hpp"
 #include "Hardware/CPU.hpp"
+#include "LogFile.hpp"
 
 /**
  * Constructor of the CalculationThread class
  * @param _glide_computer The GlideComputer used for the CalculationThread
  */
-CalculationThread::CalculationThread(GlideComputer &_glide_computer)
-  :WorkerThread("CalcThread", 450, 100, 50),
+CalculationThread::CalculationThread(DeviceBlackboard &_device_blackboard,
+                                     GlideComputer &_glide_computer) noexcept
+  :WorkerThread("CalcThread",
+#ifdef KOBO
+                /* throttle more on the Kobo, because the EPaper
+                   screen cannot be updated that often */
+                std::chrono::milliseconds{900},
+#else
+                std::chrono::milliseconds{450},
+#endif
+                std::chrono::milliseconds{100},
+                std::chrono::milliseconds{50}),
    force(false),
+   device_blackboard(_device_blackboard),
    glide_computer(_glide_computer) {
 }
 
 void
-CalculationThread::SetComputerSettings(const ComputerSettings &new_value)
+CalculationThread::SetComputerSettings(const ComputerSettings &new_value) noexcept
 {
-  ScopeLock protect(mutex);
+  const std::lock_guard lock{mutex};
   settings_computer = new_value;
 }
 
 void
-CalculationThread::SetScreenDistanceMeters(double new_value)
+CalculationThread::SetPolarSettings(const PolarSettings &new_value) noexcept
 {
-  ScopeLock protect(mutex);
+  const std::lock_guard lock{mutex};
+  settings_computer.polar = new_value;
+}
+
+void
+CalculationThread::SetScreenDistanceMeters(double new_value) noexcept
+{
+  const std::lock_guard lock{mutex};
   screen_distance_meters = new_value;
 }
 
@@ -56,7 +55,7 @@ CalculationThread::SetScreenDistanceMeters(double new_value)
  * Main loop of the CalculationThread
  */
 void
-CalculationThread::Tick()
+CalculationThread::Tick() noexcept
 {
 #ifdef HAVE_CPU_FREQUENCY
   const ScopeLockCPU cpu;
@@ -66,17 +65,18 @@ CalculationThread::Tick()
 
   // update and transfer master info to glide computer
   {
-    ScopeLock protect(device_blackboard->mutex);
+    const std::lock_guard lock{device_blackboard.mutex};
 
-    gps_updated = device_blackboard->Basic().location_available.Modified(glide_computer.Basic().location_available);
+    gps_updated = device_blackboard.Basic().location_available.Modified(glide_computer.Basic().location_available);
 
     // Copy data from DeviceBlackboard to GlideComputerBlackboard
-    glide_computer.ReadBlackboard(device_blackboard->Basic());
+    glide_computer.ReadBlackboard(device_blackboard.Basic());
+    replay_active = glide_computer.Basic().gps.replay;
   }
 
   bool force;
   {
-    ScopeLock protect(mutex);
+    const std::lock_guard lock{mutex};
     // Copy settings from ComputerSettingsBlackboard to GlideComputerBlackboard
     glide_computer.ReadComputerSettings(settings_computer);
 
@@ -99,8 +99,8 @@ CalculationThread::Tick()
   // should be changed in DoCalculations, so we only need to write
   // that one back (otherwise we may write over new data)
   {
-    ScopeLock protect(device_blackboard->mutex);
-    device_blackboard->ReadBlackboard(glide_computer.Calculated());
+    const std::lock_guard lock{device_blackboard.mutex};
+    device_blackboard.ReadBlackboard(glide_computer.Calculated());
   }
 
   // if (new GPS data)
@@ -115,11 +115,59 @@ CalculationThread::Tick()
 }
 
 void
-CalculationThread::ForceTrigger()
+CalculationThread::ProcessReplayFix() noexcept
 {
-  mutex.Lock();
-  force = true;
-  mutex.Unlock();
+#ifdef HAVE_CPU_FREQUENCY
+  const ScopeLockCPU cpu;
+#endif
+
+  {
+    const std::lock_guard lock{device_blackboard.mutex};
+    glide_computer.ReadBlackboard(device_blackboard.Basic());
+  }
+
+  {
+    const std::lock_guard lock{mutex};
+    glide_computer.ReadComputerSettings(settings_computer);
+  }
+
+  glide_computer.Expire();
+  glide_computer.ProcessGPS(true);
+
+  /* unconditionally, unlike Tick(): ProcessGPS() gates the idle pass
+     on half a second of wall-clock time, which is meaningless here.
+     ProcessIdle is needed to fill the snail trail, the flight statistics
+     and the contest etc. */
+  try {
+    glide_computer.ProcessIdle();
+  } catch (...) {
+    LogError(std::current_exception(), "ProcessIdle");
+  }
+
+  {
+    const std::lock_guard lock{device_blackboard.mutex};
+    device_blackboard.ReadBlackboard(glide_computer.Calculated());
+  }
+}
+
+void
+CalculationThread::ForceTrigger() noexcept
+{
+  {
+    const std::lock_guard lock{mutex};
+    force = true;
+  }
 
   WorkerThread::Trigger();
+}
+
+CalculationThread::Duration
+CalculationThread::GetPeriodMin() const noexcept
+{
+  /* Fast LCD hosts: skip the 450 ms cap so 10x IGC replay still
+     feeds circling wind at ~1 Hz.  Idle stays 100 ms.  E-paper and
+     slow CPUs keep the limit; 1x replay already matches it. */
+  if (replay_active && !HasEPaper() && !IsSlowCPU())
+    return Duration{};
+  return WorkerThread::GetPeriodMin();
 }

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Register.hpp"
 #include "Device/Driver.hpp"
@@ -35,14 +15,18 @@ Copyright_License {
 #include "Device/Driver/NmeaOut.hpp"
 #include "Device/Driver/PosiGraph.hpp"
 #include "Device/Driver/BorgeltB50.hpp"
+#include "Device/Driver/XCVario.hpp"
 #include "Device/Driver/Volkslogger.hpp"
 #include "Device/Driver/EWMicroRecorder.hpp"
 #include "Device/Driver/LX.hpp"
+#include "Device/Driver/LX_Eos.hpp"
 #include "Device/Driver/IMI.hpp"
 #include "Device/Driver/Zander.hpp"
 #include "Device/Driver/FlymasterF1.hpp"
 #include "Device/Driver/XCOM760.hpp"
 #include "Device/Driver/Condor.hpp"
+#include "Device/Driver/Condor3UDP.hpp"
+#include "Device/Driver/Condor3Spectate.hpp"
 #include "Device/Driver/Leonardo.hpp"
 #include "Device/Driver/Flytec.hpp"
 #include "Device/Driver/ILEC.hpp"
@@ -54,14 +38,19 @@ Copyright_License {
 #include "Device/Driver/LevilAHRS_G.hpp"
 #include "Device/Driver/BlueFlyVario.hpp"
 #include "Device/Driver/OpenVario.hpp"
+#include "Device/Driver/Larus.hpp"
 #include "Device/Driver/Vaulter.hpp"
-#include "Device/Driver/ATR833.hpp"
+#include "Device/Driver/ATR833/Register.hpp"
 #include "Device/Driver/XCTracer.hpp"
 #include "Device/Driver/KRT2.hpp"
-#include "Util/Macros.hpp"
-#include "Util/StringAPI.hxx"
+#include "Device/Driver/LX160.hpp"
+#include "Device/Driver/Stratux.hpp"
+#include "Device/Driver/GDL90.hpp"
+#include "Device/Driver/LoEFGREN.hpp"
+#include "util/Macros.hpp"
+#include "util/StringAPI.hxx"
 
-#include <assert.h>
+#include <cassert>
 
 /** nullptr terminated array of available device drivers. */
 static const struct DeviceRegister *const driver_list[] = {
@@ -75,6 +64,7 @@ static const struct DeviceRegister *const driver_list[] = {
   &nmea_out_driver,
   &posigraph_driver,
   &b50_driver,
+  &xcv_driver,
   &volkslogger_driver,
   &ew_microrecorder_driver,
   &lx_driver,
@@ -95,12 +85,21 @@ static const struct DeviceRegister *const driver_list[] = {
   &bluefly_driver,
   &cai_lnav_driver,
   &open_vario_driver,
+  &larus_driver,
   &vaulter_driver,
   &krt2_driver,
   &atr833_driver,
   &xctracer_driver,
   &thermalexpress_driver,
   &acd_driver,
+  &condor3_driver,
+  &condor3_udp_driver,
+  &condor3_spectate_driver,
+  &lx_eos_driver,
+  &stratux_driver,
+  &loe_fgren_driver,
+  &lx160_driver,
+  &gdl90_driver,
   nullptr
 };
 
@@ -113,7 +112,7 @@ GetDriverByIndex(unsigned i)
 }
 
 const struct DeviceRegister *
-FindDriverByName(const TCHAR *name)
+FindDriverByName(const char *name)
 {
   for (auto i = driver_list; *i != nullptr; ++i) {
     const DeviceRegister &driver = **i;
@@ -124,8 +123,8 @@ FindDriverByName(const TCHAR *name)
   return driver_list[0];
 }
 
-const TCHAR *
-FindDriverDisplayName(const TCHAR *name)
+const char *
+FindDriverDisplayName(const char *name)
 {
   assert(name != nullptr);
 

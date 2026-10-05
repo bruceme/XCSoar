@@ -1,46 +1,27 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "NetworkDialog.hpp"
-#include "WifiDialog.hpp"
+#include "Dialogs/Message.hpp"
+#include "Dialogs/WifiDialog.hpp"
 #include "Dialogs/WidgetDialog.hpp"
+#include "Kobo/PlatformWifiBackend.hpp"
 #include "UIGlobals.hpp"
-#include "Event/KeyCode.hpp"
 #include "Language/Language.hpp"
-#include "Form/Form.hpp"
-#include "Form/ActionListener.hpp"
 #include "Widget/RowFormWidget.hpp"
+#include "net/wifi/WifiError.hpp"
 #include "System.hpp"
 
-gcc_pure
-static const TCHAR *
-GetWifiToggleCaption()
+[[gnu::pure]]
+static const char *
+GetWifiToggleCaption() noexcept
 {
-  return IsKoboWifiOn() ? _T("Wifi OFF") : _T("Wifi ON");
+  return IsKoboWifiOn() ? _("WiFi Off") : _("WiFi On");
 }
 
 class NetworkWidget final
-  : public RowFormWidget, ActionListener {
+  : public RowFormWidget {
+
   enum Buttons {
     TOGGLE_WIFI,
     WIFI,
@@ -48,88 +29,76 @@ class NetworkWidget final
     FTP,
   };
 
-  Button *toggle_wifi_button, *wifi_button;
+  Button *toggle_wifi_button{nullptr};
 
 public:
   NetworkWidget(const DialogLook &look):RowFormWidget(look) {}
 
-  void UpdateButtons();
+  void UpdateButtons() noexcept;
 
   /* virtual methods from class Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override;
 
 private:
-  void ToggleWifi();
-
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override;
+  void ToggleWifi() noexcept;
 };
 
 void
-NetworkWidget::UpdateButtons()
+NetworkWidget::UpdateButtons() noexcept
 {
-  toggle_wifi_button->SetCaption(GetWifiToggleCaption());
-  wifi_button->SetEnabled(IsKoboWifiOn());
+  if (toggle_wifi_button != nullptr)
+    toggle_wifi_button->SetCaption(GetWifiToggleCaption());
 }
 
 void
-NetworkWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+NetworkWidget::Prepare([[maybe_unused]] ContainerWindow &parent, [[maybe_unused]] const PixelRect &rc) noexcept
 {
-  toggle_wifi_button = AddButton(GetWifiToggleCaption(),
-                                 *this, TOGGLE_WIFI);
-
-  wifi_button = AddButton(_("Wifi"), *this, WIFI);
-
-  AddButton(_T("Telnet server"), *this, TELNET);
-
-  AddButton(_T("Ftp server"), *this, FTP);
-
-  UpdateButtons();
-}
-
-void
-NetworkWidget::ToggleWifi()
-{
-  if (!IsKoboWifiOn()) {
-    KoboWifiOn();
-  } else {
-    KoboWifiOff();
-  }
-
-  UpdateButtons();
-}
-
-void
-NetworkWidget::OnAction(int id)
-{
-  switch (id) {
-  case TOGGLE_WIFI:
+  toggle_wifi_button = AddButton(GetWifiToggleCaption(), [this]() {
     ToggleWifi();
-    break;
+  });
 
-  case WIFI:
-    ShowWifiDialog();
-    break;
+  AddButton(_("WiFi"), []() {
+    try {
+      auto backend = CreatePlatformWifiBackend();
+      if (backend == nullptr) {
+        ShowMessageBox(_("WiFi service is not available."), _("WiFi"), MB_OK);
+        return;
+      }
 
-  case TELNET:
-    KoboRunTelnetd();
-    break;
+      ShowWifiDialog(std::move(backend));
+    } catch (...) {
+      const auto message = WifiError::Format(std::current_exception());
+      ShowMessageBox(message.c_str(), _("WiFi"), MB_OK);
+    }
+  });
 
-  case FTP:
-    KoboRunFtpd();
-    break;
-  }
+  AddButton("Telnet server", [](){ KoboRunTelnetd(); });
+
+  AddButton("Ftp server", [](){ KoboRunFtpd(); });
+
+  UpdateButtons();
+}
+
+void
+NetworkWidget::ToggleWifi() noexcept
+{
+  if (!IsKoboWifiOn())
+    KoboWifiOn();
+  else
+    KoboWifiOff();
+
+  UpdateButtons();
 }
 
 void
 ShowNetworkDialog()
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
-  NetworkWidget widget(look);
-  WidgetDialog dialog(look);
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Network"), &widget);
+  TWidgetDialog<NetworkWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           look, _("Network"));
   dialog.AddButton(_("Close"), mrOK);
+  dialog.SetWidget(look);
   dialog.ShowModal();
-  dialog.StealWidget();
 }

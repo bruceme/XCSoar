@@ -1,30 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TWO_TEXT_ROWS_RENDERER_HPP
-#define XCSOAR_TWO_TEXT_ROWS_RENDERER_HPP
-
-#include <tchar.h>
+#pragma once
 
 struct PixelRect;
 class Font;
@@ -38,53 +15,68 @@ class TwoTextRowsRenderer {
 
   int x, first_y, second_y;
 
+  /** Right edge of the last DrawFirstRow() text, or 0 if not yet drawn. */
+  mutable int first_row_right_edge = 0;
+
+  /** Right edge of the last DrawSecondRow() text, or 0 if not yet drawn. */
+  mutable int second_row_right_edge = 0;
+
+  /**
+   * Top of the row the edges above were measured in.  Cleared when a
+   * draw method is called for a different row so right-before-left
+   * callers are not affected by the previous item.
+   */
+  mutable int edge_row_top = 0x7fffffff;
+
+  void PrepareRow(const PixelRect &rc) const noexcept;
+
 public:
   /**
    * @return the row height (including top and bottom padding)
    */
-  unsigned CalculateLayout(const Font &_first_font, const Font &_second_font);
+  unsigned CalculateLayout(const Font &_first_font,
+                           const Font &_second_font) noexcept;
 
-  const Font &GetFirstFont() const {
+  const Font &GetFirstFont() const noexcept {
     return *first_font;
   }
 
-  const Font &GetSecondFont() const {
+  const Font &GetSecondFont() const noexcept {
     return *second_font;
   }
 
-  int GetX() const {
+  int GetX() const noexcept {
     return x;
   }
 
-  int GetFirstY() const {
+  int GetFirstY() const noexcept {
     return first_y;
   }
 
-  int GetSecondY() const {
+  int GetSecondY() const noexcept {
     return second_y;
   }
 
   void DrawFirstRow(Canvas &canvas, const PixelRect &rc,
-                    const TCHAR *text) const;
+                    const char *text) const noexcept;
 
   void DrawSecondRow(Canvas &canvas, const PixelRect &rc,
-                     const TCHAR *text) const;
+                     const char *text) const noexcept;
 
   /**
    * Draws a right-aligned column in the first row (but with the
    * second font which is usually smaller) and returns the new "right"
-   * coordinate.
+   * coordinate.  Skips drawing if it would overlap text previously
+   * drawn by DrawFirstRow() in the same row.
    */
   int DrawRightFirstRow(Canvas &canvas, const PixelRect &rc,
-                        const TCHAR *text) const;
+                        const char *text) const noexcept;
 
   /**
    * Draws a right-aligned column in the second row and returns the
-   * new "right" coordinate.
+   * new "right" coordinate.  Skips drawing if it would overlap text
+   * previously drawn by DrawSecondRow() in the same row.
    */
   int DrawRightSecondRow(Canvas &canvas, const PixelRect &rc,
-                         const TCHAR *text) const;
-
+                         const char *text) const noexcept;
 };
-
-#endif

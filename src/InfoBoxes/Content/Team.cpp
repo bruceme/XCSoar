@@ -1,64 +1,47 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxes/Content/Team.hpp"
-#include "InfoBoxes/Panel/Panel.hpp"
 #include "InfoBoxes/Data.hpp"
 #include "Interface.hpp"
 #include "TeamActions.hpp"
 #include "Dialogs/Traffic/TrafficDialogs.hpp"
-#include "Widget/CallbackWidget.hpp"
 #include "Language/Language.hpp"
-#include "Util/StringCompare.hxx"
+#include "util/StringCompare.hxx"
 
-#include <tchar.h>
 #include <stdio.h>
 
-static void
-ShowTeamCodeDialog()
+
+bool
+InfoBoxContentTeamCode::HandleClick() noexcept
 {
   dlgTeamCodeShowModal();
+  return true;
 }
 
-static Widget *
-LoadTeamCodeDialog(unsigned id)
+bool
+InfoBoxContentTeamBearing::HandleClick() noexcept
 {
-  return new CallbackWidget(ShowTeamCodeDialog);
+  dlgTeamCodeShowModal();
+  return true;
 }
 
-static constexpr InfoBoxPanel team_code_infobox_panels[] = {
-  { N_("Team Code"), LoadTeamCodeDialog },
-  { nullptr, nullptr }
-};
-
-const InfoBoxPanel *
-InfoBoxContentTeamCode::GetDialogContent()
+bool
+InfoBoxContentTeamBearingDiff::HandleClick() noexcept
 {
-  return team_code_infobox_panels;
+  dlgTeamCodeShowModal();
+  return true;
+}
+
+bool
+InfoBoxContentTeamDistance::HandleClick() noexcept
+{
+  dlgTeamCodeShowModal();
+  return true;
 }
 
 void
-InfoBoxContentTeamCode::Update(InfoBoxData &data)
+InfoBoxContentTeamCode::Update(InfoBoxData &data) noexcept
 {
   const TeamCodeSettings &settings =
     CommonInterface::GetComputerSettings().team_code;
@@ -85,7 +68,7 @@ InfoBoxContentTeamCode::Update(InfoBoxData &data)
 }
 
 bool
-InfoBoxContentTeamCode::HandleKey(const InfoBoxKeyCodes keycode)
+InfoBoxContentTeamCode::HandleKey(const InfoBoxKeyCodes keycode) noexcept
 {
   TeamCodeSettings &settings =
     CommonInterface::SetComputerSettings().team_code;
@@ -115,7 +98,7 @@ InfoBoxContentTeamCode::HandleKey(const InfoBoxKeyCodes keycode)
 }
 
 void
-UpdateInfoBoxTeamBearing(InfoBoxData &data)
+UpdateInfoBoxTeamBearing(InfoBoxData &data) noexcept
 {
   const TeamCodeSettings &settings =
     CommonInterface::GetComputerSettings().team_code;
@@ -135,7 +118,7 @@ UpdateInfoBoxTeamBearing(InfoBoxData &data)
   else if (!settings.team_flarm_callsign.empty())
     data.SetComment(settings.team_flarm_callsign.c_str());
   else
-    data.SetComment(_T("???"));
+    data.SetComment("???");
 
   if (flarm.FindTraffic(settings.team_flarm_id) != NULL)
     data.SetCommentColor(2);
@@ -144,7 +127,13 @@ UpdateInfoBoxTeamBearing(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxTeamBearingDiff(InfoBoxData &data)
+InfoBoxContentTeamBearing::Update(InfoBoxData &data) noexcept
+{
+  UpdateInfoBoxTeamBearing(data);
+}
+
+void
+UpdateInfoBoxTeamBearingDiff(InfoBoxData &data) noexcept
 {
   const TeamCodeSettings &settings =
     CommonInterface::GetComputerSettings().team_code;
@@ -165,7 +154,7 @@ UpdateInfoBoxTeamBearingDiff(InfoBoxData &data)
   else if (!StringIsEmpty(settings.team_flarm_callsign))
     data.SetComment(settings.team_flarm_callsign);
   else
-    data.SetComment(_T("???"));
+    data.SetComment("???");
 
   if (flarm.FindTraffic(settings.team_flarm_id) != NULL)
     data.SetCommentColor(2);
@@ -174,7 +163,13 @@ UpdateInfoBoxTeamBearingDiff(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxTeamDistance(InfoBoxData &data)
+InfoBoxContentTeamBearingDiff::Update(InfoBoxData &data) noexcept
+{
+  UpdateInfoBoxTeamBearingDiff(data);
+}
+
+void
+UpdateInfoBoxTeamDistance(InfoBoxData &data) noexcept
 {
   const TeamCodeSettings &settings =
     CommonInterface::GetComputerSettings().team_code;
@@ -192,7 +187,13 @@ UpdateInfoBoxTeamDistance(InfoBoxData &data)
   else if (!StringIsEmpty(settings.team_flarm_callsign))
     data.SetComment(settings.team_flarm_callsign);
   else
-    data.SetComment(_T("???"));
+    data.SetComment("???");
 
   data.SetCommentColor(teamcode_info.flarm_teammate_code_current ? 2 : 1);
+}
+
+void
+InfoBoxContentTeamDistance::Update(InfoBoxData &data) noexcept
+{
+  UpdateInfoBoxTeamDistance(data);
 }

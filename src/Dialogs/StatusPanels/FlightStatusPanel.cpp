@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlightStatusPanel.hpp"
 #include "Interface.hpp"
@@ -28,6 +8,9 @@ Copyright_License {
 #include "Formatter/UserGeoPointFormatter.hpp"
 #include "Engine/Waypoint/Waypoint.hpp"
 #include "Language/Language.hpp"
+#include "system/OpenLink.hpp"
+
+#include <fmt/format.h>
 
 enum Controls {
   Location,
@@ -36,10 +19,11 @@ enum Controls {
   Near,
   Bearing,
   Distance,
+  ShareButton,
 };
 
 void
-FlightStatusPanel::Refresh()
+FlightStatusPanel::Refresh() noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
   const DerivedInfo &calculated = CommonInterface::Calculated();
@@ -48,6 +32,7 @@ FlightStatusPanel::Refresh()
     SetText(Location, FormatGeoPoint(basic.location));
   else
     ClearText(Location);
+  SetRowEnabled(ShareButton, basic.location_available);
 
   if (basic.gps_altitude_available)
     SetText(Altitude, FormatUserAltitude(basic.gps_altitude));
@@ -66,14 +51,15 @@ FlightStatusPanel::Refresh()
 
     SetText(Distance, FormatUserDistanceSmart(vec.distance));
   } else {
-    SetText(Near, _T("-"));
-    SetText(Bearing, _T("-"));
-    SetText(Distance, _T("-"));
+    SetText(Near, "-");
+    SetText(Bearing, "-");
+    SetText(Distance, "-");
   }
 }
 
 void
-FlightStatusPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+FlightStatusPanel::Prepare([[maybe_unused]] ContainerWindow &parent,
+                           [[maybe_unused]] const PixelRect &rc) noexcept
 {
   AddReadOnly(_("Location"));
   AddReadOnly(_("Altitude"));
@@ -81,4 +67,16 @@ FlightStatusPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   AddReadOnly(_("Near"));
   AddReadOnly(_("Bearing"));
   AddReadOnly(_("Distance"));
+
+  AddButton(_("Share"), [](){
+    const auto &basic = CommonInterface::Basic();
+    if (basic.location_available) {
+      const auto uri = fmt::format("geo:{:.6f},{:.6f}",
+                                   basic.location.latitude.Degrees(),
+                                   basic.location.longitude.Degrees());
+      OpenLink(uri.c_str());
+    }
+  });
+
+  SetRowEnabled(ShareButton, false);
 }

@@ -1,34 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ROW_TWO_WIDGETS_HPP
-#define XCSOAR_ROW_TWO_WIDGETS_HPP
+#pragma once
 
 #include "Widget.hpp"
-#include "Screen/Point.hpp"
+#include "ui/dim/Rect.hpp"
 
+#include <memory>
 #include <utility>
-#include <assert.h>
 
 /**
  * A #Widget that contains two other widgets, the second one following
@@ -41,79 +20,68 @@ Copyright_License {
 class TwoWidgets : public NullWidget {
   const bool vertical;
 
-  Widget *first, *second;
+  const std::unique_ptr<Widget> first, second;
 
   PixelRect rc;
 
 public:
-  TwoWidgets(bool _vertical=true):vertical(_vertical) {}
-
-  TwoWidgets(Widget *_first, Widget *_second, bool _vertical=true)
-    :vertical(_vertical), first(_first), second(_second) {
-    assert(first != nullptr);
-    assert(second != nullptr);
-  }
-
-  virtual ~TwoWidgets();
+  TwoWidgets(std::unique_ptr<Widget> &&_first, std::unique_ptr<Widget> &&_second, bool _vertical=true) noexcept
+    :vertical(_vertical),
+     first(std::move(_first)),
+     second(std::move(_second)) {}
 
   /**
    * Update the layout after one of the widgets has indicated a size
    * change.  This may only be called between Prepare() and
    * Unprepare().
    */
-  void UpdateLayout();
+  void UpdateLayout() noexcept;
+
+  Widget &GetFirst() noexcept {
+    return *first;
+  }
+
+  const Widget &GetFirst() const noexcept {
+    return *first;
+  }
+
+  Widget &GetSecond() noexcept {
+    return *second;
+  }
+
+  const Widget &GetSecond() const noexcept {
+    return *second;
+  }
 
 protected:
+  [[gnu::pure]]
+  int CalculateSplit(const PixelRect &rc) const noexcept;
+
+  [[gnu::pure]]
+  std::pair<PixelRect,PixelRect> CalculateLayout(const PixelRect &rc) const noexcept;
+
   /**
-   * Call this method if the default constructor has been used.  It
-   * must be called before Initialise().
+   * Apply #rc to both children.  In vertical mode, run a second pass
+   * after the bottom pane has its final width so widgets whose height
+   * depends on width (wrapped help text) measure correctly.
    */
-  void Set(Widget *_first, Widget *_second) {
-    first = _first;
-    second = _second;
-
-    assert(first != nullptr);
-    assert(second != nullptr);
-  }
-
-  Widget &GetFirst() {
-    return *first;
-  }
-
-  const Widget &GetFirst() const {
-    return *first;
-  }
-
-  Widget &GetSecond() {
-    return *second;
-  }
-
-  const Widget &GetSecond() const {
-    return *second;
-  }
-
-  gcc_pure
-  int CalculateSplit(const PixelRect &rc) const;
-
-  gcc_pure
-  std::pair<PixelRect,PixelRect> CalculateLayout(const PixelRect &rc) const;
+  void ApplyLayout() noexcept;
 
 public:
   /* virtual methods from Widget */
-  PixelSize GetMinimumSize() const override;
-  PixelSize GetMaximumSize() const override;
-  void Initialise(ContainerWindow &parent, const PixelRect &rc) override;
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  void Unprepare() override;
-  bool Save(bool &changed) override;
-  bool Click() override;
-  void ReClick() override;
-  void Show(const PixelRect &rc) override;
-  bool Leave() override;
-  void Hide() override;
-  void Move(const PixelRect &rc) override;
-  bool SetFocus() override;
-  bool KeyPress(unsigned key_code) override;
+  PixelSize GetMinimumSize() const noexcept override;
+  PixelSize GetMaximumSize() const noexcept override;
+  void Initialise(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Unprepare() noexcept override;
+  bool Save(bool &changed) noexcept override;
+  bool Click() noexcept override;
+  void ReClick() noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
+  bool Leave() noexcept override;
+  void Hide() noexcept override;
+  void Move(const PixelRect &rc) noexcept override;
+  bool SetFocus() noexcept override;
+  bool HasFocus() const noexcept override;
+  bool KeyPress(unsigned key_code) noexcept override;
 };
-
-#endif

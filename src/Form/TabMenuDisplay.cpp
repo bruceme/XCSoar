@@ -1,51 +1,30 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TabMenuDisplay.hpp"
 #include "TabMenuData.hpp"
 #include "Widget/PagerWidget.hpp"
+#include "Widget/VScrollWidget.hpp"
 #include "Screen/Layout.hpp"
-#include "Event/KeyCode.hpp"
-#include "Screen/Canvas.hpp"
+#include "Form/Button.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Look/DialogLook.hpp"
 #include "Language/Language.hpp"
-#include "Util/StringFormat.hpp"
+#include "util/StringFormat.hpp"
+#include "Asset.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 TabMenuDisplay::TabMenuDisplay(PagerWidget &_pager,
-                               const DialogLook &_look)
-  :pager(_pager),
-   look(_look),
-   dragging(false),
-   drag_off_button(false),
-   down_index(MenuTabIndex::None()),
-   cursor(0)
+                               const DialogLook &_look) noexcept
+  :pager(_pager), look(_look)
 {
 }
 
 void
-TabMenuDisplay::InitMenu(const TabMenuGroup groups[], unsigned n_groups)
+TabMenuDisplay::InitMenu(const TabMenuGroup groups[],
+                         unsigned n_groups) noexcept
 {
   assert(groups != nullptr);
   assert(n_groups > 0);
@@ -63,22 +42,23 @@ TabMenuDisplay::InitMenu(const TabMenuGroup groups[], unsigned n_groups)
       page_button.main_menu_index = i;
       page_button.caption = gettext(p->menu_caption);
 
-      Widget *w = p->Load();
-      assert(w != nullptr);
-      pager.Add(w);
+      /* Wrap panel in VScrollWidget for automatic scrolling when needed */
+      auto panel = p->Load();
+      auto scroll_panel = std::make_unique<VScrollWidget>(std::move(panel), look);
+      pager.Add(std::move(scroll_panel));
     }
 
     mb.last_page_index = buttons.size() - 1;
   }
 }
 
-const TCHAR *
-TabMenuDisplay::GetCaption(TCHAR buffer[], size_t size) const
+const char *
+TabMenuDisplay::GetCaption(char buffer[], size_t size) const noexcept
 {
   const unsigned page = pager.GetCurrentIndex();
   if (page >= PAGE_OFFSET) {
     const unsigned i = page - PAGE_OFFSET;
-    StringFormat(buffer, size, _T("%s > %s"),
+    StringFormat(buffer, size, "%s > %s",
                  gettext(GetPageParentCaption(i)),
                  buttons[i].caption);
     return buffer;
@@ -87,7 +67,7 @@ TabMenuDisplay::GetCaption(TCHAR buffer[], size_t size) const
 }
 
 int
-TabMenuDisplay::GetPageNum(MenuTabIndex i) const
+TabMenuDisplay::GetPageNum(MenuTabIndex i) const noexcept
 {
   assert(i.IsSub());
 
@@ -99,22 +79,34 @@ TabMenuDisplay::GetPageNum(MenuTabIndex i) const
 }
 
 static unsigned
-GetTabLineHeight()
+GetTabLineHeight() noexcept
 {
   return Layout::Scale(1);
 }
 
 void
-TabMenuDisplay::UpdateLayout()
+TabMenuDisplay::UpdateLayout() noexcept
 {
-  const unsigned window_width = GetWidth();
-  const unsigned window_height = GetHeight();
+  const auto window_size = GetSize();
   const unsigned border_width = GetTabLineHeight();
-  const unsigned menu_button_height =
-    std::min(Layout::GetMaximumControlHeight(), window_height / 7u);
-  const unsigned menu_button_width = (window_width - 2 * border_width) / 2;
+  const unsigned n_main_menu_items = std::max(GetNumMainMenuItems(), 1u);
+
+  unsigned n_vertical_items = n_main_menu_items;
+  for (unsigned i = 0; i < GetNumMainMenuItems(); ++i)
+    n_vertical_items = std::max(n_vertical_items,
+                                GetMainMenuButton(i).NumSubMenus());
 
   const unsigned offset = Layout::Scale(2);
+  const unsigned vertical_spacing =
+    (n_vertical_items + 1) * border_width + 2 * offset;
+  const unsigned available_height = window_size.height > vertical_spacing
+    ? window_size.height - vertical_spacing
+    : window_size.height;
+  const unsigned menu_button_height =
+    std::min(Layout::GetMaximumControlHeight(),
+             available_height / n_vertical_items);
+  const unsigned menu_button_width = (window_size.width - 2 * border_width) / 2;
+
   const unsigned item_height = menu_button_height + border_width;
 
   for (unsigned main_i = 0, main_y = border_width;
@@ -132,8 +124,8 @@ TabMenuDisplay::UpdateLayout()
       item_height * main.NumSubMenus() + border_width;
 
     unsigned page_y = main.rc.top + offset;
-    if (page_y + group_height > window_height)
-      page_y = window_height - group_height - offset;
+    if (page_y + group_height > window_size.height)
+      page_y = window_size.height - group_height - offset;
 
     for (unsigned page_i = main.first_page_index;
          page_i <= main.last_page_index; ++page_i) {
@@ -152,7 +144,7 @@ TabMenuDisplay::UpdateLayout()
 }
 
 inline const PixelRect &
-TabMenuDisplay::GetButtonPosition(MenuTabIndex i) const
+TabMenuDisplay::GetButtonPosition(MenuTabIndex i) const noexcept
 {
   assert(!i.IsNone());
 
@@ -162,7 +154,8 @@ TabMenuDisplay::GetButtonPosition(MenuTabIndex i) const
 }
 
 TabMenuDisplay::MenuTabIndex
-TabMenuDisplay::IsPointOverButton(PixelPoint Pos, unsigned mainIndex) const
+TabMenuDisplay::IsPointOverButton(PixelPoint Pos,
+                                  unsigned mainIndex) const noexcept
 {
   // scan main menu buttons
   for (unsigned i = 0; i < GetNumMainMenuItems(); i++)
@@ -184,7 +177,7 @@ TabMenuDisplay::IsPointOverButton(PixelPoint Pos, unsigned mainIndex) const
 }
 
 void
-TabMenuDisplay::OnPageFlipped()
+TabMenuDisplay::OnPageFlipped() noexcept
 {
   const unsigned i = pager.GetCurrentIndex();
   if (i >= PAGE_OFFSET)
@@ -192,7 +185,7 @@ TabMenuDisplay::OnPageFlipped()
 }
 
 void
-TabMenuDisplay::SetCursor(unsigned i)
+TabMenuDisplay::SetCursor(unsigned i) noexcept
 {
   if (i == cursor)
     return;
@@ -210,7 +203,7 @@ TabMenuDisplay::SetCursor(unsigned i)
 }
 
 inline bool
-TabMenuDisplay::HighlightNext()
+TabMenuDisplay::HighlightNext() noexcept
 {
   const unsigned i = cursor + 1;
   if (i >= GetNumPages())
@@ -221,7 +214,7 @@ TabMenuDisplay::HighlightNext()
 }
 
 inline bool
-TabMenuDisplay::HighlightPrevious()
+TabMenuDisplay::HighlightPrevious() noexcept
 {
   if (cursor == 0)
     return false;
@@ -234,29 +227,37 @@ TabMenuDisplay::HighlightPrevious()
 }
 
 void
-TabMenuDisplay::OnResize(PixelSize new_size)
+TabMenuDisplay::OnResize(PixelSize new_size) noexcept
 {
   PaintWindow::OnResize(new_size);
   UpdateLayout();
 }
 
 bool
-TabMenuDisplay::OnKeyCheck(unsigned key_code) const
+TabMenuDisplay::OnKeyCheck(unsigned key_code) const noexcept
 {
- switch (key_code) {
+  switch (key_code) {
+  case KEY_RETURN:
+  case KEY_LEFT:
+  case KEY_RIGHT:
+    return true;
 
- case KEY_RETURN:
- case KEY_LEFT:
- case KEY_RIGHT:
-   return true;
+  case KEY_DOWN:
+    /* Only claim Down while another menu item follows; at the last
+       item, let the dialog move focus to Close / arrows. */
+    return cursor + 1 < GetNumPages();
 
- default:
-   return false;
- }
+  case KEY_UP:
+    /* Same for Up at the first item. */
+    return cursor > 0;
+
+  default:
+    return false;
+  }
 }
 
 bool
-TabMenuDisplay::OnKeyDown(unsigned key_code)
+TabMenuDisplay::OnKeyDown(unsigned key_code) noexcept
 {
   switch (key_code) {
   case KEY_RETURN:
@@ -264,10 +265,12 @@ TabMenuDisplay::OnKeyDown(unsigned key_code)
     return true;
 
   case KEY_RIGHT:
+  case KEY_DOWN:
     HighlightNext();
     return true;
 
   case KEY_LEFT:
+  case KEY_UP:
     HighlightPrevious();
     return true;
 
@@ -277,7 +280,7 @@ TabMenuDisplay::OnKeyDown(unsigned key_code)
 }
 
 bool
-TabMenuDisplay::OnMouseDown(PixelPoint Pos)
+TabMenuDisplay::OnMouseDown(PixelPoint Pos) noexcept
 {
   DragEnd();
 
@@ -287,6 +290,10 @@ TabMenuDisplay::OnMouseDown(PixelPoint Pos)
   down_index = IsPointOverButton(Pos, GetPageMainIndex(cursor));
 
   if (!down_index.IsNone()) {
+#ifdef HAVE_VIBRATOR
+    PlayHapticFeedback(HapticFeedbackType::PRESS);
+#endif
+
     dragging = true;
     SetCapture();
 
@@ -297,7 +304,7 @@ TabMenuDisplay::OnMouseDown(PixelPoint Pos)
 }
 
 bool
-TabMenuDisplay::OnMouseUp(PixelPoint Pos)
+TabMenuDisplay::OnMouseUp(PixelPoint Pos) noexcept
 {
   if (dragging) {
     DragEnd();
@@ -329,7 +336,8 @@ TabMenuDisplay::OnMouseUp(PixelPoint Pos)
 }
 
 bool
-TabMenuDisplay::OnMouseMove(PixelPoint p, unsigned keys)
+TabMenuDisplay::OnMouseMove(PixelPoint p,
+                            [[maybe_unused]] unsigned keys) noexcept
 {
   if (down_index.IsNone())
     return false;
@@ -344,17 +352,19 @@ TabMenuDisplay::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 inline void
-TabMenuDisplay::PaintMainMenuBorder(Canvas &canvas) const
+TabMenuDisplay::PaintMainMenuBorder(Canvas &canvas) const noexcept
 {
   PixelRect rc = GetMainMenuButtonSize(0);
   rc.bottom = GetMainMenuButtonSize(GetNumMainMenuItems() - 1).bottom;
   rc.Grow(GetTabLineHeight());
 
-  canvas.DrawFilledRectangle(rc, COLOR_BLACK);
+  canvas.DrawFilledRectangle(rc, look.dark_mode
+                             ? DarkColor(look.background_color)
+                             : COLOR_BLACK);
 }
 
 inline void
-TabMenuDisplay::PaintMainMenuItems(Canvas &canvas) const
+TabMenuDisplay::PaintMainMenuItems(Canvas &canvas) const noexcept
 {
   PaintMainMenuBorder(canvas);
 
@@ -377,17 +387,19 @@ TabMenuDisplay::PaintMainMenuItems(Canvas &canvas) const
 
 inline void
 TabMenuDisplay::PaintSubMenuBorder(Canvas &canvas,
-                                   const MainMenuButton &main_button) const
+                                   const MainMenuButton &main_button) const noexcept
 {
   PixelRect rc = GetSubMenuButtonSize(main_button.first_page_index);
   rc.bottom = GetSubMenuButtonSize(main_button.last_page_index).bottom;
   rc.Grow(GetTabLineHeight());
 
-  canvas.DrawFilledRectangle(rc, COLOR_BLACK);
+  canvas.DrawFilledRectangle(rc, look.dark_mode
+                             ? DarkColor(look.background_color)
+                             : COLOR_BLACK);
 }
 
 inline void
-TabMenuDisplay::PaintSubMenuItems(Canvas &canvas) const
+TabMenuDisplay::PaintSubMenuItems(Canvas &canvas) const noexcept
 {
   const MainMenuButton &main_button =
     GetMainMenuButton(GetPageMainIndex(cursor));
@@ -417,30 +429,28 @@ TabMenuDisplay::PaintSubMenuItems(Canvas &canvas) const
 }
 
 void
-TabMenuDisplay::OnPaint(Canvas &canvas)
+TabMenuDisplay::OnPaint(Canvas &canvas) noexcept
 {
-  canvas.Clear(look.background_color);
-
   PaintMainMenuItems(canvas);
   PaintSubMenuItems(canvas);
 }
 
 void
-TabMenuDisplay::OnKillFocus()
+TabMenuDisplay::OnKillFocus() noexcept
 {
   Invalidate();
   PaintWindow::OnKillFocus();
 }
 
 void
-TabMenuDisplay::OnSetFocus()
+TabMenuDisplay::OnSetFocus() noexcept
 {
   Invalidate();
   PaintWindow::OnSetFocus();
 }
 
 void
-TabMenuDisplay::DragEnd()
+TabMenuDisplay::DragEnd() noexcept
 {
   if (dragging) {
     dragging = false;

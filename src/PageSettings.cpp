@@ -1,104 +1,104 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "PageSettings.hpp"
+#include "PageOverlayTitle.hpp"
 #include "InfoBoxes/InfoBoxSettings.hpp"
 #include "Language/Language.hpp"
+#include "util/StringBuilder.hxx"
+#include "util/UTF8.hpp"
 
 #include <algorithm>
+#include <cassert>
 
-void
+const char *
 PageLayout::MakeTitle(const InfoBoxSettings &info_box_settings,
-                      TCHAR *buffer, const bool concise) const
+                      std::span<char> buffer,
+                      const RaspStore *rasp,
+                      const bool concise) const noexcept
 {
-  if (!valid) {
-    _tcscpy(buffer, _T("---"));
-    return;
-  }
+  if (!valid)
+    return "---";
 
   switch (main) {
   case PageLayout::Main::MAP:
+  case PageLayout::Main::MAP_NORTH_UP:
+  case PageLayout::Main::EDL_MAP:
     break;
 
   case PageLayout::Main::FLARM_RADAR:
-    _tcscpy(buffer, _("FLARM radar"));
-    return;
+    return _("FLARM Radar");
 
   case PageLayout::Main::THERMAL_ASSISTANT:
-    _tcscpy(buffer, _("Thermal assistant"));
-    return;
+    return _("Thermal Assistant");
 
   case PageLayout::Main::HORIZON:
-    _tcscpy(buffer, _("Horizon"));
-    return;
+    return _("Horizon");
 
   case PageLayout::Main::MAX:
     gcc_unreachable();
   }
 
-  if (infobox_config.enabled) {
-    _tcscpy(buffer, concise ? _("Info") : _("Map and InfoBoxes"));
+  assert(!buffer.empty());
+  /* Callers often pass an uninitialized StaticString buffer.  Start
+     with an empty C string so Overflow before the first Append does
+     not return stack garbage to CalcTextSize. */
+  buffer.front() = '\0';
 
-    if (!infobox_config.auto_switch &&
-        infobox_config.panel < InfoBoxSettings::MAX_PANELS) {
-      _tcscat(buffer, _T(" "));
-      _tcscat(buffer,
-              gettext(info_box_settings.panels[infobox_config.panel].name));
-    }
-    else {
-      if (concise) {
-        _tcscat(buffer, _T(" "));
-        _tcscat(buffer, _("Auto"));
-      } else {
-        _tcscat(buffer, _T(" ("));
-        _tcscat(buffer, _("Auto"));
-        _tcscat(buffer, _T(")"));
+  BasicStringBuilder<char> builder{buffer};
+
+  try {
+    if (infobox_config.enabled) {
+      builder.Append(concise ? _("Info") : _("Map and InfoBoxes"));
+
+      if (!infobox_config.auto_switch &&
+          infobox_config.panel < InfoBoxSettings::MAX_PANELS) {
+        builder.Append(' ');
+        builder.Append(gettext(info_box_settings.panels[infobox_config.panel].name));
       }
+      else {
+        if (concise) {
+          builder.Append(' ');
+          builder.Append(C_("Status", "Auto"));
+        } else {
+          builder.Append(" (");
+          builder.Append(C_("Status", "Auto"));
+          builder.Append(')');
+        }
+      }
+    } else {
+      if (concise)
+        builder.Append(_("Info Hide"));
+      else
+        builder.Append(_("Map (Full screen)"));
     }
-  } else {
-    if (concise)
-      _tcscpy(buffer, _("Info Hide"));
-    else
-      _tcscpy(buffer, _("Map (Full screen)"));
+
+    AppendOverlayTitle(builder, *this, rasp);
+
+    switch (bottom) {
+    case Bottom::NOTHING:
+    case Bottom::CUSTOM:
+      break;
+
+    case Bottom::CROSS_SECTION:
+      builder.Append(", XS");
+      break;
+
+    case Bottom::WEATHER_CONTROLS:
+      break;
+
+    case Bottom::MAX:
+      gcc_unreachable();
+    }
+  } catch (BasicStringBuilder<char>::Overflow) {
+    CropIncompleteUTF8(buffer.data());
   }
 
-  switch (bottom) {
-  case Bottom::NOTHING:
-  case Bottom::CUSTOM:
-    break;
-
-  case Bottom::CROSS_SECTION:
-    // TODO: better text and translate
-    _tcscat(buffer, _T(", XS"));
-    break;
-
-  case Bottom::MAX:
-    gcc_unreachable();
-  }
+  return buffer.data();
 }
 
 void
-PageSettings::SetDefaults()
+PageSettings::SetDefaults() noexcept
 {
   pages[0] = PageLayout::Default();
   pages[1] = PageLayout::FullScreen();
@@ -107,11 +107,11 @@ PageSettings::SetDefaults()
 
   n_pages = 2;
 
-  distinct_zoom = false;
+  distinct_zoom = true;
 }
 
 void
-PageSettings::Compress()
+PageSettings::Compress() noexcept
 {
   auto last = std::remove_if(pages.begin(), pages.end(),
                              [](const PageLayout &layout) {

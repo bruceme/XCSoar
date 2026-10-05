@@ -1,38 +1,19 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Data.hpp"
 
 void
-InfoBoxData::Clear()
+InfoBoxData::Clear() noexcept
 {
   title.clear();
   SetInvalid();
 }
 
 void
-InfoBoxData::SetInvalid()
+InfoBoxData::SetInvalid() noexcept
 {
+  custom = 0;
   SetAllColors(0);
   SetValueInvalid();
   SetValueUnit(Unit::UNDEFINED);
@@ -40,34 +21,35 @@ InfoBoxData::SetInvalid()
 }
 
 void
-InfoBoxData::SetValueInvalid()
+InfoBoxData::SetValueInvalid() noexcept
 {
-  SetValue(_T("---"));
+  SetValueColor(0);
+  SetValue("---");
   SetValueUnit(Unit::UNDEFINED);
 }
 
 void
-InfoBoxData::SetTitle(const TCHAR *_title)
+InfoBoxData::SetTitle(const char *_title) noexcept
 {
   title = _title;
   title.CropIncompleteUTF8();
 }
 
 void
-InfoBoxData::SetValue(const TCHAR *_value)
+InfoBoxData::SetValue(const char *_value) noexcept
 {
   value = _value;
 }
 
 void
-InfoBoxData::SetComment(const TCHAR *_comment)
+InfoBoxData::SetComment(const char *_comment) noexcept
 {
   comment = _comment;
   comment.CropIncompleteUTF8();
 }
 
 void
-InfoBoxData::SetAllColors(unsigned color)
+InfoBoxData::SetAllColors(unsigned color) noexcept
 {
   SetTitleColor(color);
   SetValueColor(color);
@@ -75,14 +57,14 @@ InfoBoxData::SetAllColors(unsigned color)
 }
 
 bool
-InfoBoxData::CompareTitle(const InfoBoxData &other) const
+InfoBoxData::CompareTitle(const InfoBoxData &other) const noexcept
 {
   return title == other.title &&
     title_color == other.title_color;
 }
 
 bool
-InfoBoxData::CompareValue(const InfoBoxData &other) const
+InfoBoxData::CompareValue(const InfoBoxData &other) const noexcept
 {
   return value == other.value &&
     value_unit == other.value_unit &&
@@ -90,7 +72,7 @@ InfoBoxData::CompareValue(const InfoBoxData &other) const
 }
 
 bool
-InfoBoxData::CompareComment(const InfoBoxData &other) const
+InfoBoxData::CompareComment(const InfoBoxData &other) const noexcept
 {
   return comment == other.comment &&
     comment_color == other.comment_color;

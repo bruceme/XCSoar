@@ -1,28 +1,48 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "AvailableFile.hpp"
+#include "Repository/FileType.hpp"
+#include "net/http/Features.hpp"
+#include "system/Path.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
+#include <string>
+#include <string_view>
+#include <vector>
 
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+struct FileRepository;
 
-#ifndef XCSOAR_REPOSITORY_GLUE_HPP
-#define XCSOAR_REPOSITORY_GLUE_HPP
+struct RepositoryLink {
+  std::string uri;
+  std::string filename;
+};
+
+/**
+ * Get list of user repositories with their local filenames.
+ */
+std::vector<RepositoryLink> GetUserRepositories();
+
+/**
+ * Returns true if the given filename is a user repository file
+ * (i.e. matches the "user_repository_*" pattern).
+ */
+[[gnu::pure]] bool IsUserRepositoryFile(std::string_view name) noexcept;
+
+/**
+ * Delete cached repository files for user repository entries that have
+ * changed position or been removed, comparing @a old_list with @a new_list.
+ * Call this before downloading new user repositories when the URL list changes.
+ */
+void PurgeChangedUserRepositoryFiles(const char *old_list,
+                                     const char *new_list) noexcept;
+
+/**
+ * Load the main repository file and all user repository files into
+ * @a repository.  Files not yet downloaded are silently skipped.
+ */
+void LoadAllRepositories(FileRepository &repository);
 
 /**
  * Download the repository file.
@@ -31,6 +51,87 @@ Copyright_License {
  * believes it is still fresh
  */
 void
-EnqueueRepositoryDownload(bool force=false);
+EnqueueRepositoryDownload(bool force=false, bool main_repo=true, bool user_repo=true);
 
-#endif
+/**
+ * Daily RASP freshness from civil dates.  The local copy is out of
+ * date when its modification date is implausible, older than @p today,
+ * or older than the repository update= date.  A missing file is
+ * handled by the caller.
+ */
+[[nodiscard]] [[gnu::const]]
+constexpr bool
+IsRaspForecastOutOfDate(BrokenDate modified, BrokenDate today,
+                        BrokenDate update_date) noexcept
+{
+  if (!modified.IsPlausible())
+    return true;
+
+  return modified < today || modified < update_date;
+}
+
+#ifdef HAVE_DOWNLOAD_MANAGER
+
+/**
+ * Relative download path for a repository file (for
+ * Net::DownloadManager::Enqueue()).
+ */
+AllocatedPath
+GetFileDownloadRelativePath(const AvailableFile &file) noexcept;
+
+/**
+ * Return true when the local copy of @p file is older than the
+ * repository metadata (same rule as the download manager UI).
+ */
+bool
+IsRemoteFileOutOfDate(const AvailableFile &file) noexcept;
+
+/**
+ * Queue a repository file for download.
+ */
+void
+EnqueueRemoteFileDownload(const AvailableFile &file) noexcept;
+
+/**
+ * Base file name of the configured RASP file, or nullptr.
+ */
+AllocatedPath
+GetConfiguredRaspFileName() noexcept;
+
+const AvailableFile *
+FindConfiguredRaspRemoteFile(const FileRepository &repository) noexcept;
+
+/**
+ * Enqueue a download of the configured RASP file when it is listed in
+ * the repository and the local copy is missing or was not written
+ * today (RASP forecasts are regenerated daily).
+ *
+ * @return true if a download was queued
+ */
+bool
+EnqueueConfiguredRaspUpdate(const FileRepository &repository) noexcept;
+
+/**
+ * Enqueue a download of the configured RASP file when it is listed in
+ * the repository, even when the local copy is up to date.
+ *
+ * @return true if a download was queued
+ */
+bool
+EnqueueConfiguredRaspDownload(const FileRepository &repository) noexcept;
+
+/**
+ * Download the main repository and all user-defined repositories
+ * modally, showing a #ProgressDialog for each one.  Errors are
+ * reported to the user.  Call this after the user changes the
+ * repository URL list in the configuration.
+ */
+void
+DownloadRepositoriesModal(bool main_repo=true, bool user_repo=true);
+
+/**
+ * Whether the download manager can offer repository files for @p type.
+ */
+[[gnu::pure]] bool
+FileTypeSupportsDownload(FileType type) noexcept;
+#endif /* HAVE_DOWNLOAD_MANAGER */

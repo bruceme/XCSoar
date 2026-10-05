@@ -1,30 +1,11 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "harness_wind.hpp"
 #include "harness_task.hpp"
 #include "harness_flight.hpp"
 #include "Contest/Solvers/ContestDijkstra.hpp"
-#include "OS/ConvertPathName.hpp"
+#include "system/ConvertPathName.hpp"
 #include "test_debug.hpp"
 
 #include <stdlib.h>
@@ -38,32 +19,17 @@ int output_skip = 5;
 AutopilotParameters autopilot_parms;
 
 int terrain_height = 1;
-AllocatedPath replay_file = Path(_T("test/data/0asljd01.igc"));
-AllocatedPath waypoint_file = Path(_T("test/data/waypoints_geo.wpt"));
-AllocatedPath task_file = nullptr;
+AllocatedPath replay_file = Path("test/data/0asljd01.igc");
+AllocatedPath waypoint_file = Path("test/data/waypoints_geo.wpt");
+AllocatedPath task_file;
 double range_threshold = 15000;
-
-#ifdef INSTRUMENT_ZERO
-extern unsigned long zero_skipped;
-extern unsigned long zero_total;
-#endif
 
 void PrintDistanceCounts() {
   if (n_samples) {
     printf("# Instrumentation\n");
     printf("#    (total cycles %d)\n#\n",n_samples);
-#ifdef INSTRUMENT_ZERO
-    if (zero_total) {
-      printf("#    ZeroFinder total %ld\n",zero_total);
-      printf("#    ZeroFinder %%skipped %d\n",(int)(100*zero_skipped/zero_total));
-    }
-#endif
   }
   n_samples = 0;
-#ifdef INSTRUMENT_ZERO
-  zero_skipped = 0;
-  zero_total = 0;
-#endif
 }
 
 /** 
@@ -200,7 +166,7 @@ ParseArgs(int argc, char** argv)
 
 const char* GetTestName(const char* in, int task_num, int wind_num)
 {
-  static char buffer[80];
+  static char buffer[100];
   sprintf(buffer,"%s (task %s, wind %s)", in, task_name(task_num), wind_name(wind_num));
   return buffer;
 }

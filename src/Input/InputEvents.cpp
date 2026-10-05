@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /*
 
@@ -40,7 +20,8 @@ It also covers the configuration side of on screen labels.
 For further information on config file formats see
 
 source/Common/Data/Input/ALL
-doc/html/advanced/input/ALL		http://xcsoar.sourceforge.net/advanced/input/
+doc/html/advanced/input/ALL
+https://xcsoar.readthedocs.io/en/latest/input_events.html
 
 */
 
@@ -50,57 +31,75 @@ doc/html/advanced/input/ALL		http://xcsoar.sourceforge.net/advanced/input/
 #include "Interface.hpp"
 #include "MainWindow.hpp"
 #include "Protection.hpp"
-#include "LogFile.hpp"
 #include "Menu/ButtonLabel.hpp"
-#include "Profile/ProfileKeys.hpp"
+#include "Profile/Keys.hpp"
 #include "Menu/MenuData.hpp"
-#include "IO/ConfiguredFile.hpp"
-#include "IO/LineReader.hpp"
+#include "io/ConfiguredFile.hpp"
+#include "io/FileReader.hxx"
+#include "io/BufferedReader.hxx"
 #include "Pan.hpp"
+#include "Dialogs/LockScreen.hpp"
+#include "Weather/MapOverlay/InputEvents.hpp"
+#include "Menu/MenuBar.hpp"
+#include "MapWindow/GlueMapWindow.hpp"
+#include "Screen/Layout.hpp"
+#include "Language/Language.hpp"
+#include "util/StringAPI.hxx"
 
 #ifdef KOBO
-#include "Event/KeyCode.hpp"
+#include "ui/event/KeyCode.hpp"
 #endif
 
-#include "Lua/InputEvent.hpp"
+#include "lua/InputEvent.hpp"
 
-#include <assert.h>
-#include <tchar.h>
+#include <cassert>
 #include <stdio.h>
 #include <memory>
 
-namespace InputEvents
-{
-  static const TCHAR *flavour;
+namespace InputEvents {
 
-  static Mode current_mode = InputEvents::MODE_DEFAULT;
+static const char *flavour;
 
-  /**
-   * A mode that overrides the #current_mode.  Only if a value does
-   * not exist in this mode, it will be taken from the #current_mode.
-   * The special value #MODE_DEFAULT means there is no overlay mode.
-   */
-  static Mode overlay_mode = MODE_DEFAULT;
+static Mode current_mode = InputEvents::MODE_DEFAULT;
 
-  static unsigned MenuTimeOut = 0;
+/**
+ * A mode that overrides the #current_mode.  Only if a value does
+ * not exist in this mode, it will be taken from the #current_mode.
+ * The special value #MODE_DEFAULT means there is no overlay mode.
+ */
+static Mode overlay_mode = MODE_DEFAULT;
 
-  gcc_pure
-  static Mode getModeID();
+static std::chrono::duration<unsigned> MenuTimeOut{};
 
-  static void UpdateOverlayMode();
+/**
+ * True if a full menu update was postponed by drawButtons().
+ */
+static bool menu_dirty = false;
 
-  gcc_pure
-  static unsigned gesture_to_event(const TCHAR *data);
+[[gnu::pure]]
+static Mode
+getModeID() noexcept;
 
-  /**
-   * @param full if false, update only the dynamic labels
-   */
-  static void drawButtons(Mode mode, bool full=false);
+static void
+UpdateOverlayMode() noexcept;
 
-  static void ProcessMenuTimer();
+[[gnu::pure]]
+static unsigned
+gesture_to_event(const char *data) noexcept;
 
-  static void processGo(unsigned event_id);
-};
+/**
+ * @param full if false, update only the dynamic labels
+ */
+static void
+drawButtons(Mode mode, bool full=false) noexcept;
+
+static void
+ProcessMenuTimer() noexcept;
+
+static void
+processGo(unsigned event_id) noexcept;
+
+} // namespace InputEvents
 
 static InputConfig input_config;
 
@@ -108,21 +107,21 @@ static InputConfig input_config;
 void
 InputEvents::readFile()
 {
-  LogFormat("Loading input events file");
-
   // clear the GCE and NMEA queues
   ClearQueues();
 
   LoadDefaults(input_config);
 
   // Read in user defined configuration file
-  auto reader = OpenConfiguredTextFile(ProfileKeys::InputFile);
-  if (reader)
-    ::ParseInputFile(input_config, *reader);
+  auto reader = OpenConfiguredFile(ProfileKeys::InputFile);
+  if (reader) {
+    BufferedReader buffered_reader{*reader};
+    ::ParseInputFile(input_config, buffered_reader);
+  }
 }
 
 void
-InputEvents::setMode(Mode mode)
+InputEvents::setMode(Mode mode) noexcept
 {
   assert((unsigned)mode < input_config.modes.size());
 
@@ -136,7 +135,7 @@ InputEvents::setMode(Mode mode)
 }
 
 void
-InputEvents::setMode(const TCHAR *mode)
+InputEvents::setMode(const char *mode) noexcept
 {
   int m = input_config.LookupMode(mode);
   if (m >= 0)
@@ -144,13 +143,13 @@ InputEvents::setMode(const TCHAR *mode)
 }
 
 void
-InputEvents::UpdatePan()
+InputEvents::UpdatePan() noexcept
 {
   drawButtons(getModeID(), true);
 }
 
 void
-InputEvents::SetFlavour(const TCHAR *_flavour)
+InputEvents::SetFlavour(const char *_flavour) noexcept
 {
   if (flavour == NULL && _flavour == NULL)
     /* optimised default case */
@@ -167,7 +166,7 @@ InputEvents::SetFlavour(const TCHAR *_flavour)
 }
 
 bool
-InputEvents::IsFlavour(const TCHAR *_flavour)
+InputEvents::IsFlavour(const char *_flavour) noexcept
 {
   if (flavour == NULL)
     return _flavour == NULL;
@@ -179,28 +178,56 @@ InputEvents::IsFlavour(const TCHAR *_flavour)
 }
 
 bool
-InputEvents::IsDefault()
+InputEvents::IsDefault() noexcept
 {
   return current_mode == MODE_DEFAULT;
 }
 
+bool
+InputEvents::IsMode(const char *name) noexcept
+{
+  const int id = GetModeId(name);
+  return id >= 0 && current_mode == Mode(id);
+}
 
 void
-InputEvents::drawButtons(Mode mode, bool full)
+InputEvents::drawButtons(Mode mode, bool full) noexcept
 {
   if (!global_running)
     return;
+
+  if (CommonInterface::main_window->HasDialog()) {
+    /* don't activate the menu if a modal dialog is visible; the menu
+       buttons would be put above the dialog, but would not be
+       accessible; instead, postpone */
+    if (full)
+      menu_dirty = true;
+    return;
+  }
+
+  full |= std::exchange(menu_dirty, false);
 
   const Menu &menu = input_config.menus[mode];
   const Menu *const overlay_menu = overlay_mode != MODE_DEFAULT
     ? &input_config.menus[overlay_mode]
     : NULL;
 
-  ButtonLabel::Set(menu, overlay_menu, full);
+  CommonInterface::main_window->ShowMenu(menu, overlay_menu, full);
+
+  GlueMapWindow *map = CommonInterface::main_window->GetMapIfActive();
+  if (map != nullptr) {
+    /* Only portrait pan mode covers the scale with a bottom menu. */
+    unsigned margin = 0;
+    if (mode != MODE_DEFAULT && map->IsPanning() && !Layout::landscape) {
+      PixelRect screen_rect = map->GetParentClientRect();
+      margin = MenuBar::GetButtonHeight(screen_rect.GetHeight(), true);
+    }
+    map->SetBottomMargin(margin);
+  }
 }
 
 InputEvents::Mode
-InputEvents::getModeID()
+InputEvents::getModeID() noexcept
 {
   if (current_mode == MODE_DEFAULT && IsPanning())
     return MODE_PAN;
@@ -209,13 +236,13 @@ InputEvents::getModeID()
 }
 
 void
-InputEvents::UpdateOverlayMode()
+InputEvents::UpdateOverlayMode() noexcept
 {
   if (flavour != NULL) {
     /* build the "flavoured" mode name from the current "major" mode
        and the flavour name */
     StaticString<InputConfig::MAX_MODE_STRING + 32> name;
-    name.Format(_T("%s.%s"), input_config.modes[current_mode].c_str(),
+    name.Format("%s.%s", input_config.modes[current_mode].c_str(),
                 flavour);
 
     /* see if it exists */
@@ -235,10 +262,10 @@ InputEvents::UpdateOverlayMode()
 // Processing functions - which one to do
 // -----------------------------------------------------------------------
 
-gcc_pure
+[[gnu::pure]]
 static int
 FindMenuItemByEvent(InputEvents::Mode mode, InputEvents::Mode overlay_mode,
-                    unsigned event_id)
+                    unsigned event_id) noexcept
 {
   const Menu *const overlay_menu = overlay_mode != InputEvents::MODE_DEFAULT
     ? &input_config.menus[overlay_mode]
@@ -259,14 +286,15 @@ FindMenuItemByEvent(InputEvents::Mode mode, InputEvents::Mode overlay_mode,
 }
 
 void
-InputEvents::ProcessEvent(unsigned event_id)
+InputEvents::ProcessEvent(unsigned event_id) noexcept
 {
   assert(event_id != 0);
 
   InputEvents::Mode lastMode = getModeID();
 
   int bindex = FindMenuItemByEvent(lastMode, overlay_mode, event_id);
-  if (bindex < 0 || ButtonLabel::IsEnabled(bindex))
+  if (bindex < 0 ||
+      CommonInterface::main_window->IsMenuButtonEnabled(bindex))
     InputEvents::processGo(event_id);
 
   // experimental: update button text, macro may change the value
@@ -278,17 +306,17 @@ InputEvents::ProcessEvent(unsigned event_id)
  * Looks up the specified key code, and returns the associated event
  * id.  Returns 0 if the key was not found.
  */
-gcc_pure
+[[gnu::pure]]
 static unsigned
-key_to_event(InputEvents::Mode mode, unsigned key_code)
+key_to_event(InputEvents::Mode mode, unsigned key_code) noexcept
 {
   return input_config.GetKeyEvent(mode, key_code);
 }
 
-gcc_pure
+[[gnu::pure]]
 static unsigned
 key_to_event(InputEvents::Mode mode, InputEvents::Mode overlay_mode,
-             unsigned key_code)
+             unsigned key_code) noexcept
 {
   if (overlay_mode != InputEvents::MODE_DEFAULT) {
     unsigned event_id = key_to_event(overlay_mode, key_code);
@@ -300,7 +328,7 @@ key_to_event(InputEvents::Mode mode, InputEvents::Mode overlay_mode,
 }
 
 bool
-InputEvents::ProcessKey(Mode mode, unsigned key_code)
+InputEvents::ProcessKey(Mode mode, unsigned key_code) noexcept
 {
   if (!global_running)
     return false;
@@ -335,43 +363,134 @@ InputEvents::ProcessKey(Mode mode, unsigned key_code)
   Return = We had a valid key (even if nothing happens because of Bounce)
 */
 bool
-InputEvents::processKey(unsigned key_code)
+InputEvents::processKey(unsigned key_code) noexcept
 {
   return ProcessKey(getModeID(), key_code);
 }
 
+int
+InputEvents::GetModeId(const char *name) noexcept
+{
+  return input_config.LookupMode(name);
+}
+
+bool
+InputEvents::ProcessKeyInMode(Mode mode, unsigned key_code) noexcept
+{
+  if (!global_running)
+    return false;
+
+#ifdef KOBO
+#ifdef ENABLE_SDL
+  if (key_code == SDLK_POWER)
+    key_code = KEY_MENU;
+#endif
+#endif
+
+  if (Lua::FireKey(key_code)) {
+  }
+
+  const unsigned event_id = input_config.GetKeyEventInModeNoFallback(
+      (unsigned)mode, key_code);
+  if (event_id == 0)
+    return false;
+
+  ProcessEvent(event_id);
+  return true;
+}
+
 unsigned
-InputEvents::gesture_to_event(const TCHAR *data)
+InputEvents::gesture_to_event(const char *data) noexcept
 {
   return input_config.Gesture2Event.Get(data, 0);
 }
 
 bool
-InputEvents::IsGesture(const TCHAR *data)
+InputEvents::IsGesture(const char *data) noexcept
 {
   return (Lua::IsGesture(data)) || (gesture_to_event(data) != 0);
 }
 
-bool
-InputEvents::processGesture(const TCHAR *data)
+/**
+ * The names of the actions a gesture can trigger, see
+ * GetGestureLabel(); mostly the same as in the gesture help, see
+ * dlgGestureHelp.cpp.
+ */
+static constexpr struct {
+  InputConfig::pt2Event event;
+
+  /** the event's argument; nullptr matches any argument */
+  const char *misc;
+
+  const char *label;
+} gesture_labels[] = {
+  { InputEvents::eventZoom, "in", N_("Zoom in") },
+  { InputEvents::eventZoom, "out", N_("Zoom out") },
+  { InputEvents::eventZoom, "auto on", N_("Auto zoom") },
+  { InputEvents::eventScreenModes, "next", N_("Next page") },
+  { InputEvents::eventScreenModes, "previous", N_("Previous page") },
+  { InputEvents::eventWaypointDetails, "select", N_("Waypoint list") },
+  { InputEvents::eventSetup, "Alternates", N_("Alternates") },
+  { InputEvents::eventMode, "Menu", N_("Menu") },
+  { InputEvents::eventCalculator, nullptr, N_("Task manager") },
+  { InputEvents::eventAnalysis, nullptr, N_("Analysis") },
+  { InputEvents::eventChecklist, nullptr, N_("Checklist") },
+  { InputEvents::eventPan, "on", N_("Pan mode") },
+  { InputEvents::eventPan, "toggle", N_("Pan mode") },
+  { InputEvents::eventStatus, nullptr, N_("Status") },
+  { InputEvents::eventGotoLookup, "recent", N_("Recently used waypoints") },
+  { InputEvents::eventGotoLookup, "last_used",
+    N_("Recently used waypoints") },
+  { InputEvents::eventQuickMenu, nullptr, N_("Quick menu") },
+};
+
+const char *
+InputEvents::GetGestureLabel(const char *data) noexcept
 {
+  if (Lua::IsGesture(data))
+    /* Lua takes precedence, see processGesture() */
+    return nullptr;
+
+  /* the first event of the chain which has a name; others, like
+     "Zoom auto show", only prepare it */
+  for (unsigned id = gesture_to_event(data); id > 0;
+       id = input_config.events[id].next) {
+    const InputConfig::Event &event = input_config.events[id];
+
+    for (const auto &i : gesture_labels)
+      if (event.event == i.event &&
+          (i.misc == nullptr ||
+           (event.misc != nullptr && StringIsEqual(event.misc, i.misc))))
+        return gettext(i.label);
+  }
+
+  return nullptr;
+}
+
+bool
+InputEvents::processGesture(const char *data) noexcept
+{
+  // start with lua event if available!
+  if (Lua::FireGesture(data))
+    return true;
+
   // get current mode
   unsigned event_id = gesture_to_event(data);
-  if (event_id)
-  {
+  if (event_id) {
     InputEvents::processGo(event_id);
     return true;
   }
-  return Lua::FireGesture(data);
+
+  return false;
 }
 
 /*
-  InputEvent::processNmea(TCHAR* data)
+  InputEvent::processNmea(char *data)
   Take hard coded inputs from NMEA processor.
   Return = TRUE if we have a valid key match
 */
 bool
-InputEvents::processNmea_real(unsigned ne_id)
+InputEvents::processNmea_real(unsigned ne_id) noexcept
 {
   if (!global_running)
     return false;
@@ -395,7 +514,7 @@ InputEvents::processNmea_real(unsigned ne_id)
   Take virtual inputs from a Glide Computer to do special events
 */
 bool
-InputEvents::processGlideComputer_real(unsigned gce_id)
+InputEvents::processGlideComputer_real(unsigned gce_id) noexcept
 {
   if (!global_running)
     return false;
@@ -418,7 +537,7 @@ InputEvents::processGlideComputer_real(unsigned gce_id)
 
 // EXECUTE an Event - lookup event handler and call back - no return
 void
-InputEvents::processGo(unsigned eventid)
+InputEvents::processGo(unsigned eventid) noexcept
 {
   /* eventid 0 is special for "noop" */
 
@@ -426,7 +545,7 @@ InputEvents::processGo(unsigned eventid)
     const InputConfig::Event &event = input_config.events[eventid];
     if (event.event != NULL) {
       event.event(event.misc);
-      MenuTimeOut = 0;
+      MenuTimeOut = {};
     }
 
     eventid = event.next;
@@ -434,31 +553,29 @@ InputEvents::processGo(unsigned eventid)
 }
 
 void
-InputEvents::HideMenu()
+InputEvents::HideMenu() noexcept
 {
   setMode(MODE_DEFAULT);
 }
 
 void
-InputEvents::ShowMenu()
+InputEvents::ShowMenu() noexcept
 {
   setMode(MODE_MENU);
-  MenuTimeOut = 0;
+  MenuTimeOut = {};
   ProcessMenuTimer();
 }
 
 Menu *
-InputEvents::GetMenu(const TCHAR *mode)
+InputEvents::GetMenu(const char *mode) noexcept
 {
- int m = input_config.LookupMode(mode);
- if (m >= 0)
-   return &input_config.menus[m];
- else
-   return NULL;
+  int m = input_config.LookupMode(mode);
+  if (m >= 0) return &input_config.menus[m];
+  else return NULL;
 }
 
 void
-InputEvents::ProcessMenuTimer()
+InputEvents::ProcessMenuTimer() noexcept
 {
   if (CommonInterface::main_window->HasDialog())
     /* no menu updates while a dialog is visible */
@@ -470,12 +587,31 @@ InputEvents::ProcessMenuTimer()
   // refresh visible buttons if still visible
   drawButtons(getModeID());
 
-  MenuTimeOut++;
+  MenuTimeOut += std::chrono::seconds{1};
 }
 
 void
-InputEvents::ProcessTimer()
+InputEvents::ProcessTimer() noexcept
 {
   DoQueuedEvents();
   ProcessMenuTimer();
+}
+
+void
+InputEvents::eventLockScreen([[maybe_unused]] const char *mode)
+{
+  ShowLockBox();
+}
+
+// WeatherOverlay
+// Adjusts the active map weather overlay cursor bar.
+// time +/-, time auto on/off/toggle/show
+// altitude +/-, altitude auto on/off/toggle/show
+// field/layer/level picker (secondary axis list)
+// level +/- and level auto … (EDL pressure level alias for altitude)
+// setup (open Info → Weather for the active overlay)
+void
+InputEvents::eventWeatherOverlay(const char *misc)
+{
+  WeatherMapOverlay::HandleInputEvent(misc);
 }

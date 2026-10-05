@@ -1,71 +1,55 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxes/Content/Thermal.hpp"
+#include "InfoBoxes/Content/ShowAnalysis.hpp"
 #include "InfoBoxes/Data.hpp"
 #include "Units/Units.hpp"
 #include "Formatter/UserUnits.hpp"
 #include "Formatter/TimeFormatter.hpp"
 #include "Interface.hpp"
+#include "Language/Language.hpp"
 #include "UIGlobals.hpp"
 #include "Look/Look.hpp"
 #include "Renderer/ClimbPercentRenderer.hpp"
-
-#include <tchar.h>
+#include "Input/InputEvents.hpp"
+#include "PageActions.hpp"
+#include "UIState.hpp"
 
 static void
-SetVSpeed(InfoBoxData &data, double value)
+SetVSpeed(InfoBoxData &data, double value) noexcept
 {
-  TCHAR buffer[32];
+  char buffer[32];
   FormatUserVerticalSpeed(value, buffer, false);
-  data.SetValue(buffer[0] == _T('+') ? buffer + 1 : buffer);
+  data.SetValue(buffer[0] == '+' ? buffer + 1 : buffer);
   data.SetValueUnit(Units::current.vertical_speed_unit);
 }
 
 void
-UpdateInfoBoxVario(InfoBoxData &data)
+UpdateInfoBoxVario(InfoBoxData &data) noexcept
 {
-  SetVSpeed(data, CommonInterface::Basic().brutto_vario);
+  SetVSpeed(data, CommonInterface::Basic().FilteredBruttoVario());
 }
 
 void
-UpdateInfoBoxVarioNetto(InfoBoxData &data)
+UpdateInfoBoxVarioNetto(InfoBoxData &data) noexcept
 {
-  SetVSpeed(data, CommonInterface::Basic().netto_vario);
+  SetVSpeed(data, CommonInterface::Basic().FilteredNettoVario());
 }
 
 void
-UpdateInfoBoxThermal30s(InfoBoxData &data)
+UpdateInfoBoxThermal30s(InfoBoxData &data) noexcept
 {
   SetVSpeed(data, CommonInterface::Calculated().average);
 
   // Set Color (red/black)
   data.SetValueColor(2 * CommonInterface::Calculated().average <
       CommonInterface::Calculated().common_stats.current_risk_mc ? 1 : 0);
+  data.SetCommentFromVerticalSpeed(CommonInterface::Calculated().current_thermal.lift_rate);
 }
 
 void
-UpdateInfoBoxThermalLastAvg(InfoBoxData &data)
+UpdateInfoBoxThermalLastAvg(InfoBoxData &data) noexcept
 {
   const OneClimbInfo &thermal = CommonInterface::Calculated().last_thermal;
   if (!thermal.IsDefined()) {
@@ -77,7 +61,7 @@ UpdateInfoBoxThermalLastAvg(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxThermalLastGain(InfoBoxData &data)
+UpdateInfoBoxThermalLastGain(InfoBoxData &data) noexcept
 {
   const OneClimbInfo &thermal = CommonInterface::Calculated().last_thermal;
   if (!thermal.IsDefined()) {
@@ -86,10 +70,11 @@ UpdateInfoBoxThermalLastGain(InfoBoxData &data)
   }
 
   data.SetValueFromAltitude(thermal.gain);
+  data.SetCommentFromVerticalSpeed(thermal.lift_rate);
 }
 
 void
-UpdateInfoBoxThermalLastTime(InfoBoxData &data)
+UpdateInfoBoxThermalLastTime(InfoBoxData &data) noexcept
 {
   const OneClimbInfo &thermal = CommonInterface::Calculated().last_thermal;
   if (!thermal.IsDefined()) {
@@ -97,23 +82,23 @@ UpdateInfoBoxThermalLastTime(InfoBoxData &data)
     return;
   }
 
-  data.SetValueFromTimeTwoLines((int)thermal.duration);
+  data.SetValueFromTimeTwoLines(thermal.duration);
 }
 
 void
-UpdateInfoBoxThermalAllAvg(InfoBoxData &data)
+UpdateInfoBoxThermalAllAvg(InfoBoxData &data) noexcept
 {
-  if (CommonInterface::Calculated().time_circling <= 0) {
+  if (CommonInterface::Calculated().time_circling.count() <= 0) {
     data.SetInvalid();
     return;
   }
 
   SetVSpeed(data, CommonInterface::Calculated().total_height_gain /
-            CommonInterface::Calculated().time_circling);
+            CommonInterface::Calculated().time_circling.count());
 }
 
 void
-UpdateInfoBoxThermalAvg(InfoBoxData &data)
+UpdateInfoBoxThermalAvg(InfoBoxData &data) noexcept
 {
   const OneClimbInfo &thermal = CommonInterface::Calculated().current_thermal;
   if (!thermal.IsDefined()) {
@@ -129,7 +114,7 @@ UpdateInfoBoxThermalAvg(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxThermalGain(InfoBoxData &data)
+UpdateInfoBoxThermalGain(InfoBoxData &data) noexcept
 {
   const OneClimbInfo &thermal = CommonInterface::Calculated().current_thermal;
   if (!thermal.IsDefined()) {
@@ -141,7 +126,19 @@ UpdateInfoBoxThermalGain(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxThermalRatio(InfoBoxData &data)
+UpdateInfoBoxThermalTime(InfoBoxData &data) noexcept
+{
+    const OneClimbInfo& thermal = CommonInterface::Calculated().current_thermal;
+    if (!thermal.IsDefined()) {
+        data.SetInvalid();
+        return;
+    }
+    data.SetValueFromTimeTwoLines(thermal.duration);
+}
+
+
+void
+UpdateInfoBoxThermalRatio(InfoBoxData &data) noexcept
 {
   // Set Value
 
@@ -154,7 +151,7 @@ UpdateInfoBoxThermalRatio(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxNonCirclingClimbRatio(InfoBoxData &data)
+UpdateInfoBoxNonCirclingClimbRatio(InfoBoxData &data) noexcept
 {
   // Set Value
 
@@ -165,7 +162,7 @@ UpdateInfoBoxNonCirclingClimbRatio(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxVarioDistance(InfoBoxData &data)
+UpdateInfoBoxVarioDistance(InfoBoxData &data) noexcept
 {
   if (!CommonInterface::Calculated().task_stats.task_valid) {
     data.SetInvalid();
@@ -181,19 +178,31 @@ UpdateInfoBoxVarioDistance(InfoBoxData &data)
 
 
 void
-UpdateInfoBoxNextLegEqThermal(InfoBoxData &data)
+UpdateInfoBoxNextLegEqThermal(InfoBoxData &data) noexcept
 {
-  const auto next_leg_eq_thermal = CommonInterface::Calculated().next_leg_eq_thermal;
+  const auto &calculated = CommonInterface::Calculated();
+  const auto next_leg_eq_thermal = calculated.next_leg_eq_thermal;
   if (next_leg_eq_thermal < 0) {
     data.SetInvalid();
+
+    if (!calculated.wind_available)
+      data.SetComment(_("no wind"));
+
     return;
   }
 
   SetVSpeed(data, next_leg_eq_thermal);
+
+  const auto next_leg_eq_thermal_inverse =
+    calculated.next_leg_eq_thermal_inverse;
+  if (next_leg_eq_thermal_inverse >= 0)
+    data.SetCommentFromVerticalSpeed(next_leg_eq_thermal_inverse, false);
+  else
+    data.SetCommentInvalid();
 }
 
 void
-UpdateInfoBoxCircleDiameter(InfoBoxData &data)
+UpdateInfoBoxCircleDiameter(InfoBoxData &data) noexcept
 {
   if (!CommonInterface::Basic().airspeed_available.IsValid()) {
     data.SetInvalid();
@@ -218,7 +227,7 @@ UpdateInfoBoxCircleDiameter(InfoBoxData &data)
     return;
   }
 
-  TCHAR buffer[32];
+  char buffer[32];
   Unit unit = FormatSmallUserDistance(buffer, circle_diameter, false, 0);
   data.SetValue (buffer);
   data.SetValueUnit(unit);
@@ -227,39 +236,53 @@ UpdateInfoBoxCircleDiameter(InfoBoxData &data)
     Angle::FullCircle().Native() / turn_rate.Native();
 
   StaticString<16> duration_buffer;
-  duration_buffer.Format(_T("%u s"), int(circle_duration));
-  _tcscpy (buffer, duration_buffer);
-  data.SetComment (buffer);
+  duration_buffer.Format("%u s", int(circle_duration));
+  data.SetComment(duration_buffer);
 }
 
-
-InfoBoxContentThermalAssistant::InfoBoxContentThermalAssistant()
+InfoBoxContentThermalAssistant::InfoBoxContentThermalAssistant() noexcept
   :renderer(UIGlobals::GetLook().thermal_assistant_gauge, 0, true) {}
 
 void
-InfoBoxContentThermalAssistant::Update(InfoBoxData &data)
+InfoBoxContentThermalAssistant::Update(InfoBoxData &data) noexcept
 {
-  if (!CommonInterface::Calculated().circling) {
+  const auto &basic = CommonInterface::Basic();
+  const auto &calculated = CommonInterface::Calculated();
+
+  if (!calculated.circling) {
     data.SetInvalid();
     return;
   }
 
-  data.SetCustom();
+  data.SetCustom(basic.location_available.ToInteger() +
+                 basic.attitude.heading_available.ToInteger());
 
-  renderer.Update(CommonInterface::Basic().attitude,
-                  CommonInterface::Calculated());
+  renderer.Update(basic.attitude, calculated);
 }
 
 void
 InfoBoxContentThermalAssistant::OnCustomPaint(Canvas &canvas,
-                                              const PixelRect &rc)
+                                              const PixelRect &rc)noexcept 
 {
   renderer.UpdateLayout(rc);
   renderer.Paint(canvas);
 }
 
+bool
+InfoBoxContentThermalAssistant::HandleClick() noexcept
+{
+  const auto &pages = CommonInterface::GetUIState().pages;
+  if (pages.special_page.IsDefined() && pages.special_page.main == PageLayout::Main::THERMAL_ASSISTANT) {
+    PageActions::Restore();
+  } else {
+	InputEvents::eventThermalAssistant("");
+  }
+
+  return true;
+}
+
 void
-InfoBoxContentClimbPercent::OnCustomPaint(Canvas &canvas, const PixelRect &rc)
+InfoBoxContentClimbPercent::OnCustomPaint(Canvas &canvas, const PixelRect &rc)noexcept 
 {
   const Look &look = UIGlobals::GetLook();
   ClimbPercentRenderer renderer(look.circling_percent);
@@ -269,7 +292,28 @@ InfoBoxContentClimbPercent::OnCustomPaint(Canvas &canvas, const PixelRect &rc)
 }
 
 void
-InfoBoxContentClimbPercent::Update(InfoBoxData &data)
+InfoBoxContentClimbPercent::Update(InfoBoxData &data) noexcept
 {
-  data.SetCustom();
+  const auto &basic = CommonInterface::Basic();
+
+  // TODO: use an appropriate digest
+  data.SetCustom(basic.location_available.ToInteger());
+}
+
+bool
+InfoBoxContentClimbPercent::HandleClick() noexcept
+{
+  return ShowAnalysis(AnalysisPage::CLIMB);
+}
+
+void
+InfoBoxContentThermalRatio::Update(InfoBoxData &data) noexcept
+{
+  UpdateInfoBoxThermalRatio(data);
+}
+
+bool
+InfoBoxContentThermalRatio::HandleClick() noexcept
+{
+  return ShowAnalysis(AnalysisPage::CLIMB);
 }

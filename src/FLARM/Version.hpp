@@ -1,31 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_VERSION_HPP
-#define XCSOAR_FLARM_VERSION_HPP
-
-#include "NMEA/Validity.hpp"
-#include "Util/StaticString.hxx"
+#include "time/Validity.hpp"
+#include "time/Stamp.hpp"
+#include "util/StaticString.hxx"
 
 #include <type_traits>
 
@@ -35,14 +15,14 @@ Copyright_License {
 struct FlarmVersion {
   Validity available;
 
-  NarrowString<7> hardware_version, software_version;
-  NarrowString<19> obstacle_version;
+  StaticString<7> hardware_version, software_version;
+  StaticString<19> obstacle_version;
 
-  void Clear() {
+  constexpr void Clear() noexcept {
     available.Clear();
   }
 
-  void Complement(const FlarmVersion &add) {
+  constexpr void Complement(const FlarmVersion &add) noexcept {
     if (available.Complement(add.available)) {
       hardware_version = add.hardware_version;
       software_version = add.software_version;
@@ -50,12 +30,10 @@ struct FlarmVersion {
     }
   }
 
-  void Expire(gcc_unused double clock) {
+  constexpr void Expire([[maybe_unused]] TimeStamp clock) noexcept {
     /* no expiry; this object will be cleared only when the device
        connection is lost */
   }
 };
 
 static_assert(std::is_trivial<FlarmVersion>::value, "type is not trivial");
-
-#endif

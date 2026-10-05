@@ -1,30 +1,12 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef GOTOTASK_H
-#define GOTOTASK_H
+#pragma once
 
 #include "UnorderedTask.hpp"
 #include "Engine/Waypoint/Ptr.hpp"
+
+#include <memory>
 
 class Waypoints;
 class UnorderedTaskPoint;
@@ -34,7 +16,7 @@ class UnorderedTaskPoint;
  */
 class GotoTask final : public UnorderedTask
 {
-  UnorderedTaskPoint *tp;
+  std::unique_ptr<UnorderedTaskPoint> tp;
   const Waypoints &waypoints;
 
 public:
@@ -75,17 +57,15 @@ public:
 
 public:
   /* virtual methods from class TaskInterface */
-  virtual unsigned TaskSize() const override;
-  virtual TaskWaypoint *GetActiveTaskPoint() const override;
-  virtual void SetActiveTaskPoint(unsigned index) override;
-  virtual bool IsValidTaskPoint(const int index_offset) const override;
+  unsigned TaskSize() const noexcept override;
+  TaskWaypoint *GetActiveTaskPoint() const noexcept override;
+  void SetActiveTaskPoint(unsigned index) noexcept override;
+  bool IsValidTaskPoint(const int index_offset) const noexcept override;
 
 protected:
-  virtual bool UpdateSample(const AircraftState &state_now,
-                            const GlidePolar &glide_polar,
-                            const bool full_update) override;
+  bool UpdateSample(const AircraftState &state_now,
+                    const GlidePolar &glide_polar,
+                    bool full_update) noexcept override;
 public:
-  virtual void AcceptTaskPointVisitor(TaskPointConstVisitor& visitor) const override;
+  void AcceptTaskPointVisitor(TaskPointConstVisitor& visitor) const override;
 };
-
-#endif //GOTOTASK_H

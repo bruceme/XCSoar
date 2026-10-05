@@ -1,94 +1,58 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Integer.hpp"
 #include "ComboList.hpp"
-#include "Util/NumberParser.hpp"
-
-#include <stdio.h>
+#include "util/NumberParser.hpp"
+#include "util/StringFormat.hpp"
 
 static bool datafield_key_up = false;
 
-gcc_pure
+[[gnu::pure]]
 static int
-ParseString(const TCHAR *s)
+ParseString(const char *s) noexcept
 {
   return ParseInt(s);
 }
 
-int
-DataFieldInteger::GetAsInteger() const
+const char *
+DataFieldInteger::GetAsString() const noexcept
 {
-  return value;
-}
-
-const TCHAR *
-DataFieldInteger::GetAsString() const
-{
-  _stprintf(output_buffer, edit_format, value);
+  StringFormat(output_buffer, sizeof(output_buffer), edit_format, value);
   return output_buffer;
 }
 
-const TCHAR *
-DataFieldInteger::GetAsDisplayString() const
+const char *
+DataFieldInteger::GetAsDisplayString() const noexcept
 {
-  _stprintf(output_buffer, display_format, value);
+  StringFormat(output_buffer, sizeof(output_buffer), display_format, value);
   return output_buffer;
 }
 
 void
-DataFieldInteger::SetAsInteger(int _value)
+DataFieldInteger::SetAsInteger(int _value) noexcept
 {
   if (_value < min)
     _value = min;
   if (_value > max)
     _value = max;
-  if (value != _value) {
-    value = _value;
-    Modified();
-  }
+  ModifyValue(_value);
 }
 
 void
-DataFieldInteger::SetAsString(const TCHAR *_value)
-{
-  SetAsInteger(ParseString(_value));
-}
-
-void
-DataFieldInteger::Inc()
+DataFieldInteger::Inc() noexcept
 {
   SetAsInteger(value + step * SpeedUp(true));
 }
 
 void
-DataFieldInteger::Dec()
+DataFieldInteger::Dec() noexcept
 {
   SetAsInteger(value - step * SpeedUp(false));
 }
 
 int
-DataFieldInteger::SpeedUp(bool keyup)
+DataFieldInteger::SpeedUp(bool keyup) noexcept
 {
   int res = 1;
 
@@ -99,11 +63,11 @@ DataFieldInteger::SpeedUp(bool keyup)
     return 1;
   }
 
-  if (!last_step.Check(200)) {
+  if (!last_step.Check(std::chrono::milliseconds(200))) {
     speedup++;
     if (speedup > 5) {
       res = 10;
-      last_step.UpdateWithOffset(350);
+      last_step.UpdateWithOffset(std::chrono::milliseconds(350));
       return (res);
     }
   } else
@@ -115,16 +79,17 @@ DataFieldInteger::SpeedUp(bool keyup)
 }
 
 void
-DataFieldInteger::AppendComboValue(ComboList &combo_list, int value) const
+DataFieldInteger::AppendComboValue(ComboList &combo_list,
+                                   int value) const noexcept
 {
-  TCHAR a[edit_format.capacity()], b[display_format.capacity()];
-  _stprintf(a, edit_format, value);
-  _stprintf(b, display_format, value);
+  char a[decltype(edit_format)::capacity()], b[decltype(display_format)::capacity()];
+  StringFormat(a, sizeof(a), edit_format, value);
+  StringFormat(b, sizeof(b), display_format, value);
   combo_list.Append(combo_list.size(), a, b);
 }
 
 ComboList
-DataFieldInteger::CreateComboList(const TCHAR *reference_string) const
+DataFieldInteger::CreateComboList(const char *reference_string) const noexcept
 {
   const int reference = reference_string != nullptr
     ? ParseString(reference_string)
@@ -141,7 +106,7 @@ DataFieldInteger::CreateComboList(const TCHAR *reference_string) const
   int first = corrected_value - (int)surrounding_items * step;
   if (first > min)
     /* there are values before "first" - give the user a choice */
-    combo_list.Append(ComboList::Item::PREVIOUS_PAGE, _T("<<More Items>>"));
+    combo_list.Append(ComboList::Item::PREVIOUS_PAGE, "<<More Items>>");
   else if (first < min)
     first = min;
 
@@ -171,13 +136,14 @@ DataFieldInteger::CreateComboList(const TCHAR *reference_string) const
 
   if (last < max)
     /* there are values after "last" - give the user a choice */
-    combo_list.Append(ComboList::Item::NEXT_PAGE, _T("<<More Items>>"));
+    combo_list.Append(ComboList::Item::NEXT_PAGE, "<<More Items>>");
 
   return combo_list;
 }
 
 void
-DataFieldInteger::SetFromCombo(gcc_unused int index, const TCHAR *value)
+DataFieldInteger::SetFromCombo([[maybe_unused]] int index,
+                               const char *value) noexcept
 {
-  SetAsString(value);
+  SetAsInteger(ParseString(value));
 }

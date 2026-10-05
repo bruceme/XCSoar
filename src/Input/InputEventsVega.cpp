@@ -1,34 +1,15 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InputEvents.hpp"
 #include "Dialogs/Device/Vega/VegaDialogs.hpp"
 #include "Device/MultipleDevices.hpp"
 #include "Device/Descriptor.hpp"
 #include "Device/Driver/Vega/Internal.hpp"
+#include "Operation/PopupOperationEnvironment.hpp"
 #include "Interface.hpp"
 #include "Components.hpp"
-#include "Operation/PopupOperationEnvironment.hpp"
+#include "BackendComponents.hpp"
 
 static VegaDevice *
 GetVegaDevice(DeviceDescriptor &device)
@@ -44,7 +25,7 @@ AllVegasSendSetting(const char *name, int value)
 {
   PopupOperationEnvironment env;
 
-  for (DeviceDescriptor *i : *devices) {
+  for (DeviceDescriptor *i : *backend_components->devices) {
     VegaDevice *vega = GetVegaDevice(*i);
     if (vega != NULL)
       vega->SendSetting(name, value, env);
@@ -56,7 +37,7 @@ AllVegasRequestSetting(const char *name)
 {
   PopupOperationEnvironment env;
 
-  for (DeviceDescriptor *i : *devices) {
+  for (DeviceDescriptor *i : *backend_components->devices) {
     VegaDevice *vega = GetVegaDevice(*i);
     if (vega != NULL)
       vega->RequestSetting(name, env);
@@ -80,30 +61,30 @@ AllVegasRequestSetting(const char *name)
 //     zero: Zero's the airspeed indicator's offset
 //
 void
-InputEvents::eventAdjustVarioFilter(const TCHAR *misc)
+InputEvents::eventAdjustVarioFilter(const char *misc)
 {
   static int naccel = 0;
-  if (StringIsEqual(misc, _T("slow")))
+  if (StringIsEqual(misc, "slow"))
     AllVegasSendSetting("VarioTimeConstant", 3);
-  else if (StringIsEqual(misc, _T("medium")))
+  else if (StringIsEqual(misc, "medium"))
     AllVegasSendSetting("VarioTimeConstant", 2);
-  else if (StringIsEqual(misc, _T("fast")))
+  else if (StringIsEqual(misc, "fast"))
     AllVegasSendSetting("VarioTimeConstant", 1);
-  else if (StringIsEqual(misc, _T("statistics")))
+  else if (StringIsEqual(misc, "statistics"))
     AllVegasSendSetting("Diagnostics", 1);
-  else if (StringIsEqual(misc, _T("diagnostics")))
+  else if (StringIsEqual(misc, "diagnostics"))
     AllVegasSendSetting("Diagnostics", 2);
-  else if (StringIsEqual(misc, _T("psraw")))
+  else if (StringIsEqual(misc, "psraw"))
     AllVegasSendSetting("Diagnostics", 3);
-  else if (StringIsEqual(misc, _T("switch")))
+  else if (StringIsEqual(misc, "switch"))
     AllVegasSendSetting("Diagnostics", 4);
-  else if (StringIsEqual(misc, _T("democlimb"))) {
+  else if (StringIsEqual(misc, "democlimb")) {
     AllVegasSendSetting("DemoMode", 0);
     AllVegasSendSetting("DemoMode", 2);
-  } else if (StringIsEqual(misc, _T("demostf"))) {
+  } else if (StringIsEqual(misc, "demostf")) {
     AllVegasSendSetting("DemoMode", 0);
     AllVegasSendSetting("DemoMode", 1);
-  } else if (StringIsEqual(misc, _T("accel"))) {
+  } else if (StringIsEqual(misc, "accel")) {
     switch (naccel) {
     case 0:
       AllVegasRequestSetting("AccelerometerSlopeX");
@@ -125,27 +106,27 @@ InputEvents::eventAdjustVarioFilter(const TCHAR *misc)
     if (naccel > 3)
       naccel = 0;
 
-  } else if (StringIsEqual(misc, _T("xdemo"))) {
+  } else if (StringIsEqual(misc, "xdemo")) {
     dlgVegaDemoShowModal();
-  } else if (StringIsEqual(misc, _T("zero"))) {
+  } else if (StringIsEqual(misc, "zero")) {
     // zero, no mixing
     if (!CommonInterface::Calculated().flight.flying) {
       AllVegasSendSetting("ZeroASI", 1);
     }
-  } else if (StringIsEqual(misc, _T("save"))) {
+  } else if (StringIsEqual(misc, "save")) {
     AllVegasSendSetting("StoreToEeprom", 2);
 
   // accel calibration
   } else if (!CommonInterface::Calculated().flight.flying) {
-    if (StringIsEqual(misc, _T("X1")))
+    if (StringIsEqual(misc, "X1"))
       AllVegasSendSetting("CalibrateAccel", 1);
-    else if (StringIsEqual(misc, _T("X2")))
+    else if (StringIsEqual(misc, "X2"))
       AllVegasSendSetting("CalibrateAccel", 2);
-    else if (StringIsEqual(misc, _T("X3")))
+    else if (StringIsEqual(misc, "X3"))
       AllVegasSendSetting("CalibrateAccel", 3);
-    else if (StringIsEqual(misc, _T("X4")))
+    else if (StringIsEqual(misc, "X4"))
       AllVegasSendSetting("CalibrateAccel", 4);
-    else if (StringIsEqual(misc, _T("X5")))
+    else if (StringIsEqual(misc, "X5"))
       AllVegasSendSetting("CalibrateAccel", 5);
   }
 }

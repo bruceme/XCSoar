@@ -1,30 +1,11 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WeatherProfile.hpp"
 #include "Map.hpp"
-#include "ProfileKeys.hpp"
+#include "Keys.hpp"
 #include "Weather/Settings.hpp"
+#include "util/StaticString.hxx"
 
 #ifdef HAVE_PCMET
 
@@ -39,10 +20,65 @@ namespace Profile {
 
 #endif
 
+#ifdef HAVE_HTTP
+
+namespace Profile {
+  static void Load(const ProfileMap &map, SkySightSettings &settings) {
+    if (!map.Get(ProfileKeys::SkySightEmail, settings.email))
+      map.Get(ProfileKeys::LegacySkySightEmail, settings.email);
+    if (!map.Get(ProfileKeys::SkySightPassword, settings.password))
+      map.Get(ProfileKeys::LegacySkySightPassword, settings.password);
+    if (!map.Get(ProfileKeys::SkySightRegion, settings.region))
+      map.Get(ProfileKeys::LegacySkySightRegion, settings.region);
+    map.Get(ProfileKeys::SkySightAutoUpdate, settings.auto_update);
+  }
+}
+
+#endif
+
 void
 Profile::Load(const ProfileMap &map, WeatherSettings &settings)
 {
+#if !defined(HAVE_PCMET) && !defined(HAVE_HTTP)
+  (void)map;
+#endif
 #ifdef HAVE_PCMET
   Load(map, settings.pcmet);
+#endif
+
+#ifdef HAVE_HTTP
+  map.Get(ProfileKeys::EnableThermalInformationMap, settings.enable_tim);
+  map.Get(ProfileKeys::XCThermAutoSwitch, settings.xctherm.auto_switch);
+#endif
+
+  map.Get(ProfileKeys::RaspAutoUpdate, settings.rasp.auto_update);
+  map.Get(ProfileKeys::EdlAutoUpdate, settings.edl.auto_update);
+
+  {
+    StaticString<64> xctherm_email;
+    xctherm_email.clear();
+    map.Get(ProfileKeys::XCThermEmail, xctherm_email);
+    if (!xctherm_email.empty())
+      settings.xctherm.credentials.email = xctherm_email;
+  }
+
+  {
+    StaticString<64> xctherm_password;
+    xctherm_password.clear();
+    map.Get(ProfileKeys::XCThermPassword, xctherm_password);
+    if (!xctherm_password.empty())
+      settings.xctherm.credentials.password = xctherm_password;
+  }
+
+  map.Get(ProfileKeys::XCThermModel, settings.xctherm.model);
+  map.Get(ProfileKeys::XCThermParameter, settings.xctherm.parameter);
+  map.Get(ProfileKeys::XCThermWaveHeight, settings.xctherm.wave_height);
+  map.Get(ProfileKeys::XCThermVerticalWindAGL,
+          settings.xctherm.vertical_wind_agl);
+  /* download_span_hours is intentionally NOT persisted - it resets
+     to the default (1 h) at every startup. */
+
+#ifdef HAVE_HTTP
+  Load(map, settings.skysight);
 #endif
 }

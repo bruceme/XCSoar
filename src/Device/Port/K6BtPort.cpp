@@ -1,51 +1,26 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "K6BtPort.hpp"
 
 #include <stdio.h>
 #include <string.h>
 
-K6BtPort::K6BtPort(Port *_port, unsigned _baud_rate,
-                   PortListener *_listener, DataHandler &_handler)
-  :Port(_listener, _handler), port(_port), baud_rate(_baud_rate)
+K6BtPort::K6BtPort(std::unique_ptr<Port> _port, unsigned _baud_rate,
+                   PortListener *_listener, DataHandler &_handler) noexcept
+  :Port(_listener, _handler), port(std::move(_port)), baud_rate(_baud_rate)
 {
-}
-
-K6BtPort::~K6BtPort()
-{
-  delete port;
 }
 
 bool
-K6BtPort::SendCommand(uint8_t cmd)
+K6BtPort::SendCommand(std::byte cmd)
 {
-  const uint8_t data[2] = { ESCAPE, cmd };
-  return port->Write(data, sizeof(data)) == sizeof(data);
+  const std::byte data[2] = { ESCAPE, cmd };
+  return port->Write(std::span{data}) == sizeof(data);
 }
 
 PortState
-K6BtPort::GetState() const
+K6BtPort::GetState() const noexcept
 {
   return port->GetState();
 }
@@ -68,28 +43,28 @@ K6BtPort::WaitConnected(OperationEnvironment &env)
   return true;
 }
 
-size_t
-K6BtPort::Write(const void *_data, size_t length)
+std::size_t
+K6BtPort::Write(std::span<const std::byte> src)
 {
   /* in order to forward the buffer verbatim to the real device, we
      have to escape all ESCAPE bytes (i.e. send each of them twice) */
 
-  const uint8_t *data = (const uint8_t *)_data;
+  const std::byte *data = (const std::byte *)src.data();
+  std::size_t length = src.size();
 
-  size_t total = 0;
+  std::size_t total = 0;
 
-  const uint8_t *p;
-  while ((p = (const uint8_t *)memchr(data, ESCAPE, length)) != nullptr) {
-    size_t chunk = p - data + 1;
-    size_t nbytes = port->Write(data, chunk);
+  const std::byte *p;
+  while ((p = (const std::byte *)memchr(data, (char)ESCAPE, length)) != nullptr) {
+    std::size_t chunk = p - data + 1;
+    std::size_t nbytes = port->Write({data, chunk});
     total += nbytes;
     if (nbytes != chunk)
       return total;
 
     /* write the ESCAPE byte again (but don't consider it in the
        return value) */
-    if (port->Write(p, 1) != 1)
-      return total;
+    port->Write({p, 1});
 
     ++p;
 
@@ -98,7 +73,7 @@ K6BtPort::Write(const void *_data, size_t length)
   }
 
   if (length > 0)
-    total += port->Write(data, length);
+    total += port->Write({data, length});
 
   return total;
 }
@@ -114,12 +89,11 @@ K6BtPort::Flush()
 {
   port->Flush();
 
-  SendCommand(FLUSH_BUFFERS | 0x3); /* flush RX and TX buffer */
+  SendCommand(FLUSH_BUFFERS | std::byte{0x3}); /* flush RX and TX buffer */
 }
 
-gcc_const
-static int
-BaudRateToK6Bt(unsigned baud_rate)
+static constexpr int
+BaudRateToK6Bt(unsigned baud_rate) noexcept
 {
   switch (baud_rate) {
   case 2400:
@@ -148,32 +122,29 @@ BaudRateToK6Bt(unsigned baud_rate)
   }
 }
 
-bool
+void
 K6BtPort::SendSetBaudrate(unsigned _baud_rate)
 {
   int code = BaudRateToK6Bt(_baud_rate);
   if (code < 0)
-    /* not supported by K6Bt */
-    return false;
+    throw std::runtime_error("Baud rate not supported by K6Bt");
 
-  return SendCommand(CHANGE_BAUD_RATE | code);
+  if (!SendCommand(CHANGE_BAUD_RATE | static_cast<std::byte>(code)))
+    throw std::runtime_error("Failed to send CHANGE_BAUD_RATE to K6Bt");
 }
 
-bool
+void
 K6BtPort::SetBaudrate(unsigned _baud_rate)
 {
   if (_baud_rate == baud_rate)
-    return true;
+    return;
 
-  if (!SendSetBaudrate(_baud_rate))
-    return false;
-
+  SendSetBaudrate(_baud_rate);
   baud_rate = _baud_rate;
-  return true;
 }
 
 unsigned
-K6BtPort::GetBaudrate() const
+K6BtPort::GetBaudrate() const noexcept
 {
   return baud_rate;
 }
@@ -190,14 +161,14 @@ K6BtPort::StartRxThread(void)
   return port->StartRxThread();
 }
 
-int
-K6BtPort::Read(void *Buffer, size_t Size)
+std::size_t
+K6BtPort::Read(std::span<std::byte> dest)
 {
-  return port->Read(Buffer, Size);
+  return port->Read(dest);
 }
 
-Port::WaitResult
-K6BtPort::WaitRead(unsigned timeout_ms)
+void
+K6BtPort::WaitRead(std::chrono::steady_clock::duration timeout)
 {
-  return port->WaitRead(timeout_ms);
+  port->WaitRead(timeout);
 }

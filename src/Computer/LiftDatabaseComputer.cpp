@@ -1,32 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "LiftDatabaseComputer.hpp"
 #include "Engine/Navigation/TraceHistory.hpp"
 #include "NMEA/LiftDatabase.hpp"
 #include "NMEA/MoreData.hpp"
 #include "NMEA/CirclingInfo.hpp"
-#include "Util/Clamp.hpp"
+
+#include <algorithm> // for std::clamp()
 
 void
 LiftDatabaseComputer::Clear(LiftDatabase &lift_database,
@@ -69,7 +50,7 @@ heading_to_index(const Angle heading)
   unsigned index = (unsigned)
       ((heading + afive).AsBearing().Degrees() / 10);
 
-  return Clamp(index, 0u, 35u);
+  return std::clamp(index, 0u, 35u);
 }
 
 void
@@ -92,6 +73,10 @@ LiftDatabaseComputer::Compute(LiftDatabase &lift_database,
 
   const Angle heading = basic.attitude.heading;
 
+  const double vario = basic.netto_vario_available
+    ? basic.FilteredNettoVario()
+    : basic.FilteredBruttoVario();
+
   // Start at the last heading and add heading_step until the current heading
   // is reached. For each heading save the current lift value into the
   // LiftDatabase. Last and current heading are included since they are
@@ -108,7 +93,7 @@ LiftDatabaseComputer::Compute(LiftDatabase &lift_database,
        left == (heading - h).AsDelta().IsNegative();
        h += heading_step) {
     unsigned index = heading_to_index(h);
-    lift_database[index] = basic.brutto_vario;
+    lift_database[index] = vario;
   }
 
   // detect zero crossing

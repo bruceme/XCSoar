@@ -1,28 +1,9 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CLIMB_INFO_HPP
-#define XCSOAR_CLIMB_INFO_HPP
+#include "time/Stamp.hpp"
 
 #include <type_traits>
 
@@ -30,16 +11,16 @@ Copyright_License {
 struct OneClimbInfo
 {
   /** Time when circling started. */
-  double start_time;
+  TimeStamp start_time;
 
   /**
    * Time when circling ended
    * (or current time stamp if circling has not ended yet).
    */
-  double end_time;
+  TimeStamp end_time;
 
   /** Time spent in this thermal [s]. */
-  double duration;
+  FloatDuration duration;
 
   /** Altitude gained while in the thermal [m]. May be negative. */
   double gain;
@@ -53,7 +34,7 @@ struct OneClimbInfo
   void Clear();
 
   bool IsDefined() const {
-    return duration > 0;
+    return duration.count() > 0;
   }
 
   void CalculateDuration() {
@@ -62,7 +43,7 @@ struct OneClimbInfo
 
   void CalculateLiftRate() {
     lift_rate = IsDefined()
-      ? gain / duration
+      ? gain / duration.count()
       : 0.;
   }
 
@@ -86,5 +67,3 @@ struct ClimbInfo
 };
 
 static_assert(std::is_trivial<ClimbInfo>::value, "type is not trivial");
-
-#endif

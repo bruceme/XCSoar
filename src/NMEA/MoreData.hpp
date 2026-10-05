@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MORE_DATA_HPP
-#define XCSOAR_MORE_DATA_HPP
+#pragma once
 
 #include "NMEA/Info.hpp"
 
@@ -45,8 +24,6 @@ struct MoreData : public NMEAInfo {
 
   /** GPS-based vario */
   double gps_vario;
-  /** GPS-based vario including energy height */
-  double gps_vario_TE;
 
   Validity gps_vario_available;
 
@@ -59,13 +36,55 @@ struct MoreData : public NMEAInfo {
 
   Validity brutto_vario_available;
 
-  void Reset();
+  /** Low-pass filtered brutto vario for output consumers (MergeThread) */
+  double filtered_brutto_vario;
 
-  bool NavAltitudeAvailable() const {
+  Validity filtered_brutto_vario_available;
+
+  /** Low-pass filtered netto vario for output consumers (trail colouring) */
+  double filtered_netto_vario;
+
+  Validity filtered_netto_vario_available;
+
+  /** Speed to fly calculated from the latest merged sensor sample (m/s TAS). */
+  double V_stf;
+
+  /** Whether #V_stf is available from the latest merged sensor sample. */
+  Validity V_stf_available;
+
+  void Reset() noexcept;
+
+  constexpr bool NavAltitudeAvailable() const noexcept {
     return baro_altitude_available || gps_altitude_available;
+  }
+
+  [[gnu::pure]]
+  constexpr bool VarioOutputFilterActive() const noexcept {
+    return settings.vario_filter_period_available &&
+      settings.vario_filter_period > 0;
+  }
+
+  /** Brutto vario after the LX output filter; raw brutto otherwise. */
+  [[gnu::pure]]
+  constexpr double FilteredBruttoVario() const noexcept {
+    if (!VarioOutputFilterActive())
+      return brutto_vario;
+
+    return filtered_brutto_vario_available
+      ? filtered_brutto_vario
+      : brutto_vario;
+  }
+
+  /** Netto vario after the LX output filter; raw netto otherwise. */
+  [[gnu::pure]]
+  constexpr double FilteredNettoVario() const noexcept {
+    if (!VarioOutputFilterActive())
+      return netto_vario;
+
+    return filtered_netto_vario_available
+      ? filtered_netto_vario
+      : netto_vario;
   }
 };
 
 static_assert(std::is_trivial<MoreData>::value, "type is not trivial");
-
-#endif

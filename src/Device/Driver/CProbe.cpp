@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/CProbe.hpp"
 #include "Device/Driver.hpp"
@@ -27,7 +7,9 @@ Copyright_License {
 #include "NMEA/InputLine.hpp"
 #include "Math/Util.hpp"
 
-#include <stdint.h>
+#include <cstdint>
+
+using std::string_view_literals::operator""sv;
 
 class CProbeDevice : public AbstractDevice {
 public:
@@ -89,19 +71,18 @@ ParseData(NMEAInputLine &line, NMEAInfo &info)
       // Cast to int16_t to interpret the 16th bit as the sign bit
       a[i] = int16_t(_a[i]) / 1000.;
 
-    info.acceleration.ProvideGLoad(SpaceDiagonal(a[0], a[1], a[2]),
-                                   true);
+    info.acceleration.ProvideGLoad(SpaceDiagonal(a[0], a[1], a[2]));
   }
 
   unsigned temperature;
   if (line.ReadHexChecked(temperature)) {
-    info.temperature_available = true;
+    info.temperature_available.Update(info.clock);
     info.temperature = Temperature::FromCelsius(int16_t(temperature) / 10.);
   }
 
   unsigned humidity;
   if (line.ReadHexChecked(humidity)) {
-    info.humidity_available = true;
+    info.humidity_available.Update(info.clock);
     info.humidity = int16_t(humidity) / 10.;
   }
 
@@ -124,28 +105,27 @@ bool
 CProbeDevice::ParseNMEA(const char *_line, NMEAInfo &info)
 {
   NMEAInputLine line(_line);
-  char type[16];
-  line.Read(type, 16);
 
-  if (!StringIsEqual(type, "$PCPROBE"))
+  auto type = line.ReadView();
+  if (type != "$PCPROBE"sv)
     return false;
 
-  line.Read(type, 16);
-  if (StringIsEqual(type, "T"))
+  type = line.ReadView();
+  if (type ==  "T"sv)
     return ParseData(line, info);
   else
     return false;
 }
 
 static Device *
-CProbeCreateOnPort(const DeviceConfig &config, Port &com_port)
+CProbeCreateOnPort([[maybe_unused]] const DeviceConfig &config, [[maybe_unused]] Port &com_port)
 {
   return new CProbeDevice();
 }
 
 const struct DeviceRegister c_probe_driver = {
-  _T("CProbe"),
-  _T("Compass C-Probe"),
+  "CProbe",
+  "Compass C-Probe",
   0,
   CProbeCreateOnPort,
 };

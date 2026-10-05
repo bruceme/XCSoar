@@ -1,5 +1,6 @@
 WIDGET_SOURCES = \
 	$(SRC)/Widget/Widget.cpp \
+	$(SRC)/Widget/ProgressWidget.cpp \
 	$(SRC)/Widget/ActionWidget.cpp \
 	$(SRC)/Widget/CallbackWidget.cpp \
 	$(SRC)/Widget/WindowWidget.cpp \
@@ -9,12 +10,16 @@ WIDGET_SOURCES = \
 	$(SRC)/Widget/ContainerWidget.cpp \
 	$(SRC)/Widget/SolidWidget.cpp \
 	$(SRC)/Widget/PanelWidget.cpp \
+	$(SRC)/Widget/VScrollWidget.cpp \
 	$(SRC)/Widget/TabWidget.cpp \
 	$(SRC)/Widget/TextWidget.cpp \
 	$(SRC)/Widget/LargeTextWidget.cpp \
+	$(SRC)/Widget/ScrollableLargeTextWidget.cpp \
+	$(SRC)/Widget/RichTextWidget.cpp \
 	$(SRC)/Widget/OverlappedWidget.cpp \
 	$(SRC)/Widget/TwoWidgets.cpp \
 	$(SRC)/Widget/RowFormWidget.cpp \
+	$(SRC)/Widget/FileRowFormWidget.cpp \
 	$(SRC)/Widget/EditRowFormWidget.cpp \
 	$(SRC)/Widget/ProfileRowFormWidget.cpp \
 	$(SRC)/Widget/UnitRowFormWidget.cpp \
@@ -22,13 +27,20 @@ WIDGET_SOURCES = \
 	$(SRC)/Widget/PagerWidget.cpp \
 	$(SRC)/Widget/ArrowPagerWidget.cpp \
 	$(SRC)/Widget/OffsetButtonsWidget.cpp \
+	$(SRC)/Widget/CursorBarWidget.cpp \
 	$(SRC)/Widget/ButtonPanelWidget.cpp \
 	$(SRC)/Widget/ButtonWidget.cpp \
+	$(SRC)/Widget/DrawWidget.cpp \
 	$(SRC)/Widget/QuestionWidget.cpp \
 	$(SRC)/Widget/KeyboardWidget.cpp \
+	$(SRC)/Widget/QuickGuidePageWidget.cpp \
 	$(SRC)/Widget/ViewImageWidget.cpp \
-	$(SRC)/Widget/DockWindow.cpp
+	$(SRC)/Widget/ImageZoomView.cpp \
+	$(SRC)/Widget/ImageZoomFrame.cpp \
+	$(SRC)/Widget/MultiSelectListWidget.cpp \
+	$(SRC)/Widget/FileMultiSelectWidget.cpp \
+	$(SRC)/Widget/PropertyWidgetContainer.cpp
 
-WIDGET_CPPFLAGS_INTERNAL = $(SCREEN_CPPFLAGS)
+WIDGET_DEPENDS = SCREEN
 
 $(eval $(call link-library,libwidget,WIDGET))

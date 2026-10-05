@@ -1,49 +1,64 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AirspaceFormatter.hpp"
 #include "Engine/Airspace/AbstractAirspace.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
-static const TCHAR *const airspace_class_names[] = {
-  _T("Unknown"),
-  _T("Restricted"),
-  _T("Prohibited"),
-  _T("Danger Area"),
-  _T("Class A"),
-  _T("Class B"),
-  _T("Class C"),
-  _T("Class D"),
-  _T("No Gliders"),
-  _T("CTR"),
-  _T("Wave"),
-  _T("Task Area"),
-  _T("Class E"),
-  _T("Class F"),
-  _T("Transponder Mandatory Zone"),
-  _T("Class G"),
-  _T("Military Aerodrome Traffic Zone"),
-  _T("Radio Mandatory Zone"),
+static const char *const airspace_class_names[] = {
+  "Unknown",
+  "Restricted",
+  "Prohibited",
+  "Danger Area",
+  "Class A",
+  "Class B",
+  "Class C",
+  "Class D",
+  "No Gliders",
+  "CTR",
+  "Wave",
+  "Task Area",
+  "Class E",
+  "Class F",
+  "Transponder Mandatory Zone",
+  "Class G",
+  "Military Aerodrome Traffic Zone",
+  "Radio Mandatory Zone",
+  "Unclassified",
+  "TMA",
+  "Temporary Reserved Airspace",
+  "Temporary Segregated Area",
+  "Flight Information Region",
+  "Upper Flight Information Region",
+  "Air Defense Identification Zone",
+  "Aerodrome Traffic Zone",
+  "Airway",
+  "Military Training Route",
+  "Alert Area",
+  "Warning Area",
+  "Protected Area",
+  "Hazardous Area",
+  "Gliding Sector",
+  "Temporary Reserved Prohibited Area",
+  "Terminal Information Zone",
+  "Terminal Instrument Approach Procedure Area",
+  "Military Training Area",
+  "Control Area",
+  "Area Control Center Sector",
+  "Aerial Sporting Recreational",
+  "Overflight Restriction",
+  "Military Restricted Area",
+  "Temporary Flight Restriction",
+  "Visual Flight Rules Sector",
+  "Flight Information Sector",
+  "Lower Traffic Area",
+  "Upper Traffic Area",
+  "Aerial Sporting Or Recreational Activity",
+  "NOTAM Affected Area",
+  "Airspace without type",
+  "TRA/TSA Feeding Route",
+  "Transponder Recommended Zone",
+  "Designated Route for VFR",
 };
 
 static_assert(ARRAY_SIZE(airspace_class_names) ==
@@ -51,25 +66,60 @@ static_assert(ARRAY_SIZE(airspace_class_names) ==
               "number of airspace class names does not match number of "
               "airspace classes");
 
-static const TCHAR *const airspace_class_short_names[] = {
-  _T("?"),
-  _T("R"),
-  _T("P"),
-  _T("Q"),
-  _T("A"),
-  _T("B"),
-  _T("C"),
-  _T("D"),
-  _T("GP"),
-  _T("CTR"),
-  _T("W"),
-  _T("AAT"),
-  _T("E"),
-  _T("F"),
-  _T("TMZ"),
-  _T("G"),
-  _T("MATZ"),
-  _T("RMZ"),
+static const char *const airspace_class_short_names[] = {
+  "?",
+  "R",
+  "P",
+  "Q",
+  "A",
+  "B",
+  "C",
+  "D",
+  "GP",
+  "CTR",
+  "W",
+  "AAT",
+  "E",
+  "F",
+  "TMZ",
+  "G",
+  "MATZ",
+  "RMZ",
+  "Unclassified",
+  "TMA",
+  "TTRA",
+  "TSA",
+  "FIR",
+  "UIR",
+  "ADIZ",
+  "AATZ",
+  "AWY",
+  "MTR",
+  "Alert",
+  "Warning",
+  "Protected",
+  "HTZ",
+  "Gld_Sec",
+  "TRP",
+  "TIZ",
+  "TIA",
+  "MTA",
+  "CTA",
+  "ACC_Sec",
+  "ASR",
+  "OverFl_Restr",
+  "MRT",
+  "TFR",
+  "VFR_Sec",
+  "FIS_Sec",
+  "LTA",
+  "UTA",
+  "ASRA",
+  "NOTAM",
+  "NOTYPE",
+  "TRA/TSA",
+  "TRZ",
+  "VFRROUTE",
 };
 
 static_assert(ARRAY_SIZE(airspace_class_short_names) ==
@@ -77,7 +127,7 @@ static_assert(ARRAY_SIZE(airspace_class_short_names) ==
               "number of airspace class short names does not match number of "
               "airspace classes");
 
-const TCHAR *
+const char *
 AirspaceFormatter::GetClass(AirspaceClass airspace_class)
 {
   unsigned i = (unsigned)airspace_class;
@@ -86,7 +136,7 @@ AirspaceFormatter::GetClass(AirspaceClass airspace_class)
          airspace_class_names[i] : NULL;
 }
 
-const TCHAR *
+const char *
 AirspaceFormatter::GetClassShort(AirspaceClass airspace_class)
 {
   unsigned i = (unsigned)airspace_class;
@@ -95,14 +145,33 @@ AirspaceFormatter::GetClassShort(AirspaceClass airspace_class)
          airspace_class_short_names[i] : NULL;
 }
 
-const TCHAR *
+const char *
 AirspaceFormatter::GetClass(const AbstractAirspace &airspace)
 {
+  return GetClass(airspace.GetClass());
+}
+
+const char *
+AirspaceFormatter::GetClassShort(const AbstractAirspace &airspace)
+{
+  return GetClassShort(airspace.GetClass());
+}
+
+const char *
+AirspaceFormatter::GetType(const AbstractAirspace &airspace)
+{
+  // For NOTAM airspaces, show the Q-code stored in station_name
+  if (airspace.GetType() == AirspaceClass::NOTAM) {
+    const char *station_name = airspace.GetStationName();
+    if (station_name != nullptr && station_name[0] != '\0') {
+      return station_name;
+    }
+  }
   return GetClass(airspace.GetType());
 }
 
-const TCHAR *
-AirspaceFormatter::GetClassShort(const AbstractAirspace &airspace)
+const char *
+AirspaceFormatter::GetClassOrType(const AbstractAirspace &airspace)
 {
-  return GetClassShort(airspace.GetType());
+  return GetClass(airspace.GetClassOrType());
 }

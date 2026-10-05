@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WaypointReader.hpp"
 #include "WaypointReaderZander.hpp"
@@ -29,8 +9,15 @@ Copyright_License {
 #include "WaypointReaderOzi.hpp"
 #include "WaypointReaderCompeGPS.hpp"
 #include "WaypointFileType.hpp"
-#include "IO/ZipLineReader.hpp"
-#include "IO/FileLineReader.hpp"
+#include "system/Path.hpp"
+#include "io/FileReader.hxx"
+#include "io/CupxArchive.hpp"
+#include "io/MemoryReader.hxx"
+#include "io/ZipReader.hpp"
+#include "io/ProgressReader.hpp"
+#include "io/BufferedReader.hxx"
+
+#include "util/Compiler.h"
 
 #include <memory>
 
@@ -45,7 +32,10 @@ CreateWaypointReader(WaypointFileType type, WaypointFactory factory)
     return new WaypointReaderWinPilot(factory);
 
   case WaypointFileType::SEEYOU:
-    return new WaypointReaderSeeYou(factory);
+    break;
+
+  case WaypointFileType::CUPX:
+    gcc_unreachable();
 
   case WaypointFileType::ZANDER:
     return new WaypointReaderZander(factory);
@@ -63,44 +53,69 @@ CreateWaypointReader(WaypointFileType type, WaypointFactory factory)
   return nullptr;
 }
 
-bool
+static void
+ReadWaypointFile(Reader &file_reader, WaypointFileType file_type,
+                 uint_least64_t total_size,
+                 Waypoints &way_points, WaypointFactory factory,
+                 ProgressListener &progress)
+{
+  ProgressReader progress_reader{file_reader, total_size, progress};
+  BufferedReader buffered_reader{progress_reader};
+
+  switch (file_type) {
+  case WaypointFileType::SEEYOU:
+    ParseSeeYou(factory, way_points, buffered_reader);
+    break;
+
+  case WaypointFileType::CUPX:
+    gcc_unreachable();
+  default:
+    std::unique_ptr<WaypointReaderBase> reader { CreateWaypointReader(file_type,
+                                                                      factory) };
+    if (!reader)
+      throw std::runtime_error{"Unrecognised waypoint file"};
+
+    reader->Parse(way_points, buffered_reader);
+    break;
+  }
+}
+
+void
 ReadWaypointFile(Path path, WaypointFileType file_type,
                  Waypoints &way_points,
-                 WaypointFactory factory, OperationEnvironment &operation)
-try {
-  std::unique_ptr<WaypointReaderBase> reader(CreateWaypointReader(file_type,
-                                                                  factory));
-  if (!reader)
-    return false;
-
-  FileLineReader line_reader(path, Charset::AUTO);
-  reader->Parse(way_points, line_reader, operation);
-  return true;
-} catch (const std::runtime_error &) {
-  return false;
-}
-
-bool
-ReadWaypointFile(Path path, Waypoints &way_points,
-                 WaypointFactory factory, OperationEnvironment &operation)
+                 WaypointFactory factory, ProgressListener &progress)
 {
-  return ReadWaypointFile(path, DetermineWaypointFileType(path),
-                          way_points, factory, operation);
+  if (file_type == WaypointFileType::CUPX) {
+    auto cup_data = CupxArchive::ExtractPointsCup(path);
+    if (cup_data.empty())
+      throw std::runtime_error{"Failed to read POINTS.CUP from CUPX archive"};
+
+    MemoryReader mem_reader{cup_data};
+    ProgressReader progress_reader{mem_reader, cup_data.size(), progress};
+    BufferedReader buffered_reader{progress_reader};
+    ParseSeeYou(factory, way_points, buffered_reader);
+    return;
+  }
+
+  FileReader file_reader{path};
+  ReadWaypointFile(file_reader, file_type, file_reader.GetSize(),
+                   way_points, factory, progress);
 }
 
-bool
+void
+ReadWaypointFile(Path path, Waypoints &way_points,
+                 WaypointFactory factory, ProgressListener &progress)
+{
+  ReadWaypointFile(path, DetermineWaypointFileType(path),
+                   way_points, factory, progress);
+}
+
+void
 ReadWaypointFile(struct zzip_dir *dir, const char *path,
                  WaypointFileType file_type, Waypoints &way_points,
-                 WaypointFactory factory, OperationEnvironment &operation)
-try {
-  std::unique_ptr<WaypointReaderBase> reader(CreateWaypointReader(file_type,
-                                                                  factory));
-  if (!reader)
-    return false;
-
-  ZipLineReader line_reader(dir, path, Charset::AUTO);
-  reader->Parse(way_points, line_reader, operation);
-  return true;
-} catch (const std::runtime_error &e) {
-  return false;
+                 WaypointFactory factory, ProgressListener &progress)
+{
+  ZipReader file_reader{dir, path};
+  ReadWaypointFile(file_reader, file_type, file_reader.GetSize(),
+                   way_points, factory, progress);
 }

@@ -1,60 +1,46 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
+#include "DataFilePath.hpp"
 #include "Glue.hpp"
 #include "Global.hpp"
 #include "TrafficDatabases.hpp"
 #include "FlarmNetReader.hpp"
 #include "NameFile.hpp"
+#include "MessagingFile.hpp"
 #include "Components.hpp"
+#include "BackendComponents.hpp"
 #include "MergeThread.hpp"
-#include "LocalPath.hpp"
-#include "IO/DataFile.hpp"
-#include "IO/LineReader.hpp"
-#include "IO/FileOutputStream.hxx"
-#include "IO/BufferedOutputStream.hxx"
+#include "Repository/FileType.hpp"
+#include "io/DataFile.hpp"
+#include "io/Reader.hxx"
+#include "io/BufferedReader.hxx"
+#include "io/LineReader.hpp"
+#include "io/FileOutputStream.hxx"
+#include "io/BufferedOutputStream.hxx"
 #include "Profile/FlarmProfile.hpp"
 #include "Profile/Current.hpp"
 #include "LogFile.hpp"
 #include "Profile/Profile.hpp"
-#include "Profile/ProfileKeys.hpp"
+#include "Profile/Keys.hpp"
+#include "time/PeriodClock.hpp"
 
 /**
  * Loads the FLARMnet file
  */
 static void
-LoadFLARMnet(FlarmNetDatabase &db)
+LoadFLARMnet(FlarmNetDatabase &db) noexcept
 try {
   auto path = Profile::GetPath(ProfileKeys::FlarmFile);
-  if (path.IsNull()) {
+  if (path == nullptr) {
     return;
   }
 
   unsigned num_records = FlarmNetReader::LoadFile(path, db);
   if (num_records > 0)
-    LogFormat("%u FLARMnet ids found", num_records);
-} catch (const std::runtime_error &e) {
-  LogError(e);
+    LogFormat("FLARMnet IDs found: %u", num_records);
+} catch (...) {
+  LogError(std::current_exception());
 }
 
 /**
@@ -63,18 +49,34 @@ try {
  * @see AddSecondaryItem
  */
 static void
-LoadSecondary(FlarmNameDatabase &db)
+LoadSecondary(FlarmNameDatabase &db) noexcept
 try {
-  LogFormat("OpenFLARMDetails");
+  LogString("OpenFLARMDetails");
 
-  auto reader = OpenDataTextFile(_T("xcsoar-flarm.txt"));
-  LoadFlarmNameFile(*reader, db);
-} catch (const std::runtime_error &e) {
-  LogError(e);
+  auto reader = OpenDataFile("xcsoar-flarm.txt");
+  BufferedReader buffered_reader{*reader};
+  LoadFlarmNameFile(buffered_reader, db);
+} catch (...) {
+  LogError(std::current_exception());
+}
+
+static void
+LoadFlarmMessagingData(FlarmMessagingDatabase &db) noexcept
+try {
+  LogString("OpenFLARMMessages");
+
+  auto reader = OpenDataFile("flarm-msg-data.csv");
+  BufferedReader buffered_reader{*reader};
+  unsigned num_records = LoadFlarmMessagingFile(buffered_reader, db);
+  if (num_records > 0)
+    LogFormat("%u FLARM messaging records found", num_records);
+  db.MarkSaved();  // Initialize hash baseline after load
+} catch (...) {
+  LogError(std::current_exception());
 }
 
 void
-LoadFlarmDatabases()
+LoadFlarmDatabases() noexcept
 {
   if (traffic_databases != nullptr)
     return;
@@ -83,23 +85,27 @@ LoadFlarmDatabases()
 }
 
 void
-ReloadFlarmDatabases()
+ReloadFlarmDatabases() noexcept
 {
-  traffic_databases = new TrafficDatabases();
-
   /* the MergeThread must be suspended, because it reads the FLARM
      databases */
-  merge_thread->Suspend();
+  backend_components->merge_thread->Suspend();
+
+  delete traffic_databases;
+  traffic_databases = nullptr;
+
+  traffic_databases = new TrafficDatabases();
 
   LoadSecondary(traffic_databases->flarm_names);
+  LoadFlarmMessagingData(traffic_databases->flarm_messages);
   LoadFLARMnet(traffic_databases->flarm_net);
   Profile::Load(Profile::map, traffic_databases->flarm_colors);
 
-  merge_thread->Resume();
+  backend_components->merge_thread->Resume();
 }
 
 void
-SaveFlarmColors()
+SaveFlarmColors() noexcept
 {
   if (traffic_databases != nullptr)
     Profile::Save(Profile::map, traffic_databases->flarm_colors);
@@ -110,26 +116,69 @@ SaveFlarmColors()
  * corresponding file (xcsoar-flarm.txt)
    */
 static void
-SaveSecondary(FlarmNameDatabase &flarm_names)
+SaveSecondary(FlarmNameDatabase &flarm_names) noexcept
 try {
-  FileOutputStream fos(LocalPath(_T("xcsoar-flarm.txt")));
+  FileOutputStream fos(
+    TypedDataSavePath(FileType::FLARMDB, "xcsoar-flarm.txt"));
   BufferedOutputStream bos(fos);
   SaveFlarmNameFile(bos, flarm_names);
   bos.Flush();
   fos.Commit();
-} catch (const std::runtime_error &e) {
-  LogError(e);
+} catch (...) {
+  LogError(std::current_exception());
+}
+
+static void
+SaveMessaging(FlarmMessagingDatabase &flarm_messages) noexcept
+try {
+  FileOutputStream fos(
+    TypedDataSavePath(FileType::FLARMDB, "flarm-msg-data.csv"));
+  BufferedOutputStream bos(fos);
+  SaveFlarmMessagingFile(bos, flarm_messages);
+  bos.Flush();
+  fos.Commit();
+} catch (...) {
+  LogError(std::current_exception());
 }
 
 void
-SaveFlarmNames()
+SaveFlarmNames() noexcept
 {
   if (traffic_databases != nullptr)
     SaveSecondary(traffic_databases->flarm_names);
 }
 
 void
-DeinitTrafficGlobals()
+SaveFlarmMessaging() noexcept
+{
+  if (traffic_databases != nullptr)
+    SaveMessaging(traffic_databases->flarm_messages);
+}
+
+void
+SaveFlarmMessagingPeriodic() noexcept
+{
+  using namespace std::chrono;
+
+  static PeriodClock save_clock;
+  static constexpr auto interval = minutes(5);
+
+  if (traffic_databases == nullptr)
+    return;
+
+  if (!traffic_databases->flarm_messages.HasUpdates())
+    return;
+
+  if (!save_clock.Check(interval))
+    return;
+
+  SaveMessaging(traffic_databases->flarm_messages);
+  traffic_databases->flarm_messages.MarkSaved();
+  save_clock.Update();
+}
+
+void
+DeinitTrafficGlobals() noexcept
 {
   delete traffic_databases;
   traffic_databases = nullptr;

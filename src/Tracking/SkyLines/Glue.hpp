@@ -1,32 +1,15 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TRACKING_SKYLINES_GLUE_HPP
-#define XCSOAR_TRACKING_SKYLINES_GLUE_HPP
+#pragma once
 
 #include "Client.hpp"
-#include "Time/GPSClock.hpp"
+#include "Tracking/SkyLines/TrafficExtensions.hpp"
+#include "time/GPSClock.hpp"
+#include "time/Stamp.hpp"
+#include "util/StaticString.hxx"
 
+struct CloudSettings;
 struct DerivedInfo;
 
 namespace SkyLinesTracking {
@@ -36,7 +19,8 @@ class Queue;
 
 class Glue {
   Client client;
-  unsigned interval = 0;
+  std::chrono::steady_clock::time_point client_retry_at{};
+  std::chrono::steady_clock::duration interval{};
   GPSClock clock;
 
   GPSClock traffic_clock;
@@ -47,35 +31,51 @@ class Glue {
 
   bool thermal_enabled = false;
 
-  bool roaming = true;
+  bool skylines_roaming = true;
 
   Queue *queue = nullptr;
 
   Client cloud_client;
+  std::chrono::steady_clock::time_point cloud_retry_at{};
   GPSClock cloud_clock;
+  GPSClock cloud_traffic_clock;
 
-  double last_climb_time = -1;
+  bool cloud_show_traffic = true;
+  bool cloud_roaming = true;
+
+  StaticString<64> cloud_host;
+
+  unsigned cloud_port = 0;
+
+  TimeStamp last_climb_time = TimeStamp::Undefined();
 
 public:
-  Glue(boost::asio::io_service &io_service, Handler *_handler);
+  Glue(EventLoop &event_loop, Handler *_handler);
   ~Glue();
 
-  void SetSettings(const Settings &settings);
+  void SetSettings(const Settings &skylines_settings,
+                   const CloudSettings &cloud_settings);
+
+  void BeginShutdown() noexcept;
 
   void Tick(const NMEAInfo &basic, const DerivedInfo &calculated);
 
   void RequestUserName(uint32_t user_id) {
-    client.SendUserNameRequest(user_id);
+    if ((user_id & OGN_PILOT_ID_MASK) != 0) {
+      if (cloud_client.IsConnected())
+        cloud_client.SendUserNameRequest(user_id);
+    } else if (client.IsConnected())
+      client.SendUserNameRequest(user_id);
   }
 
 private:
-  gcc_pure
-  bool IsConnected() const;
+  [[gnu::pure]]
+  bool IsNetConnected(bool roaming_allowed) const;
+
+  void ReconnectClients();
 
   void SendFixes(const NMEAInfo &basic);
   void SendCloudFix(const NMEAInfo &basic, const DerivedInfo &calculated);
 };
 
 } /* namespace SkyLinesTracking */
-
-#endif

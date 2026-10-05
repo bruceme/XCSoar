@@ -25,7 +25,7 @@ selber kompilieren und wirklich \textbf{alles} ändern.
 
 Solltest Du ein ernstes Interesse daran haben, wirklich detailliert in \xc  einzusteigen, um eventuell Deine
 ganz eigene Oberfläche zu gestalten, so empfehlen wir,  Dich mit dem \xc-Wiki  zu beschäftigen. Hier der
-Link: \url{http://www.xcsoar.org/trac/wiki}
+Link: \url{https://github.com/XCSoar/xcsoar/issues/wiki}
 
 
 %%%%%%%%%%%%%%%%%%
@@ -367,7 +367,7 @@ Die Filterfunktion ist beschrieben in Kap.~\ref{sec:airspace-filter}.
 
 %%%%%%%%%%%%%%%%%%
 \section{Endanflugrechner/Sicherheitsfaktoren}
-Hier werden Einstellungen für die Sicherheitshöhen und deren Verhalten in den Berechnungsalgorythmen vorgenommen.
+Hier werden Einstellungen für die Sicherheitshöhen und deren Verhalten in den Berechnungsalgorithmen vorgenommen.
 
 \begin{description}
 \item[\textit{Ankunftshöhe}] Sicherheitshöhe. \index{Sicherheitshöhe!Einstellung} Diese  gibt die Höhe über Grund am Zielpunkt an, in der das
@@ -402,7 +402,7 @@ Ein Wert von ca. $0.3$ ist empfohlen.  Mehr dazu auch in Kap.~\ref{sec:safety-fa
 Über diese Seite können die Routinen des Endanflugrechners von \xc  beinflußt werden.
 
 \begin{description}
-\item[\textit{MC Optimierung}]  Diese Option setzt fest, welcher MC-Algorythmus verwendet wrd.
+\item[\textit{MC Optimierung}]  Diese Option setzt fest, welcher MC-Algorithmus verwendet wrd.
 Mehr dazu in Kap.~\ref{sec:auto-maccready}. \\
    {\bf Endanflug}: Stellt den MC Wert auf die schnellstmögliche Ankunft ein.
    Bei OLC - Aufgaben werden die Einstellungen  so gewählt, daß \sketch{figures/config-glidecomputer.png} eine möglichst große Strecke innerhalb der verbleibenden Zeit zurückgelegt wird.\\
@@ -429,7 +429,7 @@ aktuellen Wert herankommen, größere Werte immer weiter an den Wert gemittell �
 \item[\textit{Geschätzte Winddrift$^{\textcolor{blue}{\star}}$}]  {\bf Ein / Aus}: Berücksichtigt die Abdrift durch den Wind während des Kurbelns. Dies wird die Ankunftshöhe auf Gegenwindschenkeln reduzieren
 und kann mitunter zu interpretationswürdigen Ergebnissen führen,
 wenn man sich im Endanflug unterhalb des Gleitpfades befindet, MC auf Null gestellt hat, und so also noch kurbeln \textsl{muß}.
-Nach der MC-Theorie heißt MC=0, daß kein Kurbeln mehr stattfindet. Der Algorythmus befindet sich so in einer Zwickmühle, denn einerseits wird mitgeteilt, daß nicht
+Nach der MC-Theorie heißt MC=0, daß kein Kurbeln mehr stattfindet. Der Algorithmus befindet sich so in einer Zwickmühle, denn einerseits wird mitgeteilt, daß nicht
 mehr gekurbelt wird, andererseits tut man es doch\dots
 \achtung Für das ''normale, althergebrachte Verhalten'' anderer Systeme sollte man sich überlegen, dies auf ''Aus'' stehen zu lassen.
 \end{description}
@@ -440,7 +440,7 @@ mehr gekurbelt wird, andererseits tut man es doch\dots
 Auf dieser Seite werden die Windeinstellungen vorgenommen. Details zu den verschiedenen Berechnungen in Kap.~\ref{sec:wind-estimation}
 \begin{description}
 \item[\textit{Windberech}]  \label{conf:autowind}  Auswahl des entsprechenden modus für Ermittlung des Windes in \xc \\
-  {\bf Manuell}: Wenn der Algorythmus ausgeschaltet ist, wird allein die Eingabe des Piloten benutzt. \\
+  {\bf Manuell}: Wenn der Algorithmus ausgeschaltet ist, wird allein die Eingabe des Piloten benutzt. \\
   {\bf beim Kreisen}: Benutzt das GPS zur Ermittlung des Windes durch Berechnung der Abdrift beim Kurbeln.\\
   \sketch{figures/config-wind.png}{\bf ZickZack}: ZickZack-Modus benötigt ein intelligentes Vario  mit einem Ausgang für die TAS.\\
   {\bf Beides}:  Benutzt den ZickZack und GPS-Modus zur Ermittlung des Windes.
@@ -568,8 +568,7 @@ rules. \label{conf:taskrules}\index{Aufgabe!Regeln Voreinstellung}
 \item[\textit{Zielhöhenref.$^{\textcolor{blue}{\star}}$}] Bezugshöhe der Ankunftshöhe:\\
     {\bf MSL}: Ankunftshöhe ist bezogen auf Meereshöhe.\\
     {\bf AGL}: Ankunftshöhe ist bezogen auf Höhe über Grund.
-\item[\textit{On-Line Contest}]  Einstellungen zu den Optimierungsalgorythmen des OLC.
-   Die Implementierung enstpricht der ofiziellen Ausgabe vom 23. September 2010. \\
+\item[\textit{Contest}]  Einstellungen zu den Optimierungsalgorithmen des ausgewählten Wettbewerbs. \\
    {\bf OLC FAI}: Gleichlautend zu den FAI-Dreiecksregeln. Zwei Wenden, wobei Star-und Zielpunkt identisch sind.
    Kein Schenkel darf kürzer sein als 28\% der Gesamtstrecke. Bei Dreiecken größer als 500Km
    darf kein Schenkel größer sein als 25\% der Gesamtstrecke und länger als 45\% andernfalls kein
@@ -577,14 +576,16 @@ rules. \label{conf:taskrules}\index{Aufgabe!Regeln Voreinstellung}
    {\bf OLC Classic}: Bis zu sieben Punkte einschließlich Start und Ziel, Ankunftshöhe nicht
    mehr als 1000m unter der Abflughöhe. \\
    {\bf OLC League}: Der aktuelle Contest mit Sprint-Wettbewerbsregeln.
-   Aus dem OLC Classic Dreieck wird das 2,5 Stunden Fenster mit dem besten Schnitt herausgschnitten. 
+   Aus dem OLC Classic Dreieck wird das 2 Stunden Fenster mit dem besten Schnitt herausgschnitten. 
    Ankunftshöhe darf nicht unter Abflughöhe liegen.\\
   {\bf OLC Plus}: Kombination aus Classic und FAI Regeln. 30\% der FAI Punkte werden zur
    Classic Wertung dazugezählt \\
   {\bf XContest}: \todonum{noch zu schreiben} \\
   {\bf DHV-XC}: \todonum{noch zu schreiben} \\
   {\bf SIS-AT}: \todonum{noch zu schreiben} \\
-  {\bf FFVV NetCoupe}: Der FFVV NetCoupe {\it ''libre''} Wettbewerb.
+  {\bf FFVV NetCoupe}: Der FFVV NetCoupe {\it ''libre''} Wettbewerb. \\
+  {\bf WeGlide FREE}: \todonum{noch zu schreiben} \\
+  {\bf WeGlide O\&R}: \todonum{noch zu schreiben} \\
 \item[\textit{Wertungs-Vorhersage}]  {\bf Ein / Aus}: Wenn eingeschaltet, wird angenommen, daß der nächste Wegpunkt erreicht wird und
 die daraus sich ergebende Wertung errechnet.
 \end{description}
@@ -628,7 +629,7 @@ Gewertet wird das Zentrum des Zylinders.(britisch)\\
 {\bf  FAI Abzeichen / Rekorde}: FAI-Regeln. Erlaubt nur FAI Start-, Ziel- und Wendepunkttypen. Für Abzeichen und Rekorde. Aktiviert die FAI Höhe für die Endanflugbnerechnung.
 \item[\textit{AAT min. Zeit}] Die bei AAT-Aufgaben mindestens zu fliegende Zeit. Vorgabe durch WB-Leitung.
 \item[\textit{Optimierungs-Spielraum$^{\textcolor{blue}{\star}}$}] Sicherheitszeitraum für AAT-Optimierung.
-Als Schutz gegen ''zu früh ankommen''. Der Optimierungsalgorythmus versucht, die Aufgabe innerhalb der vorgegebenen Mindestflugzeit plus dieser Zusatzzeit zu bneenden.
+Als Schutz gegen ''zu früh ankommen''. Der Optimierungsalgorithmus versucht, die Aufgabe innerhalb der vorgegebenen Mindestflugzeit plus dieser Zusatzzeit zu bneenden.
 Im ''Optimiert''-Modus  werden dabei die AAT-Punkte automatisch verschoben, um diese Zeit einhalten zu können..
 \end{description}
 
@@ -700,6 +701,10 @@ Zum Beispiel wird der aktive Wegpunkt-InfoBox  blau dargestellt, wenn sich das F
   {\bf Kasten}: Zeichnet einen Kasten um jede InfoBox.\\
   {\bf Tab}: Zeichnet einen Reiter über den Titel der InfoBox
   title. \\
+\item[\textit{Zeigergröße}]  Die Größe des (Maus-) Zeigers. Voreinstellung ist 1.
+  Nur verfügbar, wenn der Zeiger von XCSoar kontrolliert wird.
+\item[\textit{Schwarzer Zeiger}]  Schwarzen statt weißem Zeiger verwenden. Voreinstellung ist {\bf Aus} (weißer Zeiger).
+  Nur verfügbar, wenn der Zeiger von XCSoar kontrolliert wird.
 \end{description}
 
 
@@ -820,7 +825,7 @@ Es dürfen COM 0 bis 10 verwendet werden,  einschließlich einer TCP/IP Verbinun
 Rechnerverbindung (\textsc{CONDOR} o.ä.) benutzt werden kann. Welcher COM-Port benutzt werden soll, hängt maßgeblich vom angeschlossenen Gerät ab,
 welches diesen Port zur Verfügung stellt und wie es dies tut (BlueTooth, serielles Kabel, IoIo, SDCard, CF Card etc.) Auf alle diese detaillierten
 Eingänge hier im Handbuch einzugehen, überstiege den Umfang des Handbuches, daher bitte auf der \xc-Hompage nachschauen, oder aber
-in einer der mailing-listen  (z.B.:  im \href{http://forum.xcsoar.org/}{XCSsoar-Forum}) um Hilfe bitten.
+in einer der mailing-listen  (z.B.:  im \href{https://forum.xcsoar.org}{XCSoar-Forum}) um Hilfe bitten.
 
 \begin{description}
 \item[\textit{Anschluß}]  Hier werden die vier möglichen Anschlüsse A..D mit dem entsprechenden Gerät belegt. (Auf das Feld gehen und anschließend entsprechenden Treiber aus Liste (s.u.) auswählen).
@@ -956,13 +961,18 @@ Es ist jedoch möglich, die angegebenen Werte nach Belieben zu mischen und so z.
 Einstellen der Uhr mit Referenz zur UTC-Zeit.
 
 \begin{description}
-\item[\textit{Zeitzonenverschiebung}]  {\bf -13 ..+13h}: In diesem Feld wird die Zeitzonenverscheibung zur UTC zeit eingebeben. Die Differenz kann im 30Minuten-Intervall eingegeben werden.
+\item[\textit{Quelle der Lokalzeit}] {\bf Automatisch / Zeitzone / Manueller UTC-Offset}: Legt fest, woher \xc den Offset zwischen UTC und Lokalzeit bezieht.\\
+{\bf Automatisch}: Der Offset wird aus der im Betriebssystem eingestellten Zeitzone übernommen und laufend nachgeführt. Damit folgt er automatisch der Sommer-/Winterzeitumstellung und einem Wechsel in eine andere Zeitzone. Auf dem Kobo steht diese Einstellung nicht zur Verfügung, weil das Gerät gar keine Zeitzone kennt.\\
+{\bf Zeitzone}: Der Offset wird aus der unten gewählten Zeitzone berechnet. Eine Zeitzone enthält die Regeln für die Sommerzeit, \xc schaltet also selbst um. Die Einstellung muss nicht zweimal im Jahr angefasst werden.\\
+{\bf Manueller UTC-Offset}: Es wird der unten von Hand eingegebene Offset benutzt. Er muss zu jeder Zeitumstellung korrigiert werden. Diese Möglichkeit wird nur im Expertenmodus angeboten, ausser sie ist gerade eingestellt.
+\item[\textit{Zeitzone}] Die Zeitzone des Flugplatzes, auf dem geflogen wird, z.\,B. ''Europe/Berlin``. Das Feld ist nur bearbeitbar, wenn als Quelle der Lokalzeit ''Zeitzone`` gewählt ist.
+\item[\textit{Manueller UTC-Offset}]  {\bf -13 ..+14h}: In diesem Feld wird der Offset der Lokalzeit zur UTC-Zeit eingegeben. Das Feld ist nur bearbeitbar, wenn als Quelle der Lokalzeit ''Manueller UTC-Offset`` gewählt ist, und behält den eingegebenen Wert, solange eine andere Quelle gewählt ist. Die Differenz kann im 15-Minuten-Intervall eingegeben werden.
 Zur Kontrolle wird im Feld darunter die entsprechende Lokalzeit angegeben -- um Mißverständnisse zu verhindern.
 
 Achtung! 
 
 Große Falle, wenn ihr versucht, das Starzeitfenster (z.B. per ''sofort'') einzustellen, und Ihr habt \warning hier nicht richtig die Zeitverschiebung eingestellt !! (Siehe z.B. ~\ref{sec:start-gate})
-\item[\textit{Lokalzeit}]  Das ist die oben errechnete Lokalzeit -- nur zur Kontrolle.
+\item[\textit{Lokalzeit}]  Das ist die oben errechnete Lokalzeit -- nur zur Kontrolle. Dahinter steht in Klammern der gerade gültige UTC-Offset.
 \item[\textit{Benutze GPS-Zeit$^{\textcolor{blue}{\star}}$}] {\bf Ein /Aus}: Einstellung des Empfanges des Zeitsingales über das angeschlossene GPS\\
 {\bf Ein}: Wenn eingeschaltet wird die Uhr des Gerätes auf dem \xc läuft \textsl{bei jedem Fix} durch das empfangene Zeitsignal des GPS neu gesetzt.
 \achtung
@@ -980,7 +990,7 @@ eine Spur des Kurses erstellt und auf einer Karte darstellt.
 
 Diese ''Tracking-Option'' benötigt eine  Verbindung zu einem Handynetz, um die Daten übermitteln zu können.
 Zur Zeit sind zwei Protokolle implementiert. ''{\em SkyLines}''  als ein StartUp Service von \xc selber,
-Details hierzu auf  \url{http://skylines.xcsoar.org}.
+Details hierzu auf  \url{https://skylines.aero}.
 
 
 Weiterhin das ''{\em LiveTrack24}'', welches für das Tracking System auf \url{http://www.livetrack24.com} benutzt wird.
@@ -990,7 +1000,7 @@ Details dazu befinden sich auf der entsprechenden Homepage.
 \item[SkyLines] {\bf Ein}: Ermöglicht die Life-Verfolgung Deiner Position über Live-stream per `{\em SkyLines}'.
 \item[Tracking Interval]  Das Zeitintervall für die Positionsübermitlung an den Tracking-Service.
 ''{\em SkyLines}''  hat ein sehr schlankes Protokoll implmentiert, sodaß selbst  ein 30-Sekunden-Intervall eine GPRS-Verbindung (ca. 12kbit/sec) nicht überlastet.
-\item[Key] Hier wird der Schlüssel eingegeben, welcher auf der Seite \url{http://skylines.xcsoar.org/tracking/info}
+\item[Key] Hier wird der Schlüssel eingegeben, welcher auf der Seite \url{http://skylines.aero/tracking/info}
 erstellt wurde, um Dich zu identifizieren.
 \\
 \item[LiveTrack24]  {\bf EIN}: Hiermit wird der liveStream von  ''{\em LiveTrack24}'' eingeschaltet.

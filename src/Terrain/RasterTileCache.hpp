@@ -1,44 +1,25 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_RASTERTILE_CACHE_HPP
-#define XCSOAR_RASTERTILE_CACHE_HPP
+#pragma once
 
 #include "RasterTraits.hpp"
 #include "RasterTile.hpp"
 #include "RasterLocation.hpp"
 #include "Geo/GeoBounds.hpp"
-#include "Util/StaticArray.hxx"
-#include "Util/Serial.hpp"
+#include "util/StaticArray.hxx"
+#include "util/Serial.hpp"
 
-#include <assert.h>
-#include <stdio.h>
-#include <stdint.h>
+#include <cassert>
+#include <cstdint>
+#include <optional>
 
-#define RASTER_SLOPE_FACT 12
+static constexpr unsigned  RASTER_SLOPE_FACT = 12;
 
 struct jas_matrix;
 struct GridLocation;
+class BufferedOutputStream;
+class BufferedReader;
 
 class RasterTileCache {
   static constexpr unsigned MAX_RTC_TILES = 4096;
@@ -53,14 +34,6 @@ class RasterTileCache {
   // desktop: use a lot of memory
   static constexpr unsigned MAX_ACTIVE_TILES = 512;
 #endif
-
-  /**
-   * The width and height of the terrain bitmap is shifted by this
-   * number of bits to determine the overview size.
-   */
-  static constexpr unsigned OVERVIEW_BITS = 4;
-
-  static constexpr unsigned OVERVIEW_MASK = (~0u) << OVERVIEW_BITS;
 
   /**
    * Target number of steps in intersection searches; total distance
@@ -91,11 +64,13 @@ protected:
      */
     uint16_t count;
 
-    MarkerSegmentInfo() {}
-    MarkerSegmentInfo(uint32_t _file_offset, int _tile=NO_TILE)
+    MarkerSegmentInfo() noexcept = default;
+
+    constexpr MarkerSegmentInfo(uint32_t _file_offset,
+                                int _tile=NO_TILE) noexcept
       :file_offset(_file_offset), tile(_tile), count(0) {}
 
-    bool IsTileSegment() const {
+    constexpr bool IsTileSegment() const noexcept {
       return tile != NO_TILE;
     }
   };
@@ -104,9 +79,9 @@ protected:
     static constexpr unsigned VERSION = 0xb;
 
     unsigned version;
-    unsigned width, height;
-    unsigned short tile_width, tile_height;
-    unsigned tile_columns, tile_rows;
+    UnsignedPoint2D size;
+    Point2D<uint_least16_t> tile_size;
+    UnsignedPoint2D n_tiles;
     unsigned num_marker_segments;
     GeoBounds bounds;
   };
@@ -120,11 +95,11 @@ protected:
   Serial serial;
 
   AllocatedGrid<RasterTile> tiles;
-  unsigned short tile_width, tile_height;
+  Point2D<uint_least16_t> tile_size;
 
   RasterBuffer overview;
-  unsigned int width, height;
-  unsigned int overview_width_fine, overview_height_fine;
+  RasterLocation size;
+  RasterLocation overview_size_fine;
 
   GeoBounds bounds;
 
@@ -138,14 +113,14 @@ protected:
   StaticArray<uint16_t, MAX_RTC_TILES> request_tiles;
 
 public:
-  RasterTileCache() {
+  RasterTileCache() noexcept {
     Reset();
   }
 
   RasterTileCache(const RasterTileCache &) = delete;
   RasterTileCache &operator=(const RasterTileCache &) = delete;
 
-  void SetBounds(const GeoBounds &_bounds) {
+  void SetBounds(const GeoBounds &_bounds) noexcept {
     assert(_bounds.IsValid());
 
     bounds = _bounds;
@@ -154,29 +129,26 @@ public:
 protected:
   void ScanTileLine(GridLocation start, GridLocation end,
                     TerrainHeight *buffer, unsigned size,
-                    bool interpolate) const;
+                    bool interpolate) const noexcept;
 
 public:
   /**
    * Determine the non-interpolated height at the specified pixel
    * location.
    *
-   * @param x the pixel column within the map; may be out of range
-   * @param y the pixel row within the map; may be out of range
+   * @param x the pixel position within the map; may be out of range
    */
-  gcc_pure
-  TerrainHeight GetHeight(unsigned x, unsigned y) const;
+  [[gnu::pure]]
+  TerrainHeight GetHeight(RasterLocation p) const noexcept;
 
   /**
    * Determine the interpolated height at the specified sub-pixel
    * location.
    *
-   * @param lx the sub-pixel column within the map; may be out of range
-   * @param ly the sub-pixel row within the map; may be out of range
+   * @param p the sub-pixel position within the map; may be out of range
    */
-  gcc_pure
-  TerrainHeight GetInterpolatedHeight(unsigned lx,
-                                      unsigned ly) const;
+  [[gnu::pure]]
+  TerrainHeight GetInterpolatedHeight(RasterLocation p) const noexcept;
 
   /**
    * Scan a straight line and fill the buffer with the specified
@@ -186,61 +158,74 @@ public:
    * @param end the sub-pixel end location
    */
   void ScanLine(const RasterLocation start, const RasterLocation end,
-                TerrainHeight *buffer, unsigned size, bool interpolate) const;
+                TerrainHeight *buffer, unsigned size,
+                bool interpolate) const noexcept;
 
-  bool FirstIntersection(SignedRasterLocation origin,
-                         SignedRasterLocation destination,
-                         int h_origin,
-                         int h_dest,
-                         const int slope_fact, const int h_ceiling,
-                         const int h_safety,
-                         RasterLocation &_location, int &h_int,
-                         const bool can_climb) const;
+  struct Intersection {
+    RasterLocation location;
+    int height;
+  };
+
+  [[gnu::pure]]
+  std::optional<Intersection> FirstIntersection(SignedRasterLocation origin,
+                                                SignedRasterLocation destination,
+                                                int h_origin,
+                                                int h_dest,
+                                                int slope_fact, int h_ceiling,
+                                                int h_safety,
+                                                bool can_climb) const noexcept;
 
   /**
    * @return {-1,-1} if no intersection was found
    */
-  gcc_pure SignedRasterLocation
-  Intersection(SignedRasterLocation origin, SignedRasterLocation destination,
-               int h_origin, const int slope_fact,
-               const int height_floor) const;
+  [[gnu::pure]] SignedRasterLocation
+  GroundIntersection(SignedRasterLocation origin,
+                     SignedRasterLocation destination,
+                     int h_origin, const int slope_fact,
+                     int height_floor) const noexcept;
 
 private:
   /**
    * Get field (not interpolated) directly, without bringing tiles to front.
-   * @param px X position/256
-   * @param px Y position/256
+   * @param p position/256
    * @param tile_index Remember position of active tile, or -1 for overview
    * @return the terrain altitude and a flag that is true when the
    * value was loaded from a "fine" tile
    */
-  gcc_pure
-  std::pair<TerrainHeight, bool> GetFieldDirect(unsigned px, unsigned py) const;
+  [[gnu::pure]]
+  std::pair<TerrainHeight, bool> GetFieldDirect(RasterLocation p) const noexcept;
 
 public:
-  bool SaveCache(FILE *file) const;
-  bool LoadCache(FILE *file);
+  /**
+   * Throws on error.
+   */
+  void SaveCache(BufferedOutputStream &os) const;
+
+  /**
+   * Throws on error.
+   */
+  void LoadCache(BufferedReader &r);
 
   /**
    * Determines if there are still tiles scheduled to be loaded.  Call
    * this after UpdateTiles() to determine if UpdateTiles() should be
    * called again soon.
    */
-  bool IsDirty() const {
+  bool IsDirty() const noexcept {
     return dirty;
   }
 
-  bool IsValid() const {
+  bool IsValid() const noexcept {
     return bounds.IsValid();
   }
 
-  const Serial &GetSerial() const {
+  const Serial &GetSerial() const noexcept {
     return serial;
   }
 
-  void Reset();
+  void Reset() noexcept;
 
-  const GeoBounds &GetBounds() const {
+  const GeoBounds &GetBounds() const noexcept {
     assert(bounds.IsValid());
 
     return bounds;
@@ -249,68 +234,61 @@ public:
 public:
   /* methods called by class TerrainLoader */
 
-  gcc_pure
+  [[gnu::pure]]
   const MarkerSegmentInfo *
-  FindMarkerSegment(uint32_t file_offset) const;
+  FindMarkerSegment(uint32_t file_offset) const noexcept;
 
-  long SkipMarkerSegment(long file_offset) const;
-  void MarkerSegment(long file_offset, unsigned id);
+  long SkipMarkerSegment(long file_offset) const noexcept;
+  void MarkerSegment(long file_offset, unsigned id) noexcept;
 
-  void StartTile(unsigned index) {
+  void StartTile(unsigned index) noexcept {
     if (!segments.empty() && !segments.back().IsTileSegment())
       /* link current marker segment with this tile */
       segments.back().tile = index;
   }
 
-  void SetSize(unsigned width, unsigned height,
-               unsigned tile_width, unsigned tile_height,
-               unsigned tile_columns, unsigned tile_rows);
+  void SetSize(UnsignedPoint2D size,
+               Point2D<uint_least16_t> tile_size,
+               UnsignedPoint2D n_tiles) noexcept;
 
   void SetLatLonBounds(double lon_min, double lon_max,
-                       double lat_min, double lat_max);
+                       double lat_min, double lat_max) noexcept;
 
   void PutOverviewTile(unsigned index,
-                       unsigned start_x, unsigned start_y,
-                       unsigned end_x, unsigned end_y,
-                       const struct jas_matrix &m);
+                       RasterLocation start, RasterLocation end,
+                       const struct jas_matrix &m) noexcept;
 
-  bool PollTiles(int x, int y, unsigned radius);
+  bool PollTiles(SignedRasterLocation p, unsigned radius) noexcept;
 
-  void PutTileData(unsigned index, const struct jas_matrix &m);
+  void PutTileData(unsigned index, const struct jas_matrix &m) noexcept;
 
-  void FinishTileUpdate();
+  void FinishTileUpdate() noexcept;
 
 public:
-  TerrainHeight GetMaxElevation() const {
+  TerrainHeight GetMaxElevation() const noexcept {
     return overview.GetMaximum();
   }
 
   /**
    * Is the given point inside the map?
    */
-  bool IsInside(RasterLocation p) const {
-    return p.x < width && p.y < height;
+  bool IsInside(RasterLocation p) const noexcept {
+    return p.x < size.x && p.y < size.y;
   }
 
-  unsigned int GetWidth() const { return width; }
-  unsigned int GetHeight() const { return height; }
-
-  unsigned GetFineWidth() const {
-    return width << RasterTraits::SUBPIXEL_BITS;
+  const auto &GetSize() const noexcept {
+    return size;
   }
 
-  unsigned GetFineHeight() const {
-    return height << RasterTraits::SUBPIXEL_BITS;
+  RasterLocation GetFineSize() const noexcept {
+    return size << RasterTraits::SUBPIXEL_BITS;
   }
 
 private:
-  unsigned GetFineTileWidth() const {
-    return tile_width << RasterTraits::SUBPIXEL_BITS;
-  }
-
-  unsigned GetFineTileHeight() const {
-    return tile_height << RasterTraits::SUBPIXEL_BITS;
+  RasterLocation GetFineTileSize() const noexcept {
+    return {
+      unsigned(tile_size.x) << RasterTraits::SUBPIXEL_BITS,
+      unsigned(tile_size.y) << RasterTraits::SUBPIXEL_BITS,
+    };
   }
 };
-
-#endif

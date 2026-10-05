@@ -1,26 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "StatsComputer.hpp"
 #include "NMEA/MoreData.hpp"
@@ -30,16 +9,16 @@ void
 StatsComputer::ResetFlight(const bool full)
 {
   last_location = GeoPoint::Invalid();
-  last_climb_start_time = -1;
-  last_cruise_start_time = -1;
-  last_thermal_end_time = -1;
+  last_climb_start_time = TimeStamp::Undefined();
+  last_cruise_start_time = TimeStamp::Undefined();
+  last_thermal_end_time = TimeStamp::Undefined();
 
   if (full)
     flightstats.Reset();
 }
 
 void
-StatsComputer::StartTask(const NMEAInfo &basic)
+StatsComputer::StartTask([[maybe_unused]] const NMEAInfo &basic)
 {
   flightstats.StartTask();
 }
@@ -56,11 +35,10 @@ StatsComputer::DoLogging(const MoreData &basic,
   bool location_jump = basic.location_available && last_location.IsValid() &&
     basic.location.DistanceS(last_location) > 200;
 
-  last_location = basic.location_available
-    ? basic.location : GeoPoint::Invalid();
+  last_location = basic.GetLocationOrInvalid();
 
   if (location_jump || !basic.location_available)
-    // prevent bad fixes from being logged or added to OLC store
+    // prevent bad fixes from being logged or added to contest store
     return false;
 
   if (calculated.flight.flying &&
@@ -89,13 +67,13 @@ StatsComputer::DoLogging(const MoreData &basic,
 }
 
 void
-StatsComputer::OnClimbBase(const DerivedInfo &calculated)
+StatsComputer::OnClimbBase([[maybe_unused]] const DerivedInfo &calculated)
 {
   // nothing to do here now
 }
 
 void
-StatsComputer::OnClimbCeiling(const DerivedInfo &calculated)
+StatsComputer::OnClimbCeiling([[maybe_unused]] const DerivedInfo &calculated)
 {
   // nothing to do here now
 }
@@ -145,7 +123,7 @@ StatsComputer::ProcessClimbEvents(const DerivedInfo &calculated)
   }
 
   if (calculated.last_thermal.IsDefined() &&
-      (last_thermal_end_time < 0 ||
+      (!last_thermal_end_time.IsDefined() ||
        calculated.last_thermal.end_time > last_thermal_end_time))
     OnDepartedThermal(calculated);
 
@@ -153,5 +131,5 @@ StatsComputer::ProcessClimbEvents(const DerivedInfo &calculated)
   last_cruise_start_time = calculated.cruise_start_time;
   last_thermal_end_time = calculated.last_thermal.IsDefined()
     ? calculated.last_thermal.end_time
-    : -1.;
+    : TimeStamp::Undefined();
 }

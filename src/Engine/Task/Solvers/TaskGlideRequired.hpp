@@ -1,31 +1,10 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef TASKGLIDEREQUIRED_HPP
-#define TASKGLIDEREQUIRED_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "TaskMacCreadyRemaining.hpp"
 #include "Math/ZeroFinder.hpp"
-
-#include <vector>
 
 /**
  *  Class to solve for virtual sink rate such that pure glide at
@@ -37,6 +16,8 @@
  *
  */
 class TaskGlideRequired final : private ZeroFinder {
+  static constexpr double TOLERANCE = 0.001;
+
   TaskMacCreadyRemaining tm;
   GlideResult res;
   const AircraftState &aircraft;
@@ -50,10 +31,19 @@ public:
    * @param _aircraft Current aircraft state
    * @param gp Glide polar to copy for calculations
    */
-  TaskGlideRequired(const std::vector<OrderedTaskPoint *> &tps,
+  template<typename T>
+  TaskGlideRequired(T &tps,
                     const unsigned activeTaskPoint,
                     const AircraftState &_aircraft,
-                    const GlideSettings &settings, const GlidePolar &gp);
+                    const GlideSettings &settings,
+                    const GlidePolar &_gp) noexcept
+    :ZeroFinder(-10, 10, TOLERANCE),
+     tm(tps.begin(), tps.end(), activeTaskPoint, settings, _gp),
+     aircraft(_aircraft)
+  {
+    // Vopt at mc=0
+    tm.set_mc(0);
+  }
 
   /**
    * Constructor for single task points (non-ordered ones)
@@ -62,7 +52,7 @@ public:
    * @param _aircraft Current aircraft state
    * @param gp Glide polar to copy for calculations
    */
-  TaskGlideRequired(TaskPoint* tp,
+  TaskGlideRequired(TaskPoint &tp,
                     const AircraftState &_aircraft,
                     const GlideSettings &settings, const GlidePolar &gp);
 
@@ -73,13 +63,10 @@ public:
    *
    * @return Solution sink rate (m/s, down positive)
    */
-  gcc_pure
+  [[gnu::pure]]
   double search(double s);
 
 private:
   /* virtual methods from class ZeroFinder */
-  virtual double f(double mc) override;
+  double f(double mc) noexcept override;
 };
-
-#endif
-

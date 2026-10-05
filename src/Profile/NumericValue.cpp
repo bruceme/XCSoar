@@ -1,31 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Map.hpp"
-#include "Util/NumberParser.hpp"
+#include "util/NumberParser.hpp"
+#include "util/StringFormat.hpp"
 
 bool
-ProfileMap::Get(const char *key, int &value) const
+ProfileMap::Get(std::string_view key, int &value) const noexcept
 {
   // Try to read the profile map
   const char *str = Get(key);
@@ -44,7 +25,7 @@ ProfileMap::Get(const char *key, int &value) const
 }
 
 bool
-ProfileMap::Get(const char *key, short &value) const
+ProfileMap::Get(std::string_view key, short &value) const noexcept
 {
   // Try to read the profile map
   const char *str = Get(key);
@@ -63,7 +44,7 @@ ProfileMap::Get(const char *key, short &value) const
 }
 
 bool
-ProfileMap::Get(const char *key, bool &value) const
+ProfileMap::Get(std::string_view key, bool &value) const noexcept
 {
   // Try to read the profile map
   const char *str = Get(key);
@@ -76,7 +57,7 @@ ProfileMap::Get(const char *key, bool &value) const
 }
 
 bool
-ProfileMap::Get(const char *key, unsigned &value) const
+ProfileMap::Get(std::string_view key, unsigned &value) const noexcept
 {
   // Try to read the profile map
   const char *str = Get(key);
@@ -95,7 +76,7 @@ ProfileMap::Get(const char *key, unsigned &value) const
 }
 
 bool
-ProfileMap::Get(const char *key, uint16_t &value) const
+ProfileMap::Get(std::string_view key, uint16_t &value) const noexcept
 {
   unsigned value32;
   if (!Get(key, value32) || value32 >= 0x10000)
@@ -106,7 +87,7 @@ ProfileMap::Get(const char *key, uint16_t &value) const
 }
 
 bool
-ProfileMap::Get(const char *key, uint8_t &value) const
+ProfileMap::Get(std::string_view key, uint8_t &value) const noexcept
 {
   unsigned value32;
   if (!Get(key, value32) || value32 >= 0x100)
@@ -117,7 +98,7 @@ ProfileMap::Get(const char *key, uint8_t &value) const
 }
 
 bool
-ProfileMap::Get(const char *key, double &value) const
+ProfileMap::Get(std::string_view key, double &value) const noexcept
 {
   // Try to read the profile map
   const char *str = Get(key);
@@ -136,33 +117,45 @@ ProfileMap::Get(const char *key, double &value) const
 }
 
 void
-ProfileMap::Set(const char *key, int value)
+ProfileMap::Set(std::string_view key, int value) noexcept
 {
   char tmp[50];
-  sprintf(tmp, "%d", value);
+  const int written = StringFormat(tmp, sizeof(tmp), "%d", value);
+  if (written < 0 || written >= (int)sizeof(tmp))
+    return;
+
   Set(key, tmp);
 }
 
 void
-ProfileMap::Set(const char *key, long value)
+ProfileMap::Set(std::string_view key, long value) noexcept
 {
   char tmp[50];
-  sprintf(tmp, "%ld", value);
+  const int written = StringFormat(tmp, sizeof(tmp), "%ld", value);
+  if (written < 0 || written >= (int)sizeof(tmp))
+    return;
+
   Set(key, tmp);
 }
 
 void
-ProfileMap::Set(const char *key, unsigned value)
+ProfileMap::Set(std::string_view key, unsigned value) noexcept
 {
   char tmp[50];
-  sprintf(tmp, "%u", value);
+  const int written = StringFormat(tmp, sizeof(tmp), "%u", value);
+  if (written < 0 || written >= (int)sizeof(tmp))
+    return;
+
   Set(key, tmp);
 }
 
 void
-ProfileMap::Set(const char *key, double value)
+ProfileMap::Set(std::string_view key, double value) noexcept
 {
   char tmp[50];
-  sprintf(tmp, "%f", value);
+  const int written = StringFormat(tmp, sizeof(tmp), "%.17g", value);
+  if (written < 0 || written >= (int)sizeof(tmp))
+    return;
+
   Set(key, tmp);
 }

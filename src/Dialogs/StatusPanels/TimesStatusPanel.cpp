@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TimesStatusPanel.hpp"
 #include "Interface.hpp"
@@ -27,6 +7,8 @@ Copyright_License {
 #include "Formatter/LocalTimeFormatter.hpp"
 #include "Math/SunEphemeris.hpp"
 #include "Language/Language.hpp"
+#include "time/BrokenDateTime.hpp"
+#include "time/RoughTime.hpp"
 
 enum Controls {
   LocalTime,
@@ -39,7 +21,7 @@ enum Controls {
 };
 
 void
-TimesStatusPanel::Refresh()
+TimesStatusPanel::Refresh() noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
   const FlyingState &flight = CommonInterface::Calculated().flight;
@@ -57,7 +39,7 @@ TimesStatusPanel::Refresh()
     const unsigned sunsethours = (int)sun.time_of_sunset;
     const unsigned sunsetmins = (int)((sun.time_of_sunset - double(sunsethours)) * 60);
 
-    temp.Format(_T("%02u:%02u - %02u:%02u"), sunrisehours, sunrisemins, sunsethours, sunsetmins);
+    temp.Format("%02u:%02u - %02u:%02u", sunrisehours, sunrisemins, sunsethours, sunsetmins);
     SetText(Daylight, temp);
   } else {
     ClearText(Daylight);
@@ -65,46 +47,73 @@ TimesStatusPanel::Refresh()
 
   if (basic.time_available) {
     SetText(LocalTime,
-            FormatLocalTimeHHMM((int)basic.time, settings.utc_offset));
-    SetText(UTCTime, FormatSignedTimeHHMM((int)basic.time));
+            FormatLocalTimeHHMM(basic.time, settings.utc_offset));
+    SetText(UTCTime, FormatTimeHHMM(basic.time));
   } else {
     ClearText(LocalTime);
     ClearText(UTCTime);
   }
 
   if (basic.date_time_utc.IsDatePlausible()) {
-    temp.Format(_T("%04d-%02d-%02d"), basic.date_time_utc.year,
+    temp.Format("%04d-%02d-%02d", basic.date_time_utc.year,
                 basic.date_time_utc.month, basic.date_time_utc.day);
     SetText(UTCDate, temp);
   } else {
     ClearText(UTCDate);
   }
 
-  if (flight.takeoff_time >= 0) {
+  if (flight.takeoff_time.IsDefined()) {
     SetText(TakeoffTime,
-            FormatLocalTimeHHMM((int)flight.takeoff_time,
+            FormatLocalTimeHHMM(flight.takeoff_time,
                                 settings.utc_offset));
   } else {
     ClearText(TakeoffTime);
   }
 
-  if (flight.landing_time >= 0) {
+  if (flight.landing_time.IsDefined()) {
     SetText(LandingTime,
-            FormatLocalTimeHHMM(int(flight.landing_time),
+            FormatLocalTimeHHMM(flight.landing_time,
                                 settings.utc_offset));
   } else {
     ClearText(LandingTime);
   }
 
-  if (flight.flight_time > 0) {
-    SetText(FlightTime, FormatSignedTimeHHMM((int)flight.flight_time));
+  if (flight.flight_time.count() > 0) {
+    if (flight.takeoff_time.IsDefined() && flight.landing_time.IsDefined()) {
+      bool set = false;
+
+      if (basic.time_available && basic.date_time_utc.IsDatePlausible()) {
+        const BrokenDateTime takeoff_dt =
+          basic.GetDateTimeAt(flight.takeoff_time).FloorToMinute();
+        const BrokenDateTime landing_dt =
+          basic.GetDateTimeAt(flight.landing_time).FloorToMinute();
+
+        if (takeoff_dt.IsPlausible() && landing_dt.IsPlausible()) {
+          const auto duration = landing_dt - takeoff_dt;
+          SetText(FlightTime, FormatSignedTimeHHMM(
+            std::chrono::duration_cast<std::chrono::seconds>(duration)));
+          set = true;
+        }
+      }
+
+      if (!set) {
+        const RoughTime rough_takeoff =
+          RoughTime::FromSinceMidnight(flight.takeoff_time);
+        const RoughTime rough_landing =
+          RoughTime::FromSinceMidnight(flight.landing_time);
+        SetText(FlightTime, FormatSignedTimeHHMM(
+          FloatDuration{rough_landing - rough_takeoff}));
+      }
+    } else {
+      SetText(FlightTime, FormatSignedTimeHHMM(flight.flight_time));
+    }
   } else {
     ClearText(FlightTime);
   }
 }
 
 void
-TimesStatusPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+TimesStatusPanel::Prepare([[maybe_unused]] ContainerWindow &parent, [[maybe_unused]] const PixelRect &rc) noexcept
 {
   AddReadOnly(_("Local time"));
   AddReadOnly(_("UTC time"));

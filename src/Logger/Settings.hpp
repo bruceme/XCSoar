@@ -1,32 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "util/StaticString.hxx"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_LOGGER_SETTINGS_HPP
-#define XCSOAR_LOGGER_SETTINGS_HPP
-
-#include "Util/StaticString.hxx"
-
-#include <stdint.h>
+#include <chrono>
 
 /**
  * Logger settings
@@ -43,10 +22,10 @@ struct LoggerSettings {
   bool enable_nmea_logger;
 
   /** Logger interval in cruise mode */
-  uint16_t time_step_cruise;
+  std::chrono::duration<unsigned> time_step_cruise;
 
   /** Logger interval in circling mode */
-  uint16_t time_step_circling;
+  std::chrono::duration<unsigned> time_step_circling;
 
   enum class AutoLogger: uint8_t {
     ON,
@@ -58,7 +37,10 @@ struct LoggerSettings {
 
   StaticString<64> pilot_name;
 
+  StaticString<64> copilot_name;
+
+  /** Crew mass template in kg */
+  unsigned crew_mass_template;
+
   void SetDefaults();
 };
-
-#endif

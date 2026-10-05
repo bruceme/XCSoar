@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include <Python.h>
 #include <datetime.h>
@@ -28,7 +9,7 @@
 #include "PythonGlue.hpp"
 #include "PythonConverters.hpp"
 #include "Flight/Flight.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "time/BrokenDateTime.hpp"
 #include "Flight/IGCFixEnhanced.hpp"
 #include "Tools/GoogleEncode.hpp"
 
@@ -36,6 +17,8 @@
 #include <vector>
 #include <cinttypes>
 #include <limits>
+
+using namespace std::chrono;
 
 PyObject* xcsoar_Flight_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
   /* constructor */
@@ -55,7 +38,7 @@ PyObject* xcsoar_Flight_new(PyTypeObject *type, PyObject *args, PyObject *kwargs
 #if PY_MAJOR_VERSION >= 3
   if (PyUnicode_Check(py_input_data)) {
     Py_ssize_t length;
-    char *ptr = PyUnicode_AsUTF8AndSize(py_input_data, &length);
+    const char *ptr = PyUnicode_AsUTF8AndSize(py_input_data, &length);
     if (!ptr) {
         return NULL;
     }
@@ -130,14 +113,14 @@ PyObject* xcsoar_Flight_path(Pyxcsoar_Flight *self, PyObject *args) {
     return nullptr;
   }
 
-  int64_t begin = 0,
-          end = std::numeric_limits<int64_t>::max();
+  auto begin = std::chrono::system_clock::time_point::min();
+  auto end = std::chrono::system_clock::time_point::max();
 
   if (py_begin != nullptr && PyDateTime_Check(py_begin))
-    begin = Python::PyToBrokenDateTime(py_begin).ToUnixTimeUTC();
+    begin = Python::PyToBrokenDateTime(py_begin).ToTimePoint();
 
   if (py_end != nullptr && PyDateTime_Check(py_end))
-    end = Python::PyToBrokenDateTime(py_end).ToUnixTimeUTC();
+    end = Python::PyToBrokenDateTime(py_end).ToTimePoint();
 
   // prepare output
   PyObject *py_fixes = PyList_New(0);
@@ -153,7 +136,7 @@ PyObject* xcsoar_Flight_path(Pyxcsoar_Flight *self, PyObject *args) {
     if (replay->Level() == -1) continue;
 
     const MoreData &basic = replay->Basic();
-    const int64_t date_time_utc = basic.date_time_utc.ToUnixTimeUTC();
+    const auto date_time_utc = basic.date_time_utc.ToTimePoint();
 
     if (date_time_utc < begin)
       continue;
@@ -259,7 +242,7 @@ PyObject* xcsoar_Flight_reduce(Pyxcsoar_Flight *self, PyObject *args, PyObject *
   if (py_begin != nullptr && PyDateTime_Check(py_begin))
     begin = Python::PyToBrokenDateTime(py_begin);
   else
-    begin = BrokenDateTime::FromUnixTimeUTC(0);
+    begin = BrokenDateTime::FromUnixTime(0);
 
   if (py_end != nullptr && PyDateTime_Check(py_end))
     end = Python::PyToBrokenDateTime(py_end);
@@ -267,9 +250,9 @@ PyObject* xcsoar_Flight_reduce(Pyxcsoar_Flight *self, PyObject *args, PyObject *
     /* numeric_limits<int64_t>::max() doesn't work here, because
        that's an invalid date in BrokenDate's eyes. 1970 + 2^33 secs
        is about the year 2242, which is far enough in the future :-) */
-    end = BrokenDateTime::FromUnixTimeUTC(int64_t(2)<<32);
+    end = BrokenDateTime::FromUnixTime(int64_t(2)<<32);
 
-  if (end - begin < 0) {
+  if ((end - begin).count() < 0) {
     PyErr_SetString(PyExc_ValueError, "Start time later then end time.");
     return nullptr;
   }
@@ -402,14 +385,14 @@ PyObject* xcsoar_Flight_encode(Pyxcsoar_Flight *self, PyObject *args) {
     return nullptr;
   }
 
-  int64_t begin = 0,
-          end = std::numeric_limits<int64_t>::max();
+  auto begin = std::chrono::system_clock::time_point::min();
+  auto end = std::chrono::system_clock::time_point::max();
 
   if (py_begin != nullptr && PyDateTime_Check(py_begin))
-    begin = Python::PyToBrokenDateTime(py_begin).ToUnixTimeUTC();
+    begin = Python::PyToBrokenDateTime(py_begin).ToTimePoint();
 
   if (py_end != nullptr && PyDateTime_Check(py_end))
-    end = Python::PyToBrokenDateTime(py_end).ToUnixTimeUTC();
+    end = Python::PyToBrokenDateTime(py_end).ToTimePoint();
 
   GoogleEncode encoded_locations(2, true, 1e5),
                encoded_levels,
@@ -428,7 +411,7 @@ PyObject* xcsoar_Flight_encode(Pyxcsoar_Flight *self, PyObject *args) {
     if (replay->Level() == -1) continue;
 
     const MoreData &basic = replay->Basic();
-    const int64_t date_time_utc = basic.date_time_utc.ToUnixTimeUTC();
+    const auto date_time_utc = basic.date_time_utc.ToTimePoint();
 
     if (date_time_utc < begin)
       continue;
@@ -447,7 +430,7 @@ PyObject* xcsoar_Flight_encode(Pyxcsoar_Flight *self, PyObject *args) {
     encoded_locations.addDouble(fix.location.longitude.Degrees());
 
     encoded_levels.addUnsignedNumber(replay->Level());
-    encoded_times.addSignedNumber(basic.time);
+    encoded_times.addSignedNumber(duration_cast<duration<int>>(basic.time.ToDuration()).count());
     encoded_altitude.addSignedNumber(self->flight->qnh.PressureAltitudeToQNHAltitude(fix.pressure_altitude));
 
     if (fix.enl >= 0)

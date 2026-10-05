@@ -1,50 +1,40 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Tracking/SkyLines/Client.hpp"
 #include "Tracking/SkyLines/Handler.hpp"
+#include "FLARM/Id.hpp"
 #include "NMEA/Info.hpp"
-#include "OS/Args.hpp"
-#include "Util/NumberParser.hpp"
-#include "Util/StringUtil.hpp"
+#include "net/Resolver.hxx"
+#include "net/AddressInfo.hxx"
+#include "system/Args.hpp"
+#include "event/Loop.hxx"
+#include "event/FineTimerEvent.hxx"
+#include "util/NumberParser.hpp"
+#include "util/StringUtil.hpp"
+#include "util/PrintException.hxx"
 #include "DebugReplay.hpp"
 
-#include <boost/asio/steady_timer.hpp>
-
 #include <memory>
+
+using namespace std::chrono;
 
 class Handler : public SkyLinesTracking::Handler {
   Args &args;
 
+  EventLoop &event_loop;
+
   SkyLinesTracking::Client client;
 
-  boost::asio::steady_timer timer;
+  FineTimerEvent stop_timer{event_loop, BIND_THIS_METHOD(OnStopTimer)};
+  FineTimerEvent next_timer{event_loop, BIND_THIS_METHOD(OnNextTimer)};
 
   std::unique_ptr<DebugReplay> replay;
 
 public:
-  explicit Handler(Args &_args, boost::asio::io_service &io_service)
-    :args(_args), client(io_service, this), timer(io_service) {}
+  explicit Handler(Args &_args, EventLoop &_event_loop)
+    :args(_args), event_loop(_event_loop),
+     client(event_loop, this) {}
 
   SkyLinesTracking::Client &GetClient() {
     return client;
@@ -54,52 +44,47 @@ public:
 
   virtual void OnAck(unsigned id) override {
     printf("received ack %u\n", id);
-    timer.get_io_service().stop();
+    event_loop.Break();
   }
 
-  virtual void OnTraffic(unsigned pilot_id, unsigned time_of_day_ms,
-                         const GeoPoint &location, int altitude) override {
-    BrokenTime time = BrokenTime::FromSecondOfDay(time_of_day_ms / 1000);
+  virtual void OnTraffic(uint32_t pilot_id, unsigned time_of_day_ms,
+                         const GeoPoint &location, int altitude,
+                         bool altitude_valid,
+                         SkyLinesTracking::TrafficSource source,
+                         unsigned track_deg, bool track_valid,
+                         FlarmId flarm_id,
+                         unsigned aircraft_type) override {
+    auto time = BrokenTime::FromSinceMidnight(milliseconds(time_of_day_ms));
 
-    printf("received traffic pilot=%u time=%02u:%02u:%02u location=%f/%f altitude=%d\n",
+    printf("received traffic pilot=%u time=%02u:%02u:%02u location=%f/%f altitude=%d alt_valid=%u source=%u track=%u valid=%u flarm=%u type=%u\n",
            pilot_id, time.hour, time.minute, time.second,
            (double)location.longitude.Degrees(),
            (double)location.latitude.Degrees(),
-           altitude);
+           altitude, unsigned(altitude_valid),
+           unsigned(source), track_deg, unsigned(track_valid),
+           unsigned(flarm_id.IsDefined() ? 1 : 0), aircraft_type);
 
-    ScheduleStop(std::chrono::seconds(1));
+    stop_timer.Schedule(std::chrono::seconds(1));
   }
 
-  void OnSkyLinesError(const std::exception &e) override {
-    fprintf(stderr, "Error: %s\n", e.what());
+  void OnSkyLinesError(std::exception_ptr e) override {
+    PrintException(e);
 
-    timer.cancel();
+    stop_timer.Cancel();
+    next_timer.Cancel();
   }
 
 private:
-  void ScheduleStop(boost::asio::steady_timer::duration d) {
-    timer.expires_from_now(d);
-    timer.async_wait([this](const boost::system::error_code &ec){
-        if (!ec)
-          timer.get_io_service().stop();
-      });
+  void OnStopTimer() noexcept {
+    event_loop.Break();
   }
 
-  void NextReplay(const boost::system::error_code &ec) {
-    if (ec)
-      return;
-
+  void OnNextTimer() noexcept {
     if (replay->Next()) {
       client.SendFix(replay->Basic());
-      ScheduleNextReplay(std::chrono::milliseconds(100));
+      next_timer.Schedule(std::chrono::milliseconds(100));
     } else
-      timer.get_io_service().stop();
-  }
-
-  void ScheduleNextReplay(boost::asio::steady_timer::duration d) {
-    timer.expires_from_now(d);
-    timer.async_wait(std::bind(&Handler::NextReplay, this,
-                               std::placeholders::_1));
+      event_loop.Break();
   }
 };
 
@@ -110,7 +95,7 @@ Handler::OnSkyLinesReady()
     NMEAInfo basic;
     basic.Reset();
     basic.UpdateClock();
-    basic.time = 1;
+    basic.time = TimeStamp{FloatDuration{1}};
     basic.time_available.Update(basic.clock);
 
     client.SendFix(basic);
@@ -123,7 +108,7 @@ Handler::OnSkyLinesReady()
     if (replay == nullptr)
       throw std::runtime_error("CreateDebugReplay() failed");
 
-    ScheduleNextReplay(std::chrono::seconds(0));
+    next_timer.Schedule(std::chrono::seconds(0));
   }
 }
 
@@ -134,21 +119,19 @@ try {
   const char *host = args.ExpectNext();
   const char *key = args.ExpectNext();
 
-  boost::asio::io_service io_service;
+  const auto address_list = Resolve(host,
+                                    SkyLinesTracking::Client::GetDefaultPort(),
+                                    0, SOCK_DGRAM);
 
-  /* IPv4 only for now, because the official SkyLines tracking server
-     doesn't support IPv6 yet */
-  const boost::asio::ip::udp::resolver::query query(boost::asio::ip::udp::v4(),
-                                                    host,
-                                                    SkyLinesTracking::Client::GetDefaultPortString());
+  EventLoop event_loop;
 
-  Handler handler(args, io_service);
+  Handler handler(args, event_loop);
 
   auto &client = handler.GetClient();
   client.SetKey(ParseUint64(key, NULL, 16));
-  client.Open(query);
+  client.Open(address_list.GetBest());
 
-  io_service.run();
+  event_loop.Run();
 
   return EXIT_SUCCESS;
 } catch (const std::exception &e) {

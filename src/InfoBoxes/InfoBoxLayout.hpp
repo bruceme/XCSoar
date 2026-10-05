@@ -1,65 +1,67 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFO_BOX_LAYOUT_HPP
-#define XCSOAR_INFO_BOX_LAYOUT_HPP
+#pragma once
 
 #include "InfoBoxSettings.hpp"
-#include "Screen/Point.hpp"
-#include "Compiler.h"
+#include "ui/dim/Rect.hpp"
 
-namespace InfoBoxLayout
-{
-  struct Layout {
-    InfoBoxSettings::Geometry geometry;
+namespace InfoBoxLayout {
 
-    bool landscape;
+struct Layout {
+  InfoBoxSettings::Geometry geometry;
 
-    PixelSize control_size;
+  bool landscape;
 
-    unsigned count;
-    PixelRect positions[InfoBoxSettings::Panel::MAX_CONTENTS];
+  PixelSize control_size;
 
-    PixelRect vario;
+  unsigned count;
+  PixelRect positions[InfoBoxSettings::Panel::MAX_CONTENTS];
 
-    PixelRect remaining;
+  PixelRect vario;
 
-    bool HasVario() const {
-      return vario.right > vario.left && vario.bottom > vario.top;
-    }
+  PixelRect remaining;
 
-    void ClearVario() {
-      vario.left = vario.top = vario.right = vario.bottom = 0;
-    }
-  };
+  /**
+   * The area this layout was calculated for.
+   */
+  PixelRect rc;
 
-  gcc_pure
-  Layout
-  Calculate(PixelRect rc, InfoBoxSettings::Geometry geometry);
+  /**
+   * Border flags for the InfoBoxes at the outer edge of #rc.  Those
+   * edges usually coincide with the screen border and need no border
+   * of their own; while the InfoBox area is kept clear of it, they do.
+   *
+   * @see DisplaySettings::infobox_area_stretch
+   */
+  unsigned outer_border = 0;
 
-  gcc_const
-  int
-  GetBorder(InfoBoxSettings::Geometry geometry, bool landscape, unsigned i);
+  constexpr bool HasVario() const noexcept {
+    return vario.right > vario.left && vario.bottom > vario.top;
+  }
+
+  void ClearVario() noexcept {
+    vario.left = vario.top = vario.right = vario.bottom = 0;
+  }
 };
 
-#endif
+/**
+ * Lay the InfoBoxes out in @p rc.
+ *
+ * @param orientation_size the screen the geometry was chosen for.
+ * An empty size uses @p rc.  Pass the full screen when @p rc is a
+ * smaller page, so a short page does not switch between rows and
+ * columns.
+ */
+[[gnu::pure]]
+Layout
+Calculate(PixelRect rc, InfoBoxSettings::Geometry geometry,
+          unsigned scale_title_font = 100,
+          PixelSize orientation_size = {}) noexcept;
+
+[[gnu::const]]
+int
+GetBorder(InfoBoxSettings::Geometry geometry, bool landscape,
+          unsigned i) noexcept;
+
+} // namespace InfoBoxLayout

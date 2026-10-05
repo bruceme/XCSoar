@@ -1,128 +1,104 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ArrowPagerWidget.hpp"
+#include "ArrowPagerGesture.hpp"
+#include "QuickGuidePageWidget.hpp"
+#include "VScrollWidget.hpp"
+#include "WindowWidget.hpp"
 #include "Screen/Layout.hpp"
-#include "Event/KeyCode.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "ui/window/ContainerWindow.hpp"
 #include "Language/Language.hpp"
 #include "Form/Form.hpp"
 #include "Renderer/SymbolButtonRenderer.hpp"
+#include "Renderer/TextButtonRenderer.hpp"
 
-ArrowPagerWidget::Layout::Layout(PixelRect rc, const Widget *extra_widget)
+#include <algorithm>
+
+ArrowPagerWidget::Layout::Layout(const ButtonLook &look, PixelRect rc,
+                                 const Widget *extra_widget) noexcept
   :main(rc)
 {
   const unsigned width = rc.GetWidth(), height = rc.GetHeight();
   const unsigned button_height = ::Layout::GetMaximumControlHeight();
 
-  main = rc;
-
   if (width > height) {
     /* landscape */
 
-    main.left += ::Layout::Scale(70);
+    /* Size for Close or Back so a caller can swap the caption without
+       clipping. */
+    const unsigned close_button_width =
+      std::max(TextButtonRenderer::GetMinimumButtonWidth(look, _("Close")),
+               TextButtonRenderer::GetMinimumButtonWidth(look, _("Back")));
+    const unsigned arrow_buttons_width =
+      2 * ::Layout::GetMaximumControlHeight();
+
+    unsigned left_column_width = std::max(close_button_width,
+                                          arrow_buttons_width);
+    if (extra_widget != nullptr) {
+      const auto max_size = extra_widget->GetMaximumSize();
+      if (max_size.width > left_column_width)
+        left_column_width = max_size.width;
+    }
+
+    auto left_column_rect = main.CutLeftSafe(left_column_width);
 
     /* close button on the bottom left */
 
-    close_button.left = rc.left;
-    close_button.right = main.left;
-    close_button.bottom = rc.bottom;
-    close_button.top = close_button.bottom - button_height;
+    close_button = left_column_rect.CutBottomSafe(button_height);
 
     /* previous/next buttons above the close button */
 
-    previous_button = close_button;
-    previous_button.bottom = previous_button.top;
-    previous_button.top = previous_button.bottom - button_height;
-    previous_button.right = (previous_button.left + previous_button.right) / 2;
+    auto previous_next_buttons = left_column_rect.CutBottomSafe(button_height);
 
-    next_button = previous_button;
-    next_button.left = next_button.right;
-    next_button.right = close_button.right;
+    std::tie(previous_button, next_button) = previous_next_buttons.VerticalSplit();
 
     /* the remaining area is "extra" */
 
-    extra.left = close_button.left;
-    extra.right = close_button.right;
-    extra.top = rc.top;
-    extra.bottom = previous_button.top;
+    extra = left_column_rect;
   } else {
     /* portrait */
 
-    main.bottom -= button_height;
+    auto bottom_row_rect = main.CutBottomSafe(button_height);
 
     /* buttons distributed on the bottom line */
 
-    previous_button.top = next_button.top =
-      close_button.top = main.bottom;
-    previous_button.bottom = next_button.bottom =
-      close_button.bottom = rc.bottom;
+    const auto [a, b] = bottom_row_rect.VerticalSplit();
 
-    previous_button.left = rc.left;
-    close_button.right = rc.right;
-    close_button.left = (rc.left + rc.right) / 2;
-
-    next_button.right = close_button.left;
-    previous_button.right = next_button.left =
-      (rc.left * 3 + rc.right) / 4;
-    previous_button.left = rc.left;
+    std::tie(previous_button, next_button) = a.VerticalSplit();
+    close_button = b;
 
     /* "extra" gets another row */
 
     if (extra_widget != nullptr) {
-      extra.left = main.left;
-      extra.right = main.right;
-      extra.bottom = main.bottom;
-      extra.top = main.bottom -= button_height;
+      extra = main.BottomAligned(button_height);
+      main = rc.RemainingAboveSafe(extra);
     }
   }
 }
 
-ArrowPagerWidget::~ArrowPagerWidget()
-{
-  delete extra;
-}
-
 PixelSize
-ArrowPagerWidget::GetMinimumSize() const
+ArrowPagerWidget::GetMinimumSize() const noexcept
 {
   PixelSize result = PagerWidget::GetMinimumSize();
-  result.cx += ::Layout::Scale(50);
-  result.cy += 2 * ::Layout::GetMinimumControlHeight();
+  result.width += ::Layout::Scale(50u);
+  result.height += 2 * ::Layout::GetMinimumControlHeight();
   return result;
 }
 
 PixelSize
-ArrowPagerWidget::GetMaximumSize() const
+ArrowPagerWidget::GetMaximumSize() const noexcept
 {
   PixelSize result = PagerWidget::GetMinimumSize();
-  result.cx += ::Layout::Scale(80);
-  result.cy += 2 * ::Layout::GetMaximumControlHeight();
+  result.width += ::Layout::Scale(80u);
+  result.height += 2 * ::Layout::GetMaximumControlHeight();
   return result;
 }
 
 void
 ArrowPagerWidget::Initialise(ContainerWindow &parent,
-                             const PixelRect &rc)
+                             const PixelRect &rc) noexcept
 {
   PagerWidget::Initialise(parent, rc);
 
@@ -131,9 +107,10 @@ ArrowPagerWidget::Initialise(ContainerWindow &parent,
 }
 
 void
-ArrowPagerWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+ArrowPagerWidget::Prepare(ContainerWindow &parent,
+                          const PixelRect &rc) noexcept
 {
-  const Layout layout(rc, extra);
+  const Layout layout(look, rc, extra.get());
   PagerWidget::Prepare(parent, layout.main);
 
   if (extra != nullptr)
@@ -144,19 +121,45 @@ ArrowPagerWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
   style.TabStop();
 
   previous_button.Create(parent, layout.previous_button, style,
-                         new SymbolButtonRenderer(look, _T("<")),
-                         *this, PREVIOUS);
+                         std::make_unique<SymbolButtonRenderer>(look, "<"),
+                         [this](){ Previous(false); });
   next_button.Create(parent, layout.next_button, style,
-                     new SymbolButtonRenderer(look, _T(">")),
-                     *this, NEXT);
-  close_button.Create(parent, look, _("Close"), layout.close_button,
-                      style, action_listener, mrOK);
+                     std::make_unique<SymbolButtonRenderer>(look, ">"),
+                     [this](){
+                       if (HasNextPage() && CanAdvance())
+                         Next(false);
+                     });
+  close_button.Create(parent, look,
+                      pending_close_caption ? pending_close_caption
+                                            : _("Close"),
+                      layout.close_button,
+                      style, close_callback);
+  pending_close_caption = nullptr;
+
+  WireHorizontalSwipeToPages();
 }
 
 void
-ArrowPagerWidget::Show(const PixelRect &rc)
+ArrowPagerWidget::WireHorizontalSwipeToPages() noexcept
 {
-  const Layout layout(rc, extra);
+  if (GetSize() < 2)
+    return;
+
+  const auto swipe = MakeArrowPagerSwipeCallback(this);
+
+  for (unsigned i = 0; i < GetSize(); ++i) {
+    Widget &w = GetWidget(i);
+    if (auto *vs = dynamic_cast<VScrollWidget *>(&w))
+      vs->SetGestureCallback(swipe);
+    else if (auto *pg = dynamic_cast<QuickGuidePageWidget *>(&w))
+      pg->SetGestureCallback(swipe);
+  }
+}
+
+void
+ArrowPagerWidget::Show(const PixelRect &rc) noexcept
+{
+  const Layout layout(look, rc, extra.get());
   PagerWidget::Show(layout.main);
 
   previous_button.MoveAndShow(layout.previous_button);
@@ -165,10 +168,12 @@ ArrowPagerWidget::Show(const PixelRect &rc)
 
   if (extra != nullptr)
     extra->Show(layout.extra);
+
+  UpdateButtons();
 }
 
 void
-ArrowPagerWidget::Hide()
+ArrowPagerWidget::Hide() noexcept
 {
   PagerWidget::Hide();
 
@@ -181,9 +186,9 @@ ArrowPagerWidget::Hide()
 }
 
 void
-ArrowPagerWidget::Move(const PixelRect &rc)
+ArrowPagerWidget::Move(const PixelRect &rc) noexcept
 {
-  const Layout layout(rc, extra);
+  const Layout layout(look, rc, extra.get());
   PagerWidget::Move(layout.main);
 
   previous_button.Move(layout.previous_button);
@@ -195,7 +200,7 @@ ArrowPagerWidget::Move(const PixelRect &rc)
 }
 
 bool
-ArrowPagerWidget::SetFocus()
+ArrowPagerWidget::SetFocus() noexcept
 {
   if (!PagerWidget::SetFocus())
     close_button.SetFocus();
@@ -204,21 +209,195 @@ ArrowPagerWidget::SetFocus()
 }
 
 bool
-ArrowPagerWidget::KeyPress(unsigned key_code)
+ArrowPagerWidget::HasFocus() const noexcept
 {
-  if (PagerWidget::KeyPress(key_code))
+  return PagerWidget::HasFocus() ||
+    previous_button.HasFocus() ||
+    next_button.HasFocus() ||
+    close_button.HasFocus() ||
+    (extra != nullptr && extra->HasFocus());
+}
+
+bool
+ArrowPagerWidget::FocusPageBottom() noexcept
+{
+  Widget &page = GetCurrentWidget();
+  if (auto *qg = dynamic_cast<QuickGuidePageWidget *>(&page)) {
+    if (qg->FocusBottomBar(true))
+      return true;
+    return page.SetFocus();
+  }
+
+  /* Prefer the last TabStop so Up from chrome reverses Down leaving
+     a RowForm (SetFocus alone would hit the first control). */
+  Widget *inner = &page;
+  if (auto *vs = dynamic_cast<VScrollWidget *>(&page))
+    inner = &vs->GetWidget();
+
+  if (auto *ww = dynamic_cast<WindowWidget *>(inner)) {
+    auto *cw = dynamic_cast<ContainerWindow *>(&ww->GetWindow());
+    if (cw != nullptr && cw->FocusLastControl())
+      return true;
+  }
+
+  if (!page.SetFocus())
+    return false;
+
+  /* Reserved-scrollbar rich text: highlight the last visible item.
+     SetFocus alone leaves the scroller focused with nothing
+     selected (same as #QuickGuidePageWidget wrapping Up from the
+     bottom bar).  Call the inner widget so the scroller does not
+     treat this as a page-scroll. */
+  if (auto *vs = dynamic_cast<VScrollWidget *>(&page))
+    if (vs->ReservesScrollbar())
+      vs->GetWidget().KeyPress(KEY_UP);
+
+  return true;
+}
+
+bool
+ArrowPagerWidget::FocusPageStart() noexcept
+{
+  Widget &page = GetCurrentWidget();
+  if (!page.SetFocus())
+    return false;
+
+  /* Highlight the first visible link/checkbox.  A page with no
+     items just keeps window focus. */
+  Widget *inner = &page;
+  if (auto *vs = dynamic_cast<VScrollWidget *>(&page))
+    inner = &vs->GetWidget();
+  inner->KeyPress(KEY_DOWN);
+  return true;
+}
+
+bool
+ArrowPagerWidget::MoveChromeFocusUp() noexcept
+{
+  /* Portrait chrome order: prev | next | Close.  Up walks toward the
+     page: Close → next → prev → page bottom. */
+  if (close_button.HasFocus()) {
+    if (next_button.IsEnabled()) {
+      next_button.SetFocus();
+      return true;
+    }
+    if (previous_button.IsEnabled()) {
+      previous_button.SetFocus();
+      return true;
+    }
+    return FocusPageBottom();
+  }
+
+  if (next_button.HasFocus()) {
+    if (previous_button.IsEnabled()) {
+      previous_button.SetFocus();
+      return true;
+    }
+    return FocusPageBottom();
+  }
+
+  if (previous_button.HasFocus())
+    return FocusPageBottom();
+
+  return false;
+}
+
+bool
+ArrowPagerWidget::FocusChromeStart() noexcept
+{
+  if (previous_button.IsEnabled())
+    previous_button.SetFocus();
+  else if (next_button.IsEnabled())
+    next_button.SetFocus();
+  else
+    close_button.SetFocus();
+  return true;
+}
+
+bool
+ArrowPagerWidget::PageHandsOffToChrome(bool key_up) const noexcept
+{
+  const Widget &page = GetCurrentWidget();
+  if (auto *qg = dynamic_cast<const QuickGuidePageWidget *>(&page))
+    /* Down: only from the bottom bar (content goes there first).
+       Up: from content at the top (bottom bar handles Up itself). */
+    return key_up || qg->IsBottomBarFocused();
+
+  /* Credits / Checklist: reserved-scrollbar rich text. */
+  if (auto *vs = dynamic_cast<const VScrollWidget *>(&page))
+    return vs->ReservesScrollbar();
+
+  return false;
+}
+
+bool
+ArrowPagerWidget::MoveChromeFocusDown() noexcept
+{
+  if (close_button.HasFocus()) {
+    /* Wrap back into reserved-scrollbar rich text (Checklist,
+       Credits).  Other pages stay on Close. */
+    if (PageHandsOffToChrome(false))
+      return FocusPageStart();
+    return true;
+  }
+
+  if (previous_button.HasFocus()) {
+    if (next_button.IsEnabled())
+      next_button.SetFocus();
+    else
+      close_button.SetFocus();
+    return true;
+  }
+
+  if (next_button.HasFocus()) {
+    close_button.SetFocus();
+    return true;
+  }
+
+  return PageHandsOffToChrome(false) && FocusChromeStart();
+}
+
+bool
+ArrowPagerWidget::KeyPress(unsigned key_code) noexcept
+{
+  const bool chrome_focused =
+    previous_button.HasFocus() ||
+    next_button.HasFocus() ||
+    close_button.HasFocus();
+
+  /* When chrome has focus, do not forward to the page.  Unfocused
+     rich text would treat Down as "no current item -> first link"
+     without taking focus, so Close stayed highlighted and Enter
+     activated that first item. */
+  if (!chrome_focused && PagerWidget::KeyPress(key_code))
     return true;
 
   if (extra != nullptr && extra->KeyPress(key_code))
     return true;
 
   switch (key_code) {
+  case KEY_UP:
+    if (MoveChromeFocusUp())
+      return true;
+    /* Content at top declined Up; rich-text OnKeyCheck would
+       otherwise swallow further Ups. */
+    if (PageHandsOffToChrome(true)) {
+      close_button.SetFocus();
+      return true;
+    }
+    return false;
+
+  case KEY_DOWN:
+    return MoveChromeFocusDown();
+
   case KEY_LEFT:
-    Previous(true);
+    if (Previous(true))
+      SetFocus();
     return true;
 
   case KEY_RIGHT:
-    Next(true);
+    if (CanAdvance() && Next(true))
+      SetFocus();
     return true;
 
   default:
@@ -227,15 +406,23 @@ ArrowPagerWidget::KeyPress(unsigned key_code)
 }
 
 void
-ArrowPagerWidget::OnAction(int id)
+ArrowPagerWidget::OnPageFlipped() noexcept
 {
-  switch (id) {
-  case PREVIOUS:
-    Previous(false);
-    break;
+  PagerWidget::OnPageFlipped();
+  UpdateButtons();
+}
 
-  case NEXT:
-    Next(false);
-    break;
-  }
+void
+ArrowPagerWidget::UpdateNextButtonState() noexcept
+{
+  if (next_button.IsDefined())
+    next_button.SetEnabled(HasNextPage() && CanAdvance());
+}
+
+void
+ArrowPagerWidget::UpdateButtons() noexcept
+{
+  const bool enable = GetSize() >= 2;
+  previous_button.SetEnabled(enable);
+  next_button.SetEnabled(enable && HasNextPage() && CanAdvance());
 }

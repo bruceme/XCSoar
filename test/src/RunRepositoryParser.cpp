@@ -1,31 +1,11 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Repository/Parser.hpp"
 #include "Repository/FileRepository.hpp"
-#include "IO/FileLineReader.hpp"
-#include "OS/Args.hpp"
-#include "Util/PrintException.hxx"
+#include "io/FileLineReader.hpp"
+#include "system/Args.hpp"
+#include "util/PrintException.hxx"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,10 +31,14 @@ try {
     printf("file '%s' '%s' area='%s' type=%u\n",
            file.GetName(), file.GetURI(), file.GetArea(),
            (unsigned)file.type);
+
+    if (file.update_date.IsPlausible())
+      printf("  updated %04u-%02u-%02u\n", file.update_date.year,
+             file.update_date.month, file.update_date.day);
   }
 
   return EXIT_SUCCESS;
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

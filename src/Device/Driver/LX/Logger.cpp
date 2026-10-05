@@ -1,38 +1,70 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
+#include "LXNAVVario.hpp"
 #include "NanoLogger.hpp"
+#include "LogFile.hpp"
 #include "Protocol.hpp"
 #include "Convert.hpp"
+#include "Device/Error.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/RecordedFlight.hpp"
+#include "Device/Util/NMEAReader.hpp"
+#include "Device/Util/NMEAWriter.hpp"
+#include "NMEA/DeviceInfo.hpp"
+#include "NMEA/InputLine.hpp"
 #include "Operation/Operation.hpp"
-#include "OS/ByteOrder.hpp"
-#include "OS/Path.hpp"
+#include "time/TimeoutClock.hpp"
+#include "util/ByteOrder.hxx"
+#include "system/Path.hpp"
+#include "io/BufferedOutputStream.hxx"
+#include "io/FileOutputStream.hxx"
+#include "util/ScopeExit.hxx"
+#include "util/SpanCast.hxx"
+
+#include <chrono>
+#include <memory>
 
 #include <stdio.h>
 #include <stdlib.h>
+
+/**
+ * Ask for PLXVC,INFO and apply the answer.  Returns as soon as
+ * the reply arrives, or when the read times out.
+ */
+static void
+WaitForLoggerInfo(LXDevice &device, Port &port,
+                  OperationEnvironment &env)
+{
+  port.StopRxThread();
+
+  PortNMEAReader reader(port, env);
+  PortWriteNMEA(port, "PLXVC,INFO,R", env);
+
+  /* A logger that never answers INFO,A is not an S-series.  A
+     timeout must not abort the Colibri list; cancel still throws. */
+  const char *payload = nullptr;
+  try {
+    payload = reader.ExpectLine("PLXVC,INFO,A,",
+                                TimeoutClock(std::chrono::seconds(2)));
+  } catch (const DeviceTimeout &) {
+    return;
+  }
+  if (payload == nullptr)
+    return;
+
+  NMEAInputLine line(payload);
+  DeviceInfo info;
+  info.product.SetASCII(line.ReadView());
+  if (info.product.empty())
+    return;
+
+  info.software_version.SetASCII(line.ReadView());
+  line.Skip(); /* version date */
+  info.serial.SetASCII(line.ReadView());
+  device.IdDeviceByName(info.product, info);
+}
 
 static bool
 ParseDate(BrokenDate &date, const char *p)
@@ -111,18 +143,20 @@ static bool
 ReadFlightListInner(Port &port, RecordedFlightList &flight_list,
                     OperationEnvironment &env)
 {
-  if (!LX::CommandMode(port, env))
-    return false;
+  LX::CommandMode(port, env);
 
   port.Flush();
-  if (!LX::SendCommand(port, LX::READ_FLIGHT_LIST))
-    return false;
+  LX::SendCommand(port, LX::READ_FLIGHT_LIST);
 
   bool success = false;
   while (!flight_list.full()) {
     LX::FlightInfo flight;
-    if (!LX::ReadCRC(port, &flight, sizeof(flight), env,
-                     20000, 2000, 180000))
+    if (!LX::ReadCRC(port,
+                     ReferenceAsWritableBytes(flight),
+                     env,
+                     std::chrono::seconds(20),
+                     std::chrono::seconds(2),
+                     std::chrono::minutes(3)))
       break;
 
     success = true;
@@ -141,16 +175,20 @@ bool
 LXDevice::ReadFlightList(RecordedFlightList &flight_list,
                          OperationEnvironment &env)
 {
-  if (IsNano()) {
-    if (!EnableNanoNMEA(env))
+  /* Until INFO,A arrives, an S-series logger still looks like a
+     Colibri.  Wait for that sentence before choosing a protocol. */
+  if (!IsLXNAVLogger() && !is_colibri)
+    WaitForLoggerInfo(*this, port, env);
+
+  if (IsLXNAVLogger()) {
+    if (!EnableLoggerNMEA(env))
       return false;
 
     assert(!busy);
     busy = true;
+    AtScopeExit(this) { busy = false; };
 
-    bool success = Nano::ReadFlightList(port, flight_list, env);
-    busy = false;
-    return success;
+    return Nano::ReadFlightList(port, flight_list, env);
   }
 
   if (!EnableCommandMode(env))
@@ -158,36 +196,35 @@ LXDevice::ReadFlightList(RecordedFlightList &flight_list,
 
   assert(!busy);
   busy = true;
+  AtScopeExit(this) { busy = false; };
 
   bool success = ReadFlightListInner(port, flight_list, env);
 
   LX::CommandModeQuick(port, env);
-
-  busy = false;
-
   return success;
 }
 
 static bool
 DownloadFlightInner(Port &port, const RecordedFlightInfo &flight,
-                    FILE *file, OperationEnvironment &env)
+                    BufferedOutputStream &os, OperationEnvironment &env)
 {
-  if (!LX::CommandMode(port, env))
-    return false;
+  LX::CommandMode(port, env);
 
   port.Flush();
 
   LX::SeekMemory seek;
   seek.start_address = flight.internal.lx.start_address;
   seek.end_address = flight.internal.lx.end_address;
-  if (!LX::SendPacket(port, LX::SEEK_MEMORY, &seek, sizeof(seek), env) ||
-      !LX::ExpectACK(port, env))
-      return false;
+  LX::SendPacket(port, LX::SEEK_MEMORY, ReferenceAsBytes(seek), env);
+  LX::ExpectACK(port, env);
 
   LX::MemorySection memory_section;
   if (!LX::ReceivePacketRetry(port, LX::READ_MEMORY_SECTION,
-                              &memory_section, sizeof(memory_section), env,
-                              5000, 2000, 60000, 2))
+                              ReferenceAsWritableBytes(memory_section),
+                              env,
+                              std::chrono::seconds(5),
+                              std::chrono::seconds(2),
+                              std::chrono::minutes(1), 2))
       return false;
 
   unsigned lengths[LX::MemorySection::N];
@@ -199,23 +236,23 @@ DownloadFlightInner(Port &port, const RecordedFlightInfo &flight,
 
   env.SetProgressRange(total_length);
 
-  uint8_t *data = new uint8_t[total_length], *p = data;
+  const auto data = std::make_unique<std::byte[]>(total_length);
+  std::byte *p = data.get();
   for (unsigned i = 0; i < LX::MemorySection::N && lengths[i] > 0; ++i) {
     if (!LX::ReceivePacketRetry(port, (LX::Command)(LX::READ_LOGGER_DATA + i),
-                                p, lengths[i], env,
-                                20000, 2000, 300000, 2)) {
-      delete [] data;
+                                {p, lengths[i]}, env,
+                                std::chrono::seconds(20),
+                                std::chrono::seconds(2),
+                                std::chrono::minutes(5), 2)) {
       return false;
     }
 
     p += lengths[i];
-    env.SetProgressPosition(p - data);
+    env.SetProgressBytes(unsigned(p - data.get()));
+    env.SetProgressPosition(unsigned(p - data.get()));
   }
 
-  bool success = LX::ConvertLXNToIGC(data, total_length, file);
-  delete [] data;
-
-  return success;
+  return LX::ConvertLXNToIGC(data.get(), total_length, os);
 }
 
 bool
@@ -226,28 +263,49 @@ LXDevice::DownloadFlight(const RecordedFlightInfo &flight,
   if (flight.internal.lx.nano_filename[0] != 0) {
     assert(!busy);
     busy = true;
+    AtScopeExit(this) { busy = false; };
 
-    bool success = Nano::DownloadFlight(port, flight, path, env);
-    busy = false;
-    return success;
+    bool restore_nmea = false;
+    AtScopeExit(&) {
+      if (!restore_nmea)
+        return;
+
+      try {
+        LXNAVVario::SetupNMEA(port, env);
+      } catch (...) {
+        LogError(std::current_exception(),
+                 "LXNAV: failed to restore NMEA rates after flight download");
+      }
+    };
+
+    if (IsLXNAVVario()) {
+      /* PLXVF at 10 Hz shares this port with the flight rows and can
+         be written into the middle of a line.  GPS sentences are not
+         part of NMEARATE and keep the port alive. */
+      LXNAVVario::SilenceNMEA(port, env);
+      restore_nmea = true;
+    }
+
+    return Nano::DownloadFlight(port, flight, path, env);
   }
 
   if (!EnableCommandMode(env))
     return false;
 
-  FILE *file = _tfopen(path.c_str(), _T("wb"));
-  if (file == nullptr)
-    return false;
+  FileOutputStream fos(path);
+  BufferedOutputStream bos(fos);
 
   assert(!busy);
   busy = true;
+  AtScopeExit(this) { busy = false; };
 
-  bool success = DownloadFlightInner(port, flight, file, env);
-  fclose(file);
+  bool success = DownloadFlightInner(port, flight, bos, env);
+
+  if (success) {
+    bos.Flush();
+    fos.Commit();
+  }
 
   LX::CommandModeQuick(port, env);
-
-  busy = false;
-
   return success;
 }

@@ -1,42 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_TRAFFIC_HPP
-#define XCSOAR_FLARM_TRAFFIC_HPP
-
-#include "FlarmId.hpp"
+#include "Id.hpp"
 #include "Geo/GeoPoint.hpp"
-#include "NMEA/Validity.hpp"
-#include "Util/StaticString.hxx"
+#include "time/Validity.hpp"
+#include "util/StaticString.hxx"
 #include "Rough/RoughAltitude.hpp"
 #include "Rough/RoughDistance.hpp"
 #include "Rough/RoughSpeed.hpp"
 #include "Rough/RoughAngle.hpp"
 
 #include <type_traits>
-
-#include <tchar.h>
-
 struct FlarmTraffic {
   enum class AlarmType: uint8_t {
     NONE = 0,
@@ -47,9 +23,39 @@ struct FlarmTraffic {
   };
 
   /**
+   * Traffic source type (PFLAA field 12, protocol v7+).
+   * @see FTD-012 Data Port ICD, PFLAA sentence
+   */
+  enum class SourceType: uint8_t {
+    FLARM = 0,
+    ADSB = 1,
+    ADSR = 3,
+    TISB = 4,
+    MODES = 6,
+    /** OGN / cloud-server traffic injected by XCSoar */
+    OGN = 7,
+    /** SkyLines tracking traffic injected by XCSoar */
+    SKYLINES = 8,
+    /** Other XCSoar cloud-server participants */
+    CLOUD = 9,
+  };
+
+  /**
+   * PFLAA ID type: interpretation of the <ID> field.
+   * Wire values are 0/1/2 with empty meaning unknown;
+   * offset by 1 so UNKNOWN maps to 0.
+   * @see FTD-012 Data Port ICD, PFLAA <IDType>
+   */
+  enum class IdType : uint8_t {
+    UNKNOWN = 0,
+    RANDOM = 1,
+    ICAO = 2,
+    FLARM = 3,
+  };
+
+  /**
    * FLARM aircraft types
-   * @see http://www.flarm.com/support/manual/FLARM_DataportManual_v4.06E.pdf
-   * Page 8
+   * @see FTD-012 Data Port ICD
    */
   enum class AircraftType: uint8_t {
     UNKNOWN = 0,          //!< unknown
@@ -69,35 +75,29 @@ struct FlarmTraffic {
     STATIC_OBJECT = 15    //!< static object
   };
 
-  /** Is the target in stealth mode */
-  bool stealth;
+  /** Location of the FLARM target */
+  GeoPoint location;
 
-  /** Has the geographical location been calculated yet? */
-  bool location_available;
+  /** Turnrate of the FLARM target */
+  double turn_rate;
 
-  /** Was the direction of the target received from the flarm or calculated? */
-  bool track_received;
+  /** Climbrate of the FLARM target */
+  double climb_rate;
 
-  /** Was the speed of the target received from the flarm or calculated? */
-  bool speed_received;
+  /** Average climb rate over 30s */
+  double climb_rate_avg30s;
 
-  /** Has the absolute altitude of the target been calculated yet? */
-  bool altitude_available;
+  /** Latitude-based distance of the FLARM target */
+  double relative_north;
 
-  /** Was the turn rate of the target received from the flarm or calculated? */
-  bool turn_rate_received;
-
-  /** Was the climb_rate of the target received from the flarm or calculated? */
-  bool climb_rate_received;
-
-  /** Has the averaged climb rate of the target been calculated yet? */
-  bool climb_rate_avg30s_available;
+  /** Longitude-based distance of the FLARM target */
+  double relative_east;
 
   /** Is this object valid, or has it expired already? */
   Validity valid;
 
-  /** Location of the FLARM target */
-  GeoPoint location;
+  /** FLARM id of the FLARM target */
+  FlarmId id;
 
   /** Distance from our plane to the FLARM target */
   RoughDistance distance;
@@ -114,21 +114,6 @@ struct FlarmTraffic {
   /** Altidude-based distance of the FLARM target */
   RoughAltitude relative_altitude;
 
-  /** Turnrate of the FLARM target */
-  double turn_rate;
-
-  /** Climbrate of the FLARM target */
-  double climb_rate;
-
-  /** Latitude-based distance of the FLARM target */
-  double relative_north;
-
-  /** Longitude-based distance of the FLARM target */
-  double relative_east;
-
-  /** FLARM id of the FLARM target */
-  FlarmId id;
-
   /** (if exists) Name of the FLARM target */
   StaticString<10> name;
 
@@ -137,14 +122,71 @@ struct FlarmTraffic {
   /** Type of the aircraft */
   AircraftType type;
 
-  /** Average climb rate over 30s */
-  double climb_rate_avg30s;
+  /** Traffic source (PFLAA v9+) */
+  SourceType source;
 
-  bool IsDefined() const {
+  /** ID type: how to interpret the FLARM id (PFLAA <IDType>) */
+  IdType id_type;
+
+  /**
+   * Signal strength in dBm (PFLAA field 13, v9+).
+   * Only valid when #rssi_available is true.
+   */
+  int8_t rssi;
+
+  /** Is the target in stealth mode */
+  bool stealth;
+
+  /** Does the target have no-tracking enabled (PFLAA field 14, v8+) */
+  bool no_track;
+
+  /** Has the geographical location been calculated yet? */
+  bool location_available;
+
+  /**
+   * Does this target have an absolute geographic location that was
+   * received from an external traffic source (e.g. ADS-B)?
+   *
+   * If true, FLARM post-processing must not overwrite #location from
+   * #relative_north/#relative_east.
+   */
+  bool absolute_location;
+
+  /** Was the direction of the target received from the flarm or calculated? */
+  bool track_received;
+
+  /** Was the speed of the target received from the flarm or calculated? */
+  bool speed_received;
+
+  /** Has the absolute altitude of the target been calculated yet? */
+  bool altitude_available;
+
+  /**
+   * Does this target have an absolute altitude received from an
+   * external traffic source?
+   *
+   * If true, FLARM post-processing must not overwrite #altitude from
+   * #relative_altitude and ownship GPS altitude.
+   */
+  bool absolute_altitude;
+
+  /** Was the turn rate of the target received from the flarm or calculated? */
+  bool turn_rate_received;
+
+  /** Was the climb_rate of the target received from the flarm or calculated? */
+  bool climb_rate_received;
+
+  /** Has the averaged climb rate of the target been calculated yet? */
+  bool climb_rate_avg30s_available;
+
+  /** Was the RSSI value received from the device? */
+  bool rssi_available;
+
+  bool IsDefined() const noexcept {
     return valid;
   }
 
-  bool HasAlarm() const {
+  bool HasAlarm() const noexcept {
     return alarm_level != AlarmType::NONE;
   }
 
@@ -152,26 +194,33 @@ struct FlarmTraffic {
    * Does the target have a name?
    * @return True if a name has been assigned to the target
    */
-  bool HasName() const {
+  bool HasName() const noexcept {
     return !name.empty();
   }
 
-  void Clear() {
+  void Clear() noexcept {
     valid.Clear();
     name.clear();
+    source = SourceType::FLARM;
+    id_type = IdType::UNKNOWN;
+    rssi = 0;
+    rssi_available = false;
+    no_track = false;
+    absolute_location = false;
+    absolute_altitude = false;
   }
 
-  Angle Bearing() const {
+  Angle Bearing() const noexcept {
     return Angle::FromXY(relative_north, relative_east);
   }
 
-  bool IsPowered() const {
+  bool IsPowered() const noexcept {
     return type != AircraftType::GLIDER &&
            type != AircraftType::HANG_GLIDER &&
            type != AircraftType::PARA_GLIDER;
   }
 
-  bool IsPassive() const {
+  bool IsPassive() const noexcept {
     return IsPowered() || speed < 4;
   }
 
@@ -180,16 +229,27 @@ struct FlarmTraffic {
    *
    * @return true if the object is still valid
    */
-  bool Refresh(double Time) {
-    valid.Expire(Time, 2);
+  bool Refresh(TimeStamp Time) noexcept {
+    valid.Expire(Time, std::chrono::seconds(2));
     return valid;
   }
 
-  static const TCHAR* GetTypeString(AircraftType type);
+  [[gnu::const]]
+  static const char *GetTypeString(AircraftType type) noexcept;
 
-  void Update(const FlarmTraffic &other);
+  [[gnu::const]]
+  static const char *GetSourceString(SourceType source) noexcept;
+
+  [[gnu::const]]
+  static bool IsInjectedSource(SourceType source) noexcept;
+
+  void Update(const FlarmTraffic &other) noexcept;
+
+  /**
+   * Merge an online (SkyLines/cloud) traffic update into this record.
+   * Preserves track when @p built has no new track data.
+   */
+  void UpdateOnline(const FlarmTraffic &built) noexcept;
 };
 
 static_assert(std::is_trivial<FlarmTraffic>::value, "type is not trivial");
-
-#endif

@@ -1,29 +1,10 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef AIRSPACE_HPP
-#define AIRSPACE_HPP
-
+#include "Ptr.hpp"
 #include "Geo/Flat/FlatBoundingBox.hpp"
-#include "Compiler.h"
 
 #ifdef DO_PRINT
 #include <iostream>
@@ -48,7 +29,7 @@ class FlatProjection;
  */
 class Airspace final : public FlatBoundingBox
 {
-  AbstractAirspace *airspace;
+  AirspacePtr airspace;
 
 public:
 
@@ -60,8 +41,8 @@ public:
    *
    * @return airspace letter inside envelope suitable for insertion in a search structure
    */
-  Airspace(AbstractAirspace &airspace,
-           const FlatProjection &projection);
+  Airspace(AirspacePtr _airspace,
+           const FlatProjection &projection) noexcept;
 
   /**
    * Checks whether an aircraft is inside the airspace.
@@ -70,8 +51,8 @@ public:
    *
    * @return true if aircraft is inside airspace
    */
-  gcc_pure
-  bool IsInside(const AircraftState &loc) const;
+  [[gnu::pure]]
+  bool IsInside(const AircraftState &loc) const noexcept;
 
   /**
    * Checks whether a point is inside the airspace lateral boundary.
@@ -80,8 +61,8 @@ public:
    *
    * @return true if location is inside airspace
    */
-  gcc_pure
-  bool IsInside(const GeoPoint &loc) const;
+  [[gnu::pure]]
+  bool IsInside(const GeoPoint &loc) const noexcept;
 
   /**
    * Checks whether a line intersects with the airspace, by directing
@@ -92,27 +73,23 @@ public:
    *
    * @return true if the line intersects the airspace
    */
-  gcc_pure
+  [[gnu::pure]]
   AirspaceIntersectionVector Intersects(const GeoPoint &g1,
                                         const GeoPoint &end,
-                                        const FlatProjection &projection) const;
-
-  /**
-   * Destroys concrete airspace enclosed by this instance if present.
-   * Note that this should not be called by clients but only by the
-   * master store.  Many copies of this airspace may point to the same
-   * concrete airspace so have to be careful here.
-   *
-   */
-  void Destroy();
+                                        const FlatProjection &projection) const noexcept;
 
   /**
    * Accessor for contained AbstractAirspace
    *
    * @return Airspace letter
    */
-  AbstractAirspace &GetAirspace() const {
+  AbstractAirspace &GetAirspace() const noexcept {
     return *airspace;
+  };
+
+  // TODO change to ConstAirspacePtr
+  AirspacePtr GetAirspacePtr() const noexcept {
+    return airspace;
   };
 
   /**
@@ -120,37 +97,37 @@ public:
    *
    * @param alt Height above MSL of terrain (m) at center
    */
-  void SetGroundLevel(double alt) const;
+  void SetGroundLevel(double alt) const noexcept;
 
   /**
    * Is it necessary to call SetGroundLevel() for this AbstractAirspace?
    */
-  gcc_pure
-  bool NeedGroundLevel() const;
+  [[gnu::pure]]
+  bool NeedGroundLevel() const noexcept;
 
   /**
    * Set QNH pressure for FL-referenced airspace altitudes
    *
    * @param press Atmospheric pressure model and QNH
    */
-  void SetFlightLevel(const AtmosphericPressure &press) const;
+  void SetFlightLevel(AtmosphericPressure press) const noexcept;
 
   /**
    * Set activity based on day mask
    *
    * @param days Mask of activity
    */
-  void SetActivity(const AirspaceActivity mask) const;
+  void SetActivity(const AirspaceActivity mask) const noexcept;
 
   /**
    * Clear the convex clearance polygon
    */
-  void ClearClearance() const;
+  void ClearClearance() const noexcept;
 
   /**
    * Equality operator, matches if contained airspace is the same
    */
-  bool operator==(Airspace const &a) const {
+  bool operator==(Airspace const &a) const noexcept {
     return &GetAirspace() == &a.GetAirspace();
   }
 
@@ -160,5 +137,3 @@ public:
                                   const Airspace &ts);
 #endif
 };
-
-#endif

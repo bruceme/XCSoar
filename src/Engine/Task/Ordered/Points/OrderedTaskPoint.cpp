@@ -1,54 +1,71 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "OrderedTaskPoint.hpp"
 #include "StartPoint.hpp"
 #include "ASTPoint.hpp"
 #include "AATPoint.hpp"
 #include "FinishPoint.hpp"
+#include "Task/Ordered/Settings.hpp"
 #include "Task/ObservationZones/ObservationZonePoint.hpp"
 #include "Task/ObservationZones/Boundary.hpp"
 #include "Geo/GeoBounds.hpp"
 #include "Geo/Flat/FlatProjection.hpp"
 #include "Geo/Math.hpp"
+#include "util/Compiler.h"
 
-#include <assert.h>
+#include <cassert>
 
 OrderedTaskPoint::OrderedTaskPoint(TaskPointType _type,
-                                   ObservationZonePoint *_oz,
+                                   std::unique_ptr<ObservationZonePoint> &&_oz,
                                    WaypointPtr &&wp,
-                                   const bool b_scored)
+                                   const bool b_scored) noexcept
   :TaskLeg(*this),
    TaskWaypoint(_type, std::move(wp)),
    ScoredTaskPoint(GetLocation(), b_scored),
-   ObservationZoneClient(_oz),
-   tp_next(NULL), tp_previous(NULL),
-   flat_bb(FlatGeoPoint(0,0),0) // empty, not initialised!
+   ObservationZoneClient(std::move(_oz))
 {
 }
 
 void
+OrderedTaskPoint::SetOrderedTaskSettings(
+  const OrderedTaskSettings &otb) noexcept
+{
+  navigate_nearest = otb.navigate_nearest;
+
+  if (!navigate_nearest)
+    nearest_point = GeoPoint::Invalid();
+}
+
+const GeoPoint &
+OrderedTaskPoint::GetLocationNavigation() const noexcept
+{
+  /* the nearest point is only meaningful while the aircraft is still
+     heading for this task point */
+  return active_state == CURRENT_ACTIVE && nearest_point.IsValid()
+    ? nearest_point
+    : TaskPoint::GetLocationNavigation();
+}
+
+void
+OrderedTaskPoint::UpdateNearestPoint(const GeoPoint &location,
+                                     const FlatProjection &projection) noexcept
+{
+  nearest_point = navigate_nearest
+    ? GetObservationZone().GetNearestPoint(projection, location)
+    : GeoPoint::Invalid();
+}
+
+void
+OrderedTaskPoint::Reset() noexcept
+{
+  ScoredTaskPoint::Reset();
+  nearest_point = GeoPoint::Invalid();
+}
+
+void
 OrderedTaskPoint::SetNeighbours(OrderedTaskPoint *_previous,
-                                OrderedTaskPoint *_next)
+                                OrderedTaskPoint *_next) noexcept
 {
   tp_previous = _previous;
   tp_next = _next;
@@ -57,13 +74,13 @@ OrderedTaskPoint::SetNeighbours(OrderedTaskPoint *_previous,
 }
 
 void
-OrderedTaskPoint::UpdateGeometry()
+OrderedTaskPoint::UpdateGeometry() noexcept
 {
   SetLegs(tp_previous, tp_next);
 }
 
 void
-OrderedTaskPoint::UpdateOZ(const FlatProjection &projection)
+OrderedTaskPoint::UpdateOZ(const FlatProjection &projection) noexcept
 {
   UpdateGeometry();
 
@@ -71,7 +88,7 @@ OrderedTaskPoint::UpdateOZ(const FlatProjection &projection)
 }
 
 bool
-OrderedTaskPoint::ScanActive(const OrderedTaskPoint &atp)
+OrderedTaskPoint::ScanActive(const OrderedTaskPoint &atp) noexcept
 {
   if (&atp == this)
     active_state = CURRENT_ACTIVE;
@@ -92,7 +109,7 @@ OrderedTaskPoint::ScanActive(const OrderedTaskPoint &atp)
 }
 
 const SearchPointVector &
-OrderedTaskPoint::GetSearchPoints() const
+OrderedTaskPoint::GetSearchPoints() const noexcept
 {
   if (IsFuture())
     return GetBoundaryPoints();
@@ -101,14 +118,14 @@ OrderedTaskPoint::GetSearchPoints() const
 }
 
 bool
-OrderedTaskPoint::IsInSector(const AircraftState &ref) const
+OrderedTaskPoint::IsInSector(const AircraftState &ref) const noexcept
 {
   return ObservationZoneClient::IsInSector(ref.location);
 }
 
 bool
 OrderedTaskPoint::UpdateSampleNear(const AircraftState &state,
-                                   const FlatProjection &projection)
+                                   const FlatProjection &projection) noexcept
 {
   if (!IsInSector(state))
     // return false (no update required)
@@ -119,14 +136,14 @@ OrderedTaskPoint::UpdateSampleNear(const AircraftState &state,
 
 bool
 OrderedTaskPoint::CheckEnterTransition(const AircraftState &ref_now,
-                                       const AircraftState &ref_last) const
+                                       const AircraftState &ref_last) const noexcept
 {
   return IsInSector(ref_now) && !IsInSector(ref_last) &&
     TransitionConstraint(ref_now.location, ref_last.location);
 }
 
 double
-OrderedTaskPoint::DoubleLegDistance(const GeoPoint &ref) const
+OrderedTaskPoint::DoubleLegDistance(const GeoPoint &ref) const noexcept
 {
   assert(tp_previous);
   assert(tp_next);
@@ -136,7 +153,7 @@ OrderedTaskPoint::DoubleLegDistance(const GeoPoint &ref) const
 }
 
 bool
-OrderedTaskPoint::Equals(const OrderedTaskPoint &other) const
+OrderedTaskPoint::Equals(const OrderedTaskPoint &other) const noexcept
 {
   return GetWaypoint() == other.GetWaypoint() &&
     GetType() == other.GetType() &&
@@ -144,51 +161,65 @@ OrderedTaskPoint::Equals(const OrderedTaskPoint &other) const
     other.GetObservationZone().Equals(GetObservationZone());
 }
 
-OrderedTaskPoint *
+std::unique_ptr<OrderedTaskPoint>
 OrderedTaskPoint::Clone(const TaskBehaviour &task_behaviour,
                         const OrderedTaskSettings &ordered_task_settings,
-                        WaypointPtr &&waypoint) const
+                        WaypointPtr &&waypoint) const noexcept
 {
   if (!waypoint)
     waypoint = GetWaypointPtr();
 
+  auto oz = GetObservationZone().Clone(waypoint->location);
+  std::unique_ptr<OrderedTaskPoint> dest;
+
   switch (GetType()) {
   case TaskPointType::START:
-    return new StartPoint(GetObservationZone().Clone(waypoint->location),
-                          std::move(waypoint), task_behaviour,
-                          ordered_task_settings.start_constraints);
+    dest =
+      std::make_unique<StartPoint>(std::move(oz),
+                                   std::move(waypoint), task_behaviour,
+                                   ordered_task_settings.start_constraints);
+    break;
 
   case TaskPointType::AST: {
     const ASTPoint &src = *(const ASTPoint *)this;
-    ASTPoint *dest =
-      new ASTPoint(GetObservationZone().Clone(waypoint->location),
-                   std::move(waypoint), task_behaviour, IsBoundaryScored());
-    dest->SetScoreExit(src.GetScoreExit());
-    return dest;
+    auto ast =
+      std::make_unique<ASTPoint>(std::move(oz),
+                                 std::move(waypoint), task_behaviour,
+                                 IsBoundaryScored());
+    ast->SetScoreExit(src.GetScoreExit());
+    dest = std::move(ast);
+    break;
   }
 
   case TaskPointType::AAT:
-    return new AATPoint(GetObservationZone().Clone(waypoint->location),
-                        std::move(waypoint), task_behaviour);
+    dest =
+      std::make_unique<AATPoint>(std::move(oz),
+                                 std::move(waypoint), task_behaviour);
+    break;
 
   case TaskPointType::FINISH:
-    return new FinishPoint(GetObservationZone().Clone(waypoint->location),
-                           std::move(waypoint), task_behaviour,
-                           ordered_task_settings.finish_constraints,
-                           IsBoundaryScored());
+    dest =
+      std::make_unique<FinishPoint>(std::move(oz),
+                                    std::move(waypoint), task_behaviour,
+                                    ordered_task_settings.finish_constraints,
+                                    IsBoundaryScored());
+    break;
 
   case TaskPointType::UNORDERED:
     /* an OrderedTaskPoint must never be UNORDERED */
     gcc_unreachable();
     assert(false);
-    break;
+    return nullptr;
   }
 
-  return NULL;
+  /* the constructors take the start and finish constraints, but not
+     the settings which apply to every task point */
+  dest->SetOrderedTaskSettings(ordered_task_settings);
+  return dest;
 }
 
 void
-OrderedTaskPoint::ScanBounds(GeoBounds &bounds) const
+OrderedTaskPoint::ScanBounds(GeoBounds &bounds) const noexcept
 {
   bounds.Extend(GetLocation());
 
@@ -197,7 +228,7 @@ OrderedTaskPoint::ScanBounds(GeoBounds &bounds) const
 }
 
 void
-OrderedTaskPoint::UpdateBoundingBox(const FlatProjection &projection)
+OrderedTaskPoint::UpdateBoundingBox(const FlatProjection &projection) noexcept
 {
   flat_bb = FlatBoundingBox(projection.ProjectInteger(GetLocation()));
 
@@ -208,13 +239,13 @@ OrderedTaskPoint::UpdateBoundingBox(const FlatProjection &projection)
 }
 
 bool
-OrderedTaskPoint::BoundingBoxOverlaps(const FlatBoundingBox &that) const
+OrderedTaskPoint::BoundingBoxOverlaps(const FlatBoundingBox &that) const noexcept
 {
   return flat_bb.Overlaps(that);
 }
 
 GeoVector
-OrderedTaskPoint::GetNextLegVector() const
+OrderedTaskPoint::GetNextLegVector() const noexcept
 {
   if (tp_next)
     return tp_next->GetVectorPlanned();

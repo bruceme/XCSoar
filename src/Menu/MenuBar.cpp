@@ -1,114 +1,90 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "MenuBar.hpp"
-#include "Screen/ContainerWindow.hpp"
+#include "ui/window/ContainerWindow.hpp"
+#include "ui/window/SingleWindow.hpp"
 #include "Input/InputEvents.hpp"
+#include "Screen/Layout.hpp"
 
-#include <assert.h>
+#include <algorithm>
+#include <cassert>
 
-gcc_pure
+unsigned
+MenuBar::GetButtonHeight(unsigned screen_height, bool portrait) noexcept
+{
+  unsigned height = std::max(1u,
+    screen_height / (portrait ? menubar_height_scale_factor : 5u));
+  const unsigned cap = Layout::GetInflightButtonHeight();
+  if (portrait && cap > 0 && height > cap)
+    height = cap;
+  return height;
+}
+
+[[gnu::pure]]
 static PixelRect
 GetButtonPosition(unsigned i, PixelRect rc)
 {
-  unsigned hwidth = rc.GetWidth(), hheight = rc.GetHeight();
+  const unsigned screen_width = rc.GetWidth();
+  const unsigned screen_height = rc.GetHeight();
+  const bool portrait = screen_height > screen_width;
 
-  if (hheight > hwidth) {
-    // portrait
+  unsigned width = std::max(1u, screen_width / (portrait ? 4u : 5u));
+  unsigned height = MenuBar::GetButtonHeight(screen_height, portrait);
 
-    hheight /= 6;
-
-    if (i == 0) {
-      rc.left = rc.right;
-      rc.top = rc.bottom;
-    } else if (i < 5) {
-      hwidth /= 4;
-
-      rc.left += hwidth * (i - 1);
-      rc.top = rc.bottom - hheight;
-    } else {
-      hwidth /= 3;
-
-      rc.left = rc.right - hwidth;
-      rc.top += (i - 5) * hheight;
-    }
-
-    rc.right = rc.left + hwidth;
-    rc.bottom = rc.top + hheight;
+  if (i == 0) {
+    rc.left = rc.right;
+    rc.top = rc.bottom;
+  } else if (i < 5) {
+    if (portrait) {
+      rc.left += width * (i - 1);
+      rc.top = rc.bottom - height;
+    } else
+      rc.top += height * (i - 1);
   } else {
-    // landscape
+    if (portrait)
+      width = std::max(1u, screen_width / 3);
 
-    hwidth /= 5;
-    hheight /= 5;
-
-    if (i == 0) {
-      rc.left = rc.right;
-      rc.top = rc.bottom;
-    } else if (i < 5) {
-      rc.top += hheight * (i - 1);
-    } else {
-      rc.left += hwidth * (i - 5);
-      rc.top = rc.bottom - hheight;
-    }
-
-    rc.right = rc.left + hwidth;
-    rc.bottom = rc.top + hheight;
+    rc.left = rc.right - width;
+    rc.top += (i - 5) * height;
   }
 
+  rc.right = rc.left + width;
+  rc.bottom = rc.top + height;
   return rc;
 }
 
 bool
-MenuBar::Button::OnClicked()
+MenuBar::Button::OnClicked() noexcept
 {
   if (event > 0)
     InputEvents::ProcessEvent(event);
   return true;
 }
 
-MenuBar::MenuBar(ContainerWindow &parent, const ButtonLook &look)
+MenuBar::MenuBar(ContainerWindow &parent, const PixelRect &rc,
+                 const ButtonLook &_look)
+  :look(_look)
 {
-  const PixelRect rc = parent.GetClientRect();
-
   WindowStyle style;
   style.Hide();
   style.Border();
 
   for (unsigned i = 0; i < MAX_BUTTONS; ++i) {
     PixelRect button_rc = GetButtonPosition(i, rc);
-    buttons[i].Create(parent, look, _T(""), button_rc, style);
+    buttons[i].Create(parent, look, "", button_rc, style);
   }
 }
 
 void
-MenuBar::ShowButton(unsigned i, bool enabled, const TCHAR *text,
+MenuBar::ShowButton(unsigned i, bool enabled, const char *text,
                     unsigned event)
 {
   assert(i < MAX_BUTTONS);
 
   Button &button = buttons[i];
 
-  button.SetCaption(text);
+  button.SetMenuCaption(look, text);
   button.SetEnabled(enabled && event > 0);
   button.SetEvent(event);
   button.ShowOnTop();
@@ -127,4 +103,29 @@ MenuBar::OnResize(const PixelRect &rc)
 {
   for (unsigned i = 0; i < MAX_BUTTONS; ++i)
     buttons[i].Move(GetButtonPosition(i, rc));
+}
+
+void
+MenuBar::BringToTop(UI::SingleWindow &parent) noexcept
+{
+  for (auto &button : buttons)
+    if (button.IsVisible())
+      parent.BringToTopBelowDialogs(button);
+}
+
+PixelRect
+MenuBar::GetRemainingRectAboveBottomButtons(PixelRect rc) const noexcept
+{
+  const int bottom = rc.bottom;
+
+  for (const auto &button : buttons) {
+    if (!button.IsVisible())
+      continue;
+
+    const PixelRect button_rc = button.GetPosition();
+    if (button_rc.top < bottom && button_rc.bottom >= bottom)
+      rc.bottom = std::min(rc.bottom, button_rc.top);
+  }
+
+  return rc;
 }

@@ -1,82 +1,102 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Device/Util/NMEAWriter.hpp"
 #include "LX1600.hpp"
-#include "V7.hpp"
+#include "LXNAVVario.hpp"
+#include "NMEA/Info.hpp"
+#include "Radio/RadioFrequency.hpp"
+#include "Radio/TransponderCode.hpp"
 
-#include <cstdio>
+#include <fmt/format.h>
+#include <cstdlib>
+
+std::optional<unsigned>
+LXDevice::GetLXNAVBaudrateByIndex(unsigned index) noexcept
+{
+  for (const auto &entry : lxnav_baud_rates)
+    if (entry.index == index)
+      return entry.baud_rate;
+
+  return std::nullopt;
+}
 
 bool
-LXDevice::SendV7Setting(const char *name, const char *value,
+LXDevice::ReadLXGPSBaudrate(unsigned &baudrate, OperationEnvironment &env)
+{
+  if (!RequestLXNAVVarioSetting("BRGPS", env))
+    return false;
+
+  const auto value = WaitLXNAVVarioSetting("BRGPS", env, 1000);
+  if (value.empty())
+    return false;
+
+  char *endptr = nullptr;
+  const unsigned index = strtoul(value.c_str(), &endptr, 10);
+  if (endptr == value.c_str())
+    return false;
+
+  const auto mapped = GetLXNAVBaudrateByIndex(index);
+  if (!mapped.has_value())
+    return false;
+
+  baudrate = *mapped;
+  return true;
+}
+
+bool
+LXDevice::SendLXNAVVarioSetting(const char *name, const char *value,
                         OperationEnvironment &env)
 {
   if (!EnableNMEA(env))
     return false;
 
-  v7_settings.Lock();
-  v7_settings.MarkOld(name);
-  v7_settings.Unlock();
+  {
+    const std::lock_guard<Mutex> lock(lxnav_vario_settings);
+    lxnav_vario_settings.MarkOld(name);
+  }
 
-  char buffer[256];
-  sprintf(buffer, "PLXV0,%s,W,%s", name, value);
-  return PortWriteNMEA(port, buffer, env);
+  const auto buffer = fmt::format("PLXV0,{},W,{}", name, value);
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
 }
 
 bool
-LXDevice::RequestV7Setting(const char *name, OperationEnvironment &env)
+LXDevice::RequestLXNAVVarioSetting(const char *name, OperationEnvironment &env)
 {
   if (!EnableNMEA(env))
     return false;
 
-  v7_settings.Lock();
-  v7_settings.MarkOld(name);
-  v7_settings.Unlock();
+  {
+    const std::lock_guard<Mutex> lock(lxnav_vario_settings);
+    lxnav_vario_settings.MarkOld(name);
+  }
 
-  char buffer[256];
-  sprintf(buffer, "PLXV0,%s,R", name);
-  return PortWriteNMEA(port, buffer, env);
+  const auto buffer = fmt::format("PLXV0,{},R", name);
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
 }
 
 std::string
-LXDevice::WaitV7Setting(const char *name, OperationEnvironment &env,
+LXDevice::WaitLXNAVVarioSetting(const char *name, OperationEnvironment &env,
                         unsigned timeout_ms)
 {
-  ScopeLock protect(v7_settings);
-  auto i = v7_settings.Wait(name, env, timeout_ms);
-  if (i == v7_settings.end())
+  std::unique_lock<Mutex> lock(lxnav_vario_settings);
+  auto i = lxnav_vario_settings.Wait(lock, name, env,
+                            std::chrono::milliseconds(timeout_ms));
+  if (i == lxnav_vario_settings.end())
     return std::string();
 
   return *i;
 }
 
 std::string
-LXDevice::GetV7Setting(const char *name) const
+LXDevice::GetLXNAVVarioSetting(const char *name) const noexcept
 {
-  ScopeLock protect(v7_settings);
-  auto i = v7_settings.find(name);
-  if (i == v7_settings.end())
+  std::lock_guard<Mutex> lock(lxnav_vario_settings);
+  auto i = lxnav_vario_settings.find(name);
+  if (i == lxnav_vario_settings.end())
     return std::string();
 
   return *i;
@@ -86,39 +106,50 @@ bool
 LXDevice::SendNanoSetting(const char *name, const char *value,
                         OperationEnvironment &env)
 {
-  if (!EnableNanoNMEA(env))
+  if (!EnableLoggerNMEA(env))
     return false;
 
-  nano_settings.Lock();
-  nano_settings.MarkOld(name);
-  nano_settings.Unlock();
+  {
+    const std::lock_guard<Mutex> lock(nano_settings);
+    nano_settings.MarkOld(name);
+  }
 
-  char buffer[256];
-  sprintf(buffer, "PLXVC,SET,W,%s,%s", name, value);
-  return PortWriteNMEA(port, buffer, env);
+  const auto buffer = fmt::format("PLXVC,SET,W,{},{}", name, value);
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
+}
+
+bool
+LXDevice::SendNanoSetting(const char *name, unsigned value,
+                          OperationEnvironment &env)
+{
+  const auto str = fmt::format("{}", value);
+  return SendNanoSetting(name, str.c_str(), env);
 }
 
 bool
 LXDevice::RequestNanoSetting(const char *name, OperationEnvironment &env)
 {
-  if (!EnableNanoNMEA(env))
+  if (!EnableLoggerNMEA(env))
     return false;
 
-  nano_settings.Lock();
-  nano_settings.MarkOld(name);
-  nano_settings.Unlock();
+  {
+    const std::lock_guard<Mutex> lock(nano_settings);
+    nano_settings.MarkOld(name);
+  }
 
-  char buffer[256];
-  sprintf(buffer, "PLXVC,SET,R,%s", name);
-  return PortWriteNMEA(port, buffer, env);
+  const auto buffer = fmt::format("PLXVC,SET,R,{}", name);
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
 }
 
 std::string
 LXDevice::WaitNanoSetting(const char *name, OperationEnvironment &env,
                         unsigned timeout_ms)
 {
-  ScopeLock protect(nano_settings);
-  auto i = nano_settings.Wait(name, env, timeout_ms);
+  std::unique_lock<Mutex> lock(nano_settings);
+  auto i = nano_settings.Wait(lock, name, env,
+                              std::chrono::milliseconds(timeout_ms));
   if (i == nano_settings.end())
     return std::string();
 
@@ -126,9 +157,9 @@ LXDevice::WaitNanoSetting(const char *name, OperationEnvironment &env,
 }
 
 std::string
-LXDevice::GetNanoSetting(const char *name) const
+LXDevice::GetNanoSetting(const char *name) const noexcept
 {
-  ScopeLock protect(nano_settings);
+  std::lock_guard<Mutex> lock(nano_settings);
   auto i = nano_settings.find(name);
   if (i == nano_settings.end())
     return std::string();
@@ -136,17 +167,36 @@ LXDevice::GetNanoSetting(const char *name) const
   return *i;
 }
 
+unsigned
+LXDevice::GetNanoSettingInteger(const char *name) const noexcept
+{
+  const std::lock_guard<Mutex> lock{nano_settings};
+  auto i = nano_settings.find(name);
+  if (i == nano_settings.end())
+    return {};
+
+  return strtoul(i->c_str(), nullptr, 10);
+}
+
 bool
-LXDevice::PutBallast(gcc_unused double fraction, double overload,
+LXDevice::PutBallast([[maybe_unused]] double fraction, double overload,
                      OperationEnvironment &env)
 {
   if (!EnableNMEA(env))
     return false;
 
-  if (IsV7())
-    return V7::SetBallast(port, env, overload);
+  if (IsLXNAVVario())
+    LXNAVVario::SetBallast(port, env, overload);
   else
-    return LX1600::SetBallast(port, env, overload);
+    LX1600::SetBallast(port, env, overload);
+  
+  /* Track what we sent for feedback loop detection */
+  {
+    const std::lock_guard lock{mutex};
+    last_sent_ballast_overload = overload;
+  }
+  
+  return true;
 }
 
 bool
@@ -157,10 +207,18 @@ LXDevice::PutBugs(double bugs, OperationEnvironment &env)
 
   int transformed_bugs_value = 100 - (int)(bugs*100);
 
-  if (IsV7())
-    return V7::SetBugs(port, env, transformed_bugs_value);
+  if (IsLXNAVVario())
+    LXNAVVario::SetBugs(port, env, transformed_bugs_value);
   else
-    return LX1600::SetBugs(port, env, transformed_bugs_value);
+    LX1600::SetBugs(port, env, transformed_bugs_value);
+  
+  /* Track what we sent for feedback loop detection */
+  {
+    const std::lock_guard lock{mutex};
+    last_sent_bugs = bugs;
+  }
+  
+  return true;
 }
 
 bool
@@ -169,10 +227,106 @@ LXDevice::PutMacCready(double mac_cready, OperationEnvironment &env)
   if (!EnableNMEA(env))
     return false;
 
-  if (IsV7())
-    return V7::SetMacCready(port, env, mac_cready);
+  if (IsLXNAVVario())
+    LXNAVVario::SetMacCready(port, env, mac_cready);
   else
-    return LX1600::SetMacCready(port, env, mac_cready);
+    LX1600::SetMacCready(port, env, mac_cready);
+  
+  /* Track what we sent for feedback loop detection */
+  {
+    const std::lock_guard lock{mutex};
+    last_sent_mc = mac_cready;
+  }
+  
+  return true;
+}
+
+bool
+LXDevice::PutCrewMass(double crew_mass, OperationEnvironment &env)
+{
+  /* Only support crew mass sync for LXNAV varios */
+  if (!IsLXNAVVario())
+    return true;
+
+  if (!EnableNMEA(env))
+    return false;
+
+  /* Send full POLAR command with only pilot_weight changed to
+     avoid zeroing other fields on the device. */
+  std::string cmd;
+  {
+    const std::lock_guard lock{mutex};
+    if (device_polar.valid) {
+      cmd = fmt::format(
+        "PLXV0,POLAR,W,{:.6f},{:.6f},{:.6f},{:.2f},{:.1f},{:.0f},"
+        "{:.1f},{:.1f},{},{:.0f}",
+        device_polar.a * (LX_POLAR_V * LX_POLAR_V),
+        device_polar.b * LX_POLAR_V,
+        device_polar.c,
+        device_polar.polar_load,
+        device_polar.polar_weight,
+        device_polar.max_weight,
+        device_polar.empty_weight,
+        crew_mass,
+        device_polar.name,
+        device_polar.stall);
+      device_polar.pilot_weight = crew_mass;
+      last_sent_crew_mass = crew_mass;
+    }
+  }
+
+  if (!cmd.empty()) {
+    PortWriteNMEA(port, cmd.c_str(), env);
+    return true;
+  }
+
+  /* Do not fall back to a partial POLAR write: empty a,b,c fields
+     zero the polar on LXNAV S-series varios (#2397).  Skip until
+     device_polar has been populated from a prior POLAR read/write. */
+  return true;
+}
+
+bool
+LXDevice::PutEmptyMass(double empty_mass, OperationEnvironment &env)
+{
+  /* Only support empty mass sync for LXNAV varios */
+  if (!IsLXNAVVario())
+    return true;
+
+  if (!EnableNMEA(env))
+    return false;
+
+  /* Send full POLAR command with only empty_weight changed to
+     avoid zeroing other fields on the device. */
+  std::string cmd;
+  {
+    const std::lock_guard lock{mutex};
+    if (device_polar.valid) {
+      cmd = fmt::format(
+        "PLXV0,POLAR,W,{:.6f},{:.6f},{:.6f},{:.2f},{:.1f},{:.0f},"
+        "{:.1f},{:.1f},{},{:.0f}",
+        device_polar.a * (LX_POLAR_V * LX_POLAR_V),
+        device_polar.b * LX_POLAR_V,
+        device_polar.c,
+        device_polar.polar_load,
+        device_polar.polar_weight,
+        device_polar.max_weight,
+        empty_mass,
+        device_polar.pilot_weight,
+        device_polar.name,
+        device_polar.stall);
+      device_polar.empty_weight = empty_mass;
+      last_sent_empty_mass = empty_mass;
+    }
+  }
+
+  if (!cmd.empty()) {
+    PortWriteNMEA(port, cmd.c_str(), env);
+    return true;
+  }
+
+  /* Same as PutCrewMass: never send empty-coefficient POLAR (#2397). */
+  return true;
 }
 
 bool
@@ -181,17 +335,145 @@ LXDevice::PutQNH(const AtmosphericPressure &pres, OperationEnvironment &env)
   if (!EnableNMEA(env))
     return false;
 
-  if (IsV7())
-    return V7::SetQNH(port, env, pres);
+  if (IsLXNAVVario())
+    LXNAVVario::SetQNH(port, env, pres);
   else
-    return LX1600::SetQNH(port, env, pres);
+    LX1600::SetQNH(port, env, pres);
+  return true;
+}
+
+bool
+LXDevice::PutElevation(int elevation, OperationEnvironment &env)
+{
+  if (!EnableNMEA(env))
+    return false;
+
+  if (IsLXNAVVario())
+    LXNAVVario::SetElevation(port, env, elevation);
+  else
+    return false;
+
+  return true;
+}
+
+bool
+LXDevice::RequestElevation(OperationEnvironment &env)
+{
+  if (!EnableNMEA(env))
+    return false;
+
+  if (IsLXNAVVario())
+    return RequestLXNAVVarioSetting("ELEVATION", env);
+
+  return false;
 }
 
 bool
 LXDevice::PutVolume(unsigned volume, OperationEnvironment &env)
 {
-  if (!IsLX16xx() || !EnableNMEA(env))
+  if (!EnableNMEA(env))
     return false;
 
-  return LX1600::SetVolume(port, env, volume);
+  if (IsLXNAVVario())
+    LXNAVVario::SetVolume(port, env, volume);
+  else if (IsLX16xx())
+    LX1600::SetVolume(port, env, volume);
+  else
+    return false;
+
+  return true;
+}
+
+bool
+LXDevice::PutPilotEvent(OperationEnvironment &env)
+{
+  if (!IsLXNAVVario())
+    return false;
+
+  LXNAVVario::PutPilotEvent(env, port);
+  return true;
+}
+
+bool
+LXDevice::PutActiveFrequency(RadioFrequency frequency,
+                             const char *name,
+                             OperationEnvironment &env)
+{
+  if (!IsLXNAVVario())
+    return false;
+
+  if (!EnableNMEA(env))
+    return false;
+
+  /* LXNAV uses frequency in kHz without decimal point:
+     e.g. 128.800 MHz → 128800 */
+  const unsigned freq_khz = frequency.GetKiloHertz();
+  const auto buffer = (name != nullptr && name[0] != '\0')
+    ? fmt::format("PLXVC,RADIO,S,COMM,{},{}", freq_khz, name)
+    : fmt::format("PLXVC,RADIO,S,COMM,{}", freq_khz);
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
+}
+
+bool
+LXDevice::PutStandbyFrequency(RadioFrequency frequency,
+                              const char *name,
+                              OperationEnvironment &env)
+{
+  if (!IsLXNAVVario())
+    return false;
+
+  if (!EnableNMEA(env))
+    return false;
+
+  const unsigned freq_khz = frequency.GetKiloHertz();
+  const auto buffer = (name != nullptr && name[0] != '\0')
+    ? fmt::format("PLXVC,RADIO,S,SBY,{},{}", freq_khz, name)
+    : fmt::format("PLXVC,RADIO,S,SBY,{}", freq_khz);
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
+}
+
+bool
+LXDevice::ExchangeRadioFrequencies(OperationEnvironment &env,
+                                   NMEAInfo &info)
+{
+  if (!IsLXNAVVario())
+    return false;
+
+  /* Swap active and standby in NMEAInfo */
+  if (info.settings.has_active_frequency.IsValid() &&
+      info.settings.has_standby_frequency.IsValid()) {
+    std::swap(info.settings.active_frequency,
+              info.settings.standby_frequency);
+    std::swap(info.settings.active_freq_name,
+              info.settings.standby_freq_name);
+    info.settings.swap_frequencies.Update(info.clock);
+
+    /* Send both frequencies to the device */
+    PutActiveFrequency(info.settings.active_frequency,
+                       info.settings.active_freq_name,
+                       env);
+    PutStandbyFrequency(info.settings.standby_frequency,
+                        info.settings.standby_freq_name,
+                        env);
+  }
+  return true;
+}
+
+bool
+LXDevice::PutTransponderCode(TransponderCode code,
+                             OperationEnvironment &env)
+{
+  if (!IsLXNAVVario())
+    return false;
+
+  if (!EnableNMEA(env))
+    return false;
+
+  /* LXNAV uses display squawk format (e.g. "7700") which is octal */
+  const auto buffer =
+    fmt::format("PLXVC,XPDR,S,SQUAWK,{:04o}", code.GetCode());
+  PortWriteNMEA(port, buffer.c_str(), env);
+  return true;
 }

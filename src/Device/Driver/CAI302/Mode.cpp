@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Protocol.hpp"
@@ -28,69 +8,62 @@ Copyright_License {
 #include "Device/Port/Port.hpp"
 #include "Device/Config.hpp"
 
-bool
+void
 CAI302Device::CommandMode(OperationEnvironment &env)
 {
   if (mode == Mode::COMMAND)
-    return true;
+    return;
 
   port.StopRxThread();
 
-  if (CAI302::CommandMode(port, env)) {
-    mode = Mode::COMMAND;
-    return true;
-  } else {
-    mode = Mode::UNKNOWN;
-    return false;
-  }
+  mode = Mode::UNKNOWN;
+  CAI302::CommandMode(port, env);
+  mode = Mode::COMMAND;
 }
 
-bool
+void
 CAI302Device::DownloadMode(OperationEnvironment &env)
 {
   if (mode == Mode::DOWNLOAD)
-    return true;
+    return;
 
   port.StopRxThread();
 
-  if (CAI302::DownloadMode(port, env)) {
-    mode = Mode::DOWNLOAD;
-    return true;
-  } else {
-    mode = Mode::UNKNOWN;
-    return false;
-  }
+  mode = Mode::UNKNOWN;
+  CAI302::DownloadMode(port, env);
+  mode = Mode::DOWNLOAD;
 }
 
-bool
+void
 CAI302Device::UploadMode(OperationEnvironment &env)
 {
   if (mode == Mode::UPLOAD)
-    return true;
+    return;
 
   port.StopRxThread();
 
-  if (CAI302::UploadMode(port, env)) {
-    mode = Mode::UPLOAD;
-    return true;
-  } else {
-    mode = Mode::UNKNOWN;
-    return false;
-  }
+  mode = Mode::UNKNOWN;
+  CAI302::UploadMode(port, env);
+  mode = Mode::UPLOAD;
 }
 
 bool
 CAI302Device::SetBaudRate(unsigned baud_rate, OperationEnvironment &env)
 {
-  if (!CommandMode(env) || !CAI302::SetBaudRate(port, baud_rate, env) ||
-      !port.Drain())
+  CommandMode(env);
+  CAI302::SetBaudRate(port, baud_rate, env);
+
+  if (!port.Drain())
     return false;
 
   /* the CAI302 needs some time to apply the new baud rate; if we
      switch too early, it'll cancel the command */
-  env.Sleep(500);
+  env.Sleep(std::chrono::milliseconds(500));
 
-  return port.SetBaudrate(baud_rate) && CAI302::CommandMode(port, env);
+  port.SetBaudrate(baud_rate);
+
+  CAI302::CommandMode(port, env);
+  return true;
 }
 
 bool
@@ -131,11 +104,8 @@ CAI302Device::EnableNMEA(OperationEnvironment &env)
 
   port.StopRxThread();
 
-  if (CAI302::LogMode(port, env)) {
-    mode = Mode::NMEA;
-    return true;
-  } else {
-    mode = Mode::UNKNOWN;
-    return false;
-  }
+  mode = Mode::UNKNOWN;
+  CAI302::LogMode(port, env);
+  mode = Mode::NMEA;
+  return true;
 }

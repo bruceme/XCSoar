@@ -1,5 +1,7 @@
-#ifndef _ZZIP__CONFIG_H
-#define _ZZIP__CONFIG_H 1
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
  
 /* zzip/_config.h. Generated automatically at end of configure. */
 /* config.h.  Generated from config.h.in by configure.  */
@@ -12,7 +14,7 @@
 /* #undef HAVE_ALIGNED_ACCESS_REQUIRED */
 
 /* Define to 1 if you have the <byteswap.h> header file. */
-#if !defined(__APPLE__) && !defined(WIN32)
+#if !defined(__APPLE__) && !defined(_WIN32)
 #ifndef ZZIP_HAVE_BYTESWAP_H
 #define ZZIP_HAVE_BYTESWAP_H  1
 #endif
@@ -259,7 +261,4 @@
    write() must fit into the zzip_plugin_io struct */
 #define ZZIP_ssize_t int
 #endif
-#endif
- 
-/* once: _ZZIP__CONFIG_H */
 #endif

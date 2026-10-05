@@ -1,42 +1,24 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DEVICE_DRIVER_HPP
-#define XCSOAR_DEVICE_DRIVER_HPP
-
-#include <stddef.h>
-#include <tchar.h>
-
+#include <cstddef>
+#include <optional>
+#include <span>
 struct NMEAInfo;
 struct MoreData;
 struct DerivedInfo;
 struct DeviceConfig;
 struct Declaration;
 struct Waypoint;
+struct GeoPoint;
 class Path;
 class Port;
+class GlidePolar;
 class AtmosphericPressure;
 class RadioFrequency;
+class TransponderCode;
 class OperationEnvironment;
 struct RecordedFlightInfo;
 class RecordedFlightList;
@@ -102,6 +84,52 @@ public:
                           OperationEnvironment &env) = 0;
 
   /**
+   * Send the new crew mass (pilot weight) to the device.
+   *
+   * @param crew_mass the new crew mass value [kg]
+   * @return true on success
+   */
+  virtual bool PutCrewMass(double crew_mass, OperationEnvironment &env) = 0;
+
+  /**
+   * Send the new empty mass (empty weight) to the device.
+   *
+   * @param empty_mass the new empty mass value [kg]
+   * @return true on success
+   */
+  virtual bool PutEmptyMass(double empty_mass, OperationEnvironment &env) = 0;
+
+  /**
+   * Send the glide polar to the device.
+   *
+   * The driver receives XCSoar's canonical GlidePolar and extracts
+   * whatever its protocol requires.  Vendor-specific metadata
+   * (e.g. LXNAV polar_load, glider name, stall speed) is handled
+   * internally by the driver.
+   *
+   * @param polar the current glide polar (SI units)
+   * @return true on success
+   */
+  virtual bool PutPolar(const GlidePolar &polar,
+                        OperationEnvironment &env) = 0;
+
+  /**
+   * Send a navigation target (waypoint) to the device.
+   *
+   * The caller decides when and which target to send.  The driver
+   * only handles the protocol formatting.
+   *
+   * @param location the target coordinates
+   * @param name the waypoint name (may be truncated by the driver)
+   * @param elevation the target elevation [m], or std::nullopt if unknown
+   * @return true on success
+   */
+  virtual bool PutTarget(const GeoPoint &location,
+                         const char *name,
+                         std::optional<double> elevation,
+                         OperationEnvironment &env) = 0;
+
+  /**
    * Send the new QNH value to the device.
    *
    * @param pressure the new QNH
@@ -112,12 +140,35 @@ public:
                       OperationEnvironment &env) = 0;
 
   /**
+   * Send the elevation value to the device.
+   *
+   * @param elevation elevation in meters
+   * @return true on success
+   */
+  virtual bool PutElevation(int elevation, OperationEnvironment &env) = 0;
+
+  /**
+   * Request the elevation value from the device.
+   * The device should respond by providing the elevation via ExternalSettings.
+   *
+   * @return true on success
+   */
+  virtual bool RequestElevation(OperationEnvironment &env) = 0;
+
+  /**
    * Set the radio volume.
    *
    * @param volume the new volume (0 - 100%)
    * @return true on success
    */
   virtual bool PutVolume(unsigned volume, OperationEnvironment &env) = 0;
+
+  /**
+   * Declare pilot event
+   *
+   * @return true on success
+   */
+  virtual bool PutPilotEvent(OperationEnvironment &env) = 0;
 
   /**
    * Set a new radio frequency.
@@ -127,7 +178,7 @@ public:
    * @return true on success
    */
   virtual bool PutActiveFrequency(RadioFrequency frequency,
-                                  const TCHAR *name,
+                                  const char *name,
                                   OperationEnvironment &env) = 0;
 
   /**
@@ -138,8 +189,25 @@ public:
    * @return true on success
    */
   virtual bool PutStandbyFrequency(RadioFrequency frequency,
-                                   const TCHAR *name,
+                                   const char *name,
                                    OperationEnvironment &env) = 0;
+
+  /**
+   * Swap active and standby radio frequency.
+   *
+   * @return true on success
+   */
+  virtual bool ExchangeRadioFrequencies(OperationEnvironment &env,
+                                        struct NMEAInfo &info) = 0;
+
+  /**
+   * Set a new transponder transponder code.
+   *
+   * @param TransponderCode code
+   * @return true on success
+   */
+  virtual bool PutTransponderCode(TransponderCode code,
+                                  OperationEnvironment &env) = 0;
 
   /**
    * Enable pass-through mode.  This may be used to communicate
@@ -150,6 +218,8 @@ public:
 
   /**
    * Declare a task.
+   *
+   * Throws on error.
    *
    * @param declaration the task declaration
    * @param home the home waypoint, or nullptr if not known/configured;
@@ -163,6 +233,8 @@ public:
   /**
    * Read the list of recorded flights.
    *
+   * Throws on error.
+   *
    * @param flight_list the flights will be appended to this list
    * @return true on success
    */
@@ -171,6 +243,8 @@ public:
 
   /**
    * Download a flight into a file.
+   *
+   * Throws on error.
    *
    * @param flight the flight that shall be downloaded
    * @param path the file name to save to
@@ -192,8 +266,8 @@ public:
    * @return true when the data has been processed,
    *         false if more data is necessary
    */
-  virtual bool DataReceived(const void *data, size_t length,
-                            struct NMEAInfo &info) = 0;
+  virtual bool DataReceived(std::span<const std::byte> s,
+                            struct NMEAInfo &info) noexcept = 0;
 
   /**
    * This method is invoked by #MergeThread after each merge,
@@ -241,15 +315,28 @@ public:
   bool PutBugs(double bugs, OperationEnvironment &env) override;
   bool PutBallast(double fraction, double overload,
                   OperationEnvironment &env) override;
+  bool PutCrewMass(double crew_mass, OperationEnvironment &env) override;
+  bool PutEmptyMass(double empty_mass, OperationEnvironment &env) override;
+  bool PutPolar(const GlidePolar &polar, OperationEnvironment &env) override;
+  bool PutTarget(const GeoPoint &location, const char *name,
+                 std::optional<double> elevation,
+                 OperationEnvironment &env) override;
   bool PutQNH(const AtmosphericPressure &pres,
               OperationEnvironment &env) override;
+  bool PutElevation(int elevation, OperationEnvironment &env) override;
+  bool RequestElevation(OperationEnvironment &env) override;
   bool PutVolume(unsigned volume, OperationEnvironment &env) override;
+  bool PutPilotEvent(OperationEnvironment &env) override;
   bool PutActiveFrequency(RadioFrequency frequency,
-                          const TCHAR *name,
+                          const char *name,
                           OperationEnvironment &env) override;
   bool PutStandbyFrequency(RadioFrequency frequency,
-                           const TCHAR *name,
+                           const char *name,
                            OperationEnvironment &env) override;
+  bool ExchangeRadioFrequencies(OperationEnvironment &env,
+                                NMEAInfo &info) override;
+
+  bool PutTransponderCode(TransponderCode code, OperationEnvironment &env) override;
 
   bool EnablePassThrough(OperationEnvironment &env) override;
 
@@ -265,13 +352,13 @@ public:
 
   void OnSysTicker() override;
 
-  bool DataReceived(const void *data, size_t length,
-                    struct NMEAInfo &info) override;
+  bool DataReceived(std::span<const std::byte> s,
+                    struct NMEAInfo &info) noexcept override;
 
-  void OnSensorUpdate(const MoreData &basic) override {}
+  void OnSensorUpdate([[maybe_unused]] const MoreData &basic) override {}
 
-  void OnCalculatedUpdate(const MoreData &basic,
-                          const DerivedInfo &calculated) override {}
+  void OnCalculatedUpdate([[maybe_unused]] const MoreData &basic,
+                          [[maybe_unused]] const DerivedInfo &calculated) override {}
 };
 
 /**
@@ -339,18 +426,37 @@ struct DeviceRegister {
      * EnablePassThrough() is implemented.
      */
     PASS_THROUGH = 0x200,
+
+    /**
+     * Does this driver emit GPGGA/GPRMC position sentences to the
+     * device?  When set, the user can suppress that emission via
+     * #DeviceConfig::send_position.
+     */
+    SEND_POSITION = 0x400,
+
+    /**
+     * Can adopt a glide polar from the device into XCSoar (device
+     * configuration: PolarSync::RECEIVE).  Distinct from generic
+     * RECEIVE_SETTINGS (MC/bugs/ballast).
+     */
+    RECEIVE_POLAR = 0x800,
+
+    /**
+     * Can accept XCSoar's glide polar via PutPolar (PolarSync::SEND).
+     */
+    SEND_POLAR = 0x1000,
   };
 
   /**
    * The internal name of the driver, i.e. the one that is stored in
    * the profile.
    */
-  const TCHAR *name;
+  const char *name;
 
   /**
    * The human-readable name of this driver.
    */
-  const TCHAR *display_name;
+  const char *display_name;
 
   /**
    * A bit set describing the features of this driver.
@@ -436,6 +542,25 @@ struct DeviceRegister {
   bool HasPassThrough() const {
     return (flags & PASS_THROUGH) != 0;
   }
-};
 
-#endif
+  /**
+   * Does this driver emit GPGGA/GPRMC position sentences?
+   */
+  bool CanSendPosition() const {
+    return (flags & SEND_POSITION) != 0;
+  }
+
+  /**
+   * Does this driver support receiving a glide polar from the device?
+   */
+  bool CanReceivePolar() const {
+    return (flags & RECEIVE_POLAR) != 0;
+  }
+
+  /**
+   * Does this driver support PutPolar (send glide polar to device)?
+   */
+  bool CanSendPolar() const {
+    return (flags & SEND_POLAR) != 0;
+  }
+};

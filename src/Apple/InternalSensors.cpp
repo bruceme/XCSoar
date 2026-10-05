@@ -1,43 +1,42 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+#ifdef __APPLE__
 
 #include "Apple/InternalSensors.hpp"
-#include "Thread/Mutex.hpp"
-#include "Blackboard/DeviceBlackboard.hpp"
-#include "Components.hpp"
+#include "Device/SensorListener.hpp"
+#include "Geo/GeoPoint.hpp"
+#include "Language/Language.hpp"
+#include "time/FloatDuration.hxx"
+#include "time/SystemClock.hxx"
+#include "LogFile.hpp"
 
 #include <TargetConditionals.h>
 
 #include <unistd.h>
 
 @implementation LocationDelegate
--(instancetype) init: (unsigned int) index_
+-(instancetype) init: (SensorListener *) _listener
 {
   self = [super init];
   if (self) {
-    self->index = index_;
+    self->listener = _listener;
     gregorian_calendar = [[NSCalendar alloc]
       initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+#if TARGET_OS_IPHONE
+    background_task = UIBackgroundTaskInvalid;
+    
+    // Register for background/foreground notifications
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationDidEnterBackground:)
+                                                 name:UIApplicationDidEnterBackgroundNotification
+                                               object:nil];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationWillEnterForeground:)
+                                                 name:UIApplicationWillEnterForegroundNotification
+                                               object:nil];
+#endif
   }
   return self;
 }
@@ -61,6 +60,16 @@ Copyright_License {
   if ((status == kCLAuthorizationStatusAuthorizedAlways)
       || (status == kCLAuthorizationStatusAuthorizedWhenInUse)) {
     [manager startUpdatingLocation];
+    
+    // Configure for background location if we have "Always" permission
+    if (status == kCLAuthorizationStatusAuthorizedAlways) {
+      if (@available(iOS 9.0, *)) {
+        manager.allowsBackgroundLocationUpdates = YES;
+      }
+      if (@available(iOS 11.0, *)) {
+        manager.showsBackgroundLocationIndicator = NO;
+      }
+    }
   }
 }
 #endif
@@ -74,77 +83,89 @@ Copyright_License {
   else
     location = nil;
 
-  ScopeLock protect(device_blackboard->mutex);
-  NMEAInfo &basic = device_blackboard->SetRealState(self->index);
-  basic.UpdateClock();
-  if (location) {
-    basic.alive.Update(basic.clock);
-  } else {
-    basic.alive.Clear();
+  if (!location || !location.timestamp || location.horizontalAccuracy < 0.0) {
+    self->listener->OnConnected(1);
+    return;
   }
 
-  basic.gps.nonexpiring_internal_gps = true;
+  const auto time = TimePointAfterUnixEpoch(FloatDuration{[location.timestamp timeIntervalSince1970]});
 
-  basic.airspeed_available.Clear();
-  if (location && (location.speed >= 0.0)) {
-    basic.ground_speed = location.speed;
-    basic.ground_speed_available.Update(basic.clock);
-  } else {
-    basic.ground_speed_available.Clear();
-  }
+  const GeoPoint l(Angle::Degrees(location.coordinate.longitude),
+                   Angle::Degrees(location.coordinate.latitude));
 
-  if (location && location.timestamp) {
-    basic.time = [self getSecondsOfDay: location.timestamp];
-    basic.time_available.Update(basic.clock);
-    basic.date_time_utc = BrokenDateTime::FromUnixTimeUTC(
-        [location.timestamp timeIntervalSince1970]);
-  } else {
-    basic.time_available.Clear();
-  }
-
-  if (location && (location.horizontalAccuracy >= 0.0)) {
-    basic.gps.hdop = location.horizontalAccuracy;
-    basic.gps.real = true;
-    basic.location = GeoPoint(Angle::Degrees(location.coordinate.longitude),
-                              Angle::Degrees(location.coordinate.latitude));
-    basic.location_available.Update(basic.clock);
-  } else {
-    basic.location_available.Clear();
-  }
-
-  if (location && (location.verticalAccuracy >= 0.0)) {
-    basic.gps_altitude = location.altitude;
-    basic.gps_altitude_available.Update(basic.clock);
-  } else {
-    basic.gps_altitude_available.Clear();
-  }
-
-  if (location && (location.course >= 0.0)) {
-    basic.track = Angle::Degrees(location.course);
-    basic.track_available.Update(basic.clock);
-  } else {
-    basic.track_available.Clear();
-  }
-
-  device_blackboard->ScheduleMerge();
+  self->listener->OnConnected(2);
+  self->listener->OnLocationSensor(time, -1, l,
+                                   location.verticalAccuracy >= 0.0,
+                                   /* CoreLocation provides geoidal
+                                      altitude */
+                                   true,
+                                   location.altitude,
+                                   location.course >= 0.0,
+                                   location.course,
+                                   location.speed >= 0.0,
+                                   location.speed,
+                                   true, location.horizontalAccuracy);
 }
 
 - (void)locationManager:(CLLocationManager *)manager
     didFailWithError:(NSError *)error
 {
-  ScopeLock protect(device_blackboard->mutex);
-  NMEAInfo &basic = device_blackboard->SetRealState(self->index);
-  if ([error code] != kCLErrorHeadingFailure) {
-    basic.alive.Clear();
-    basic.location_available.Clear();
-  }
-  device_blackboard->ScheduleMerge();
+  LogFmt("CoreLocation failed: domain={} code={} description={}",
+         [[error domain] UTF8String], [error code],
+         [[error localizedDescription] UTF8String]);
+  self->listener->OnConnected(0);
+
+  if ([error code] == kCLErrorDenied)
+    self->listener->OnSensorError(_("Location access denied"));
 }
+
+#if TARGET_OS_IPHONE
+- (void)applicationDidEnterBackground:(NSNotification *)notification
+{
+  // Start a background task to allow location updates to continue briefly
+  background_task = [[UIApplication sharedApplication] 
+    beginBackgroundTaskWithName:@"LocationUpdates" 
+    expirationHandler:^{
+      // Clean up when the background task expires
+      if (background_task != UIBackgroundTaskInvalid) {
+        [[UIApplication sharedApplication] endBackgroundTask:background_task];
+        background_task = UIBackgroundTaskInvalid;
+      }
+    }];
+}
+
+- (void)applicationWillEnterForeground:(NSNotification *)notification
+{
+  // End the background task when returning to foreground
+  if (background_task != UIBackgroundTaskInvalid) {
+    [[UIApplication sharedApplication] endBackgroundTask:background_task];
+    background_task = UIBackgroundTaskInvalid;
+  }
+}
+
+- (void)dealloc
+{
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  if (background_task != UIBackgroundTaskInvalid) {
+    [[UIApplication sharedApplication] endBackgroundTask:background_task];
+    background_task = UIBackgroundTaskInvalid;
+  }
+}
+#endif
+
 @end
 
 
-InternalSensors::InternalSensors(unsigned int _index)
-    : index(_index)
+InternalSensors::InternalSensors(SensorListener &_listener)
+  :listener(_listener)
+#if TARGET_OS_IPHONE
+  , altimeter(nullptr)
+  , altimeter_queue(nullptr)
+  , motion_activity_manager(nullptr)
+  , motion_activity_queue(nullptr)
+  , altimeter_callback_state(
+      std::make_shared<AltimeterCallbackState>(*this, _listener))
+#endif
 {
   if ([NSThread isMainThread]) {
     Init();
@@ -166,37 +187,219 @@ InternalSensors::~InternalSensors()
   }
 }
 
+/**
+ * Initialize all available sensors and request necessary permissions.
+ * 
+ * Sets up:
+ * - CoreLocation manager with high accuracy GPS
+ * - Permission requests for location services  
+ * - iOS barometric pressure sensing (when available)
+ * - Proper authorization flow handling
+ * 
+ * Must be called on the main thread due to Apple API requirements.
+ */
 void InternalSensors::Init()
 {
   location_manager = [[CLLocationManager alloc] init];
-  location_delegate = [[LocationDelegate alloc] init: index];
+  location_delegate = [[LocationDelegate alloc] init: &listener];
   location_manager.desiredAccuracy =
       kCLLocationAccuracyBestForNavigation;
   location_manager.delegate = location_delegate;
+  
 #if TARGET_OS_IPHONE
+  // Configure location manager for background operation
+  /* XCSoar expires the internal GPS fix after 10 seconds without a
+     fresh location.  A distance filter allows CoreLocation to stay
+     quiet while the GPS is still healthy, which makes the UI fall
+     back to "GPS waiting for fix". */
+  location_manager.distanceFilter = kCLDistanceFilterNone;
+  location_manager.pausesLocationUpdatesAutomatically = NO;
+  
   if ([location_manager
       respondsToSelector: @selector(requestWhenInUseAuthorization)]) {
     CLAuthorizationStatus status = [CLLocationManager authorizationStatus];
-    if ((status == kCLAuthorizationStatusAuthorizedAlways)
-        || (status == kCLAuthorizationStatusAuthorizedWhenInUse)) {
+    if (status == kCLAuthorizationStatusAuthorizedAlways) {
+      // We already have "Always" permission, configure for background and start
+      if (@available(iOS 9.0, *)) {
+        location_manager.allowsBackgroundLocationUpdates = YES;
+      }
+      if (@available(iOS 11.0, *)) {
+        location_manager.showsBackgroundLocationIndicator = NO;
+      }
       [location_manager startUpdatingLocation];
-    } else {
+    } else if (status == kCLAuthorizationStatusAuthorizedWhenInUse) {
+      // We have "When In Use", request upgrade to "Always" for background usage
+      if (@available(iOS 11.0, *)) {
+        [location_manager requestAlwaysAuthorization];
+      } else {
+        [location_manager startUpdatingLocation];
+      }
+    } else if (status == kCLAuthorizationStatusNotDetermined) {
+      // First time - request "When In Use" first
       [location_manager requestWhenInUseAuthorization];
+    } else {
+      // Denied or restricted - start without background capability
+      [location_manager startUpdatingLocation];
     }
   } else {
     [location_manager startUpdatingLocation];
   }
+    
+  // Initialize altimeter to nullptr before any barometer checks
+  altimeter = nullptr;
+  
+  // Check if the device supports barometric pressure sensing
+  if ([CMAltimeter isRelativeAltitudeAvailable]) {
+    // Check for authorization status (iOS 8+)
+    if ([CMAltimeter respondsToSelector:@selector(authorizationStatus)]) {
+      CMAuthorizationStatus status = [CMAltimeter authorizationStatus];
+      
+      // Exit if user denied permission
+      if (status == CMAuthorizationStatusDenied) {
+        altimeter = nullptr;
+        return;
+      }
+      // Handle case where permission hasn't been determined yet
+      else if (status == CMAuthorizationStatusNotDetermined &&
+              [CMMotionActivityManager respondsToSelector:@selector(isActivityAvailable)]) {
+        // Create persistent manager and queue to check permissions
+        motion_activity_manager = [[CMMotionActivityManager alloc] init];
+        motion_activity_queue = [[NSOperationQueue alloc] init];
+        const auto callback_state = altimeter_callback_state;
+        
+        // Query motion activity to trigger permission dialog
+        [motion_activity_manager queryActivityStartingFromDate:[NSDate date]
+                                        toDate:[NSDate date]
+                                       toQueue:motion_activity_queue
+                                   withHandler:^(NSArray<CMMotionActivity *> * _Nullable activities, NSError * _Nullable error) {
+         (void) activities;
+            if (error) {
+                NSLog(@"Error querying motion activities: %@", error);
+                // Schedule main-thread work for error handling
+                dispatch_async(dispatch_get_main_queue(), ^{
+                  const std::scoped_lock lock{callback_state->mutex};
+                  auto *owner = callback_state->owner;
+                  if (owner == nullptr)
+                    return;
+
+                  // Ensure altimeter remains nullptr on error
+                  owner->altimeter = nullptr;
+                  // Clear the persistent references since we're done
+                  owner->motion_activity_manager = nullptr;
+                  owner->motion_activity_queue = nullptr;
+                });
+                return;
+            }
+            
+            // Schedule main-thread work for successful permission grant
+            dispatch_async(dispatch_get_main_queue(), ^{
+              const std::scoped_lock lock{callback_state->mutex};
+              auto *owner = callback_state->owner;
+              if (owner == nullptr)
+                return;
+
+              // Clear the persistent references since we're done with permission check
+              owner->motion_activity_manager = nullptr;
+              owner->motion_activity_queue = nullptr;
+              
+              // Only initialize altimeter if permission query succeeded
+              owner->StartAltimeterUpdates();
+            });
+        }];
+        
+        return; // Exit early since altimeter initialization is handled in the completion block
+      }
+    }
+    
+    // Initialize altimeter for pressure readings (for authorized status)
+    StartAltimeterUpdates();
+    } else {
+      // Device doesn't support barometric pressure sensing
+      altimeter = nullptr;
+    }
+    
 #else
   [location_manager startUpdatingLocation];
 #endif
 }
 
+/**
+ * Clean up and stop all sensor operations.
+ * 
+ * Stops:
+ * - Location updates from CoreLocation
+ * - Barometric pressure updates from CoreMotion (iOS)
+ * 
+ * Safe to call multiple times. Must be called on main thread.
+ */
 void InternalSensors::Deinit()
 {
   [location_manager stopUpdatingLocation];
+  #if TARGET_OS_IPHONE
+  {
+    const std::scoped_lock lock{altimeter_callback_state->mutex};
+    altimeter_callback_state->owner = nullptr;
+    altimeter_callback_state->listener = nullptr;
+  }
+
+  if (altimeter != nullptr) {
+    [altimeter stopRelativeAltitudeUpdates];
+  }
+  [altimeter_queue cancelAllOperations];
+  altimeter_queue = nullptr;
+  
+  // Clean up persistent motion activity manager and queue
+  [motion_activity_queue cancelAllOperations];
+  motion_activity_manager = nullptr;
+  motion_activity_queue = nullptr;
+  #endif
 }
 
-InternalSensors * InternalSensors::Create(unsigned int index)
+#if TARGET_OS_IPHONE
+/**
+ * Initialize barometric pressure sensing using iOS CoreMotion framework.
+ * 
+ * Creates CMAltimeter instance and starts relative altitude updates on a background queue.
+ * Converts pressure readings from kilopascals (kPa) to hectopascals (hPa/mbar) 
+ * and forwards to the SensorListener interface.
+ * 
+ * @note Only available on iOS devices with barometric sensors
+ * @note Requires Motion & Fitness permission if not already granted
+ * @note Pressure values are converted: kPa * 10.0 = hPa/mbar
+ */
+void InternalSensors::StartAltimeterUpdates()
 {
-  return new InternalSensors(index);
+  /* Core Motion does not publish the pressure sensor's noise
+     characteristics.  Use the same conservative fallback variance as
+     Android's unidentified pressure sensors.  Passing zero here makes the
+     Kalman filter treat every pressure sample as exact, which turns normal
+     sensor noise into large vario excursions. */
+  static constexpr float PRESSURE_SENSOR_NOISE_VARIANCE = 0.05f;
+
+  // Initialize altimeter for pressure readings
+  altimeter = [[CMAltimeter alloc] init];
+  altimeter_queue = [[NSOperationQueue alloc] init];
+  const auto callback_state = altimeter_callback_state;
+  
+  // Start receiving altimeter updates
+  [altimeter startRelativeAltitudeUpdatesToQueue:altimeter_queue
+                                     withHandler:^(CMAltitudeData * _Nullable altitudeData, NSError * _Nullable error) {
+    if (error) {
+      NSLog(@"Error: %@", [error localizedDescription]);
+      return;
+    }
+
+    // Convert pressure readings (from kPa to hPa/mbar) and notify listener
+    const std::scoped_lock lock{callback_state->mutex};
+    if (callback_state->listener == nullptr)
+      return;
+
+    callback_state->listener->OnBarometricPressureSensor(
+      static_cast<float>(altitudeData.pressure.floatValue * 10.0f),
+      PRESSURE_SENSOR_NOISE_VARIANCE
+    );
+  }];
 }
+#endif
+
+#endif // __APPLE__

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Client.hpp"
 #include "Serialiser.hpp"
@@ -27,7 +7,11 @@ Copyright_License {
 #include "Tracking/SkyLines/Protocol.hpp"
 #include "Tracking/SkyLines/Assemble.hpp"
 #include "Tracking/SkyLines/Import.hpp"
+#include "net/AddressInfo.hxx"
+#include "net/Resolver.hxx"
+#include "util/ByteOrder.hxx"
 
+#include <boost/geometry/algorithms/distance.hpp>
 #include <boost/geometry/algorithms/intersection.hpp>
 #include <boost/geometry/strategies/strategies.hpp>
 
@@ -56,30 +40,33 @@ CloudClientContainer::Find(uint64_t key)
 }
 
 CloudClient &
-CloudClientContainer::Make(const boost::asio::ip::udp::endpoint &endpoint,
+CloudClientContainer::Make(SocketAddress address,
                            uint64_t key,
-                           const GeoPoint &location, int altitude)
+                           const GeoPoint &location, int altitude,
+                           unsigned track_deg, bool track_valid)
 {
   KeySet::insert_commit_data hint;
   auto result = key_set.insert_check(key, key_set.hash_function(),
                                      key_set.key_eq(), hint);
   if (result.second) {
-    auto client = std::make_shared<CloudClient>(endpoint, key, next_id++,
+    auto client = std::make_shared<CloudClient>(address, key, next_id++,
                                                 location, altitude);
+    client->track_deg = track_deg;
+    client->track_valid = track_valid;
     Insert(*client);
     return *client;
   } else {
     auto &client = *result.first;
-    Refresh(client, endpoint, location, altitude);
+    Refresh(client, address, location, altitude, track_deg, track_valid);
     return client;
   }
 }
 
 void
 CloudClientContainer::Refresh(CloudClient &client,
-                              const boost::asio::ip::udp::endpoint &endpoint)
+                              SocketAddress address)
 {
-  client.Refresh(endpoint);
+  client.Refresh(address);
 
   list.erase(list.iterator_to(client));
   list.push_front(client);
@@ -87,10 +74,11 @@ CloudClientContainer::Refresh(CloudClient &client,
 
 void
 CloudClientContainer::Refresh(CloudClient &client,
-                              const boost::asio::ip::udp::endpoint &endpoint,
-                              const GeoPoint &location, int altitude)
+                              SocketAddress address,
+                              const GeoPoint &location, int altitude,
+                              unsigned track_deg, bool track_valid)
 {
-  Refresh(client, endpoint);
+  Refresh(client, address);
 
   if (location != client.location) {
     auto ptr = client.shared_from_this();
@@ -100,6 +88,9 @@ CloudClientContainer::Refresh(CloudClient &client,
   }
 
   client.altitude = altitude;
+  client.track_deg = track_deg;
+  client.track_valid = track_valid;
+  client.aircraft_type = 1;
 }
 
 void
@@ -135,18 +126,30 @@ CloudClientContainer::QueryWithinRange(GeoPoint location, double range) const
 }
 
 inline Serialiser &
-operator<<(Serialiser &s, const boost::asio::ip::udp::endpoint &endpoint)
+operator<<(Serialiser &s, SocketAddress address)
 {
-  s.WriteString(endpoint.address().to_string());
-  s.Write16(endpoint.port());
+  char host[NI_MAXHOST], serv[NI_MAXSERV];
+  int ret = getnameinfo(address.GetAddress(), address.GetSize(),
+                        host, sizeof(host), serv, sizeof(serv),
+                        NI_NUMERICHOST|NI_NUMERICSERV);
+  s.WriteString(ret == 0 ? host : "unkown");
+  s.Write16(address.GetPort());
   return s;
 }
 
 inline Deserialiser &
-operator>>(Deserialiser &s, boost::asio::ip::udp::endpoint &endpoint)
+operator>>(Deserialiser &s, AllocatedSocketAddress &address)
 {
-  endpoint.address(boost::asio::ip::address::from_string(s.ReadString()));
-  endpoint.port(s.Read16());
+  static constexpr auto hints =
+    MakeAddrInfo(AI_NUMERICHOST, AF_UNSPEC, SOCK_DGRAM);
+
+  const auto node = s.ReadString();
+  char service[32];
+  snprintf(service, sizeof(service), "%u", s.Read16());
+
+  const auto ai = Resolve(node.c_str(), service, &hints);
+  address = ai.front();
+
   return s;
 }
 
@@ -160,12 +163,16 @@ CloudClient::Save(Serialiser &s) const
   uint32_t flags = SkyLinesTracking::FixPacket::FLAG_LOCATION;
   if (altitude != -1)
     flags |= SkyLinesTracking::FixPacket::FLAG_ALTITUDE;
+  if (track_valid)
+    flags |= SkyLinesTracking::FixPacket::FLAG_TRACK;
 
   s.WriteT(SkyLinesTracking::MakeFix(key, flags, 0,
-                                     location, Angle::Zero(), 0, 0,
+                                     location,
+                                     Angle::Degrees(double(track_deg)),
+                                     0, 0,
                                      altitude, 0, 0));
 
-  s << endpoint;
+  s << address;
 
   s.Write8(0);
 }
@@ -181,16 +188,20 @@ CloudClient::Load(Deserialiser &s)
   SkyLinesTracking::FixPacket fix;
   s.ReadT(fix);
 
-  boost::asio::ip::udp::endpoint endpoint;
-  s >> endpoint;
+  AllocatedSocketAddress address;
+  s >> address;
 
   s.Read8();
 
-  CloudClient client(endpoint, FromBE64(fix.header.key),
+  CloudClient client(std::move(address), FromBE64(fix.header.key),
                      id,
                      SkyLinesTracking::ImportGeoPoint(fix.location),
                      (int16_t)FromBE16(fix.altitude));
   client.stamp = stamp;
+  if ((FromBE32(fix.flags) & SkyLinesTracking::FixPacket::FLAG_TRACK) != 0) {
+    client.track_valid = true;
+    client.track_deg = unsigned(FromBE16(fix.track));
+  }
   return client;
 }
 

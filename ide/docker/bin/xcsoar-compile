@@ -1,0 +1,42 @@
+#!/bin/bash
+
+CPUS=$(lscpu -p | tail -n1 | cut -f1 -d,)
+(( CPUS++ ))
+cd /opt/xcsoar || exit 1
+
+if [[ $# -lt 1 ]]; then
+  echo "No target specified. Valid targets: ANDROID DOCS KOBO WAYLAND UNIX UNIX-SDL UNIX-DEBIAN WIN64OPENGL WIN32OPENGL"
+  exit 1
+fi
+
+TARGET=$1
+shift
+ARGS=("$@")
+
+case "${TARGET}" in
+      ANDROID)
+        make TARGET=ANDROIDFAT -j "${CPUS}" "${ARGS[@]}"
+      ;;
+      "DOCS")
+        make manual -j "${CPUS}" "${ARGS[@]}"
+      ;;
+      "KOBO")
+        make TARGET="${TARGET}" -j"${CPUS}" libs
+        make TARGET="${TARGET}" -j"${CPUS}" "${ARGS[@]}"
+        make TARGET="${TARGET}" -j"${CPUS}" output/KOBO/KoboRoot.tgz
+      ;;
+      "WAYLAND" | "UNIX" | "WIN64OPENGL" | "WIN32OPENGL")
+        make TARGET="${TARGET}" -j"${CPUS}" "${ARGS[@]}"
+      ;;
+      "UNIX-SDL")
+        make TARGET="UNIX" -j"${CPUS}" OPENGL=n ENABLE_SDL=y USE_SDL2=y "${ARGS[@]}"
+      ;;
+      "UNIX-DEBIAN")
+        dpkg-buildpackage -uc -us -j"${CPUS}" "${ARGS[@]}"
+        ls ../
+      ;;
+      *)
+        echo "No target specified. Valid targets: ANDROID DOCS KOBO WAYLAND UNIX UNIX-SDL UNIX-DEBIAN WIN64OPENGL WIN32OPENGL"
+        exit 1
+      ;;
+esac

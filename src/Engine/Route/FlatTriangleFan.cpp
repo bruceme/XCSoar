@@ -1,49 +1,29 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlatTriangleFan.hpp"
+#include "FlatTriangleFanVisitor.hpp"
 #include "Math/Line2D.hpp"
 
-#include <assert.h>
+#include <cassert>
 
-void
-FlatTriangleFan::CalcBoundingBox()
+const FlatBoundingBox &
+FlatTriangleFan::CalcBoundingBox() noexcept
 {
   assert(!vs.empty());
 
-  auto it = vs.begin(), end = vs.end();
-  bounding_box = FlatBoundingBox(*it);
-  for (++it; it != end; ++it)
-    bounding_box.Expand(*it);
+  return bounding_box = {vs.begin(), vs.end()};
 }
 
 static constexpr bool
-IsSpike(FlatGeoPoint a, FlatGeoPoint b, FlatGeoPoint c)
+IsSpike(FlatGeoPoint a, FlatGeoPoint b, FlatGeoPoint c) noexcept
 {
   return Line2D<FlatGeoPoint>(a, b).Contains(c);
 }
 
 void
-FlatTriangleFan::AddOrigin(const AFlatGeoPoint &origin, size_t reserve)
+FlatTriangleFan::AddOrigin(const AFlatGeoPoint &origin,
+                           size_t reserve) noexcept
 {
   assert(vs.empty());
 
@@ -54,7 +34,7 @@ FlatTriangleFan::AddOrigin(const AFlatGeoPoint &origin, size_t reserve)
 }
 
 void
-FlatTriangleFan::AddPoint(FlatGeoPoint p)
+FlatTriangleFan::AddPoint(FlatGeoPoint p) noexcept
 {
   assert(!vs.empty());
 
@@ -73,28 +53,29 @@ FlatTriangleFan::AddPoint(FlatGeoPoint p)
  * Is there a spike wrapping around beginning and end of the
  * container?
  */
+[[gnu::pure]]
 static bool
-IsWrappedSpike(ConstBuffer<FlatGeoPoint> hull)
+IsWrappedSpike(std::span<const FlatGeoPoint> hull) noexcept
 {
-  assert(hull.size > 3);
+  assert(hull.size() > 3);
 
-  return IsSpike(hull[hull.size - 2], hull[hull.size - 1], hull[0]) ||
-    IsSpike(hull[hull.size - 1], hull[0], hull[1]);
+  return IsSpike(hull[hull.size() - 2], hull[hull.size() - 1], hull[0]) ||
+    IsSpike(hull[hull.size() - 1], hull[0], hull[1]);
 }
 
 bool
-FlatTriangleFan::CommitPoints(bool closed)
+FlatTriangleFan::CommitPoints(bool closed) noexcept
 {
   auto hull = GetHull(closed);
 
-  while (hull.size > 3) {
+  while (hull.size() > 3) {
     if (!IsWrappedSpike(hull))
       /* no spikes left: success! */
       return true;
 
     /* erase this spike */
     vs.pop_back();
-    hull.pop_back();
+    hull = hull.first(hull.size() - 1);
 
     /* .. and continue searching */
   }
@@ -104,7 +85,7 @@ FlatTriangleFan::CommitPoints(bool closed)
 }
 
 bool
-FlatTriangleFan::IsInside(FlatGeoPoint p, bool closed) const
+FlatTriangleFan::IsInside(FlatGeoPoint p, bool closed) const noexcept
 {
   if (!bounding_box.IsInside(p))
     return false;
@@ -124,4 +105,13 @@ FlatTriangleFan::IsInside(FlatGeoPoint p, bool closed) const
   }
 
   return inside;
+}
+
+void
+FlatTriangleFan::AcceptInRange(const FlatBoundingBox &bb,
+                               FlatTriangleFanVisitor &visitor,
+                               const bool closed) const noexcept
+{
+  if (bb.Overlaps(bounding_box))
+    visitor.VisitFan(GetOrigin(), GetHull(closed));
 }

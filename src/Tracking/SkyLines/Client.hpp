@@ -1,38 +1,23 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "event/SocketEvent.hxx"
+#include "net/AllocatedSocketAddress.hxx"
+#include "event/net/cares/SimpleResolver.hxx"
+#include "thread/Mutex.hxx"
+#include "util/Cancellable.hxx"
+#include "util/SpanCast.hxx"
+#include "Handler.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TRACKING_SKYLINES_CLIENT_HPP
-#define XCSOAR_TRACKING_SKYLINES_CLIENT_HPP
-
-#include "Thread/Mutex.hpp"
-#include "Compiler.h"
-
-#include <boost/asio/ip/udp.hpp>
-
-#include <stdint.h>
+#include <cstdint>
+#include <optional>
 
 struct NMEAInfo;
 struct GeoPoint;
+
+namespace Cares { class Channel; }
 
 namespace SkyLinesTracking {
 
@@ -40,9 +25,8 @@ struct TrafficResponsePacket;
 struct UserNameResponsePacket;
 struct WaveResponsePacket;
 struct ThermalResponsePacket;
-class Handler;
 
-class Client {
+class Client final : Cares::SimpleHandler {
   Handler *const handler;
 
   /**
@@ -52,33 +36,29 @@ class Client {
 
   uint64_t key = 0;
 
-  bool resolving = false;
+  std::optional<Cares::SimpleResolver> resolver;
 
-  boost::asio::ip::udp::resolver resolver;
-  boost::asio::ip::udp::endpoint endpoint;
-  boost::asio::ip::udp::socket socket;
+  AllocatedSocketAddress address;
+  SocketEvent socket_event;
 
-  uint8_t buffer[4096];
-  boost::asio::ip::udp::endpoint sender_endpoint;
+  TrafficSource traffic_source;
 
 public:
-  explicit Client(boost::asio::io_service &io_service,
-                  Handler *_handler=nullptr)
-    :handler(_handler), resolver(io_service), socket(io_service) {}
+  explicit Client(EventLoop &event_loop,
+                  Handler *_handler=nullptr,
+                  TrafficSource _traffic_source=TrafficSource::SKYLINES)
+    :handler(_handler),
+     socket_event(event_loop, BIND_THIS_METHOD(OnSocketReady)),
+     traffic_source(_traffic_source) {}
   ~Client() { Close(); }
+
+  auto &GetEventLoop() const noexcept {
+    return socket_event.GetEventLoop();
+  }
 
   constexpr
   static unsigned GetDefaultPort() {
     return 5597;
-  }
-
-  constexpr
-  static const char *GetDefaultPortString() {
-    return "5597";
-  }
-
-  boost::asio::io_service &get_io_service() {
-    return socket.get_io_service();
   }
 
   /**
@@ -89,14 +69,14 @@ public:
   }
 
   bool IsDefined() const {
-    const ScopeLock protect(mutex);
-    return resolving || socket.is_open();
+    const std::lock_guard lock{mutex};
+    return resolver || socket_event.IsDefined();
   }
 
-  gcc_pure
+  [[gnu::pure]]
   bool IsConnected() const {
-    const ScopeLock protect(mutex);
-    return socket.is_open();
+    const std::lock_guard lock{mutex};
+    return socket_event.IsDefined();
   }
 
   uint64_t GetKey() const {
@@ -107,15 +87,15 @@ public:
     key = _key;
   }
 
-  void Open(boost::asio::ip::udp::resolver::query query);
-  bool Open(boost::asio::ip::udp::endpoint _endpoint);
+  void Open(Cares::Channel &cares, const char *server,
+            unsigned port = GetDefaultPort());
+  bool Open(SocketAddress _address);
   void Close();
 
   template<typename P>
-  void SendPacket(const P &packet) {
-    const ScopeLock protect(mutex);
-    socket.send_to(boost::asio::buffer(&packet, sizeof(packet)),
-                   endpoint, 0);
+  bool SendPacket(const P &packet) {
+    const std::lock_guard lock{mutex};
+    return GetSocket().WriteNoWait(ReferenceAsBytes(packet), address) == sizeof(packet);
   }
 
   void SendFix(const NMEAInfo &basic);
@@ -131,6 +111,12 @@ public:
   void SendUserNameRequest(uint32_t user_id);
 
 private:
+  SocketDescriptor GetSocket() noexcept {
+    return socket_event.GetSocket();
+  }
+
+  void InternalClose() noexcept;
+
   void OnTrafficReceived(const TrafficResponsePacket &packet, size_t length);
   void OnUserNameReceived(const UserNameResponsePacket &packet,
                           size_t length);
@@ -138,13 +124,11 @@ private:
   void OnThermalReceived(const ThermalResponsePacket &packet, size_t length);
   void OnDatagramReceived(void *data, size_t length);
 
-  void OnReceive(const boost::system::error_code &ec, size_t size);
-  void AsyncReceive();
+  void OnSocketReady(unsigned events) noexcept;
 
-  void OnResolved(const boost::system::error_code &ec,
-                  boost::asio::ip::udp::resolver::iterator i);
+  /* virtual methods from Cares::SimpleHandler */
+  void OnResolverSuccess(std::forward_list<AllocatedSocketAddress> addresses) noexcept override;
+  void OnResolverError(std::exception_ptr error) noexcept override;
 };
 
 } /* namespace SkyLinesTracking */
-
-#endif

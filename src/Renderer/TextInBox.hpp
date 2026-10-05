@@ -1,36 +1,32 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_SCREEN_TEXT_IN_BOX_HPP
-#define XCSOAR_SCREEN_TEXT_IN_BOX_HPP
+#pragma once
 
 #include "LabelShape.hpp"
 
-#include <tchar.h>
+#include <cstdint>
 
+struct PixelPoint;
+struct PixelSize;
 struct PixelRect;
 class Canvas;
 class LabelBlock;
+void
+RenderShadowedText(Canvas &canvas, const char *text,
+                   PixelPoint p,
+                   bool inverted) noexcept;
+
+/**
+ * Draw the box of a #LabelShape::PILL and its shadow, e.g. as the
+ * background of something which is not text.
+ *
+ * @param opacity scales the pill's opacity, for fading it out; only
+ * OpenGL honours it
+ */
+void
+DrawPill(Canvas &canvas, const PixelRect &rc,
+         uint8_t opacity=0xff) noexcept;
 
 struct TextInBoxMode {
   enum Alignment : uint8_t {
@@ -52,15 +48,12 @@ struct TextInBoxMode {
 };
 
 bool
-TextInBox(Canvas &canvas, const TCHAR *value,
-          int x, int y,
+TextInBox(Canvas &canvas, const char *value, PixelPoint p,
           TextInBoxMode mode, const PixelRect &map_rc,
-          LabelBlock *label_block=nullptr);
+          LabelBlock *label_block=nullptr) noexcept;
 
 bool
-TextInBox(Canvas &canvas, const TCHAR *value, int x, int y,
+TextInBox(Canvas &canvas, const char *value, PixelPoint p,
           TextInBoxMode mode,
-          unsigned screen_width, unsigned screen_height,
-          LabelBlock *label_block=nullptr);
-
-#endif
+          PixelSize screen_size,
+          LabelBlock *label_block=nullptr) noexcept;

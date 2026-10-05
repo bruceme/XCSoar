@@ -1,31 +1,12 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device.hpp"
+#include "Device/Error.hpp"
 #include "Device/RecordedFlight.hpp"
-#include "IO/FileOutputStream.hxx"
-#include "IO/BufferedOutputStream.hxx"
-#include "OS/Path.hpp"
+#include "io/FileOutputStream.hxx"
+#include "io/BufferedOutputStream.hxx"
+#include "system/Path.hpp"
 #include "Operation/Operation.hpp"
 
 #include <cstdlib>
@@ -232,24 +213,24 @@ FlarmDevice::ReadFlightInfo(RecordedFlightInfo &flight,
                             OperationEnvironment &env)
 {
   // Create header for getting record information
-  FLARM::FrameHeader header = PrepareFrameHeader(FLARM::MT_GETRECORDINFO);
+  FLARM::FrameHeader header = PrepareFrameHeader(FLARM::MessageType::GETRECORDINFO);
 
   // Send request
-  if (!SendStartByte() ||
-      !SendFrameHeader(header, env, 1000))
-    return false;
+  SendStartByte();
+  SendFrameHeader(header, env, std::chrono::seconds(1));
 
   // Wait for an answer and save the payload for further processing
-  AllocatedArray<uint8_t> data;
+  AllocatedArray<std::byte> data;
   uint16_t length;
-  uint8_t ack_result =
-    WaitForACKOrNACK(header.sequence_number, data, length, env, 1000);
+  const auto ack_result =
+    WaitForACKOrNACK(header.sequence_number, data, length,
+                     env, std::chrono::seconds(5));
 
   // If neither ACK nor NACK was received
-  if (ack_result != FLARM::MT_ACK || length <= 2)
+  if (ack_result != FLARM::MessageType::ACK || length <= 2)
     return false;
 
-  char *record_info = (char *)data.begin() + 2;
+  char *record_info = (char *)data.data() + 2;
   return ParseRecordInfo(record_info, flight);
 }
 
@@ -257,18 +238,18 @@ FLARM::MessageType
 FlarmDevice::SelectFlight(uint8_t record_number, OperationEnvironment &env)
 {
   // Create header for selecting a log record
-  uint8_t data[1] = { record_number };
-  FLARM::FrameHeader header = PrepareFrameHeader(FLARM::MT_SELECTRECORD,
-                                                 data, sizeof(data));
+  std::byte data[] = { static_cast<std::byte>(record_number) };
+  FLARM::FrameHeader header = PrepareFrameHeader(FLARM::MessageType::SELECTRECORD,
+                                                 std::span{data});
 
   // Send request
-  if (!SendStartByte() ||
-      !SendFrameHeader(header, env, 1000) ||
-      !SendEscaped(data, sizeof(data), env, 1000))
-    return FLARM::MT_ERROR;
+  SendStartByte();
+  SendFrameHeader(header, env, std::chrono::seconds(1));
+  SendEscaped(std::span{data}, env, std::chrono::seconds(1));
 
   // Wait for an answer
-  return WaitForACKOrNACK(header.sequence_number, env, 1000);
+  return WaitForACKOrNACK(header.sequence_number,
+                          env, std::chrono::seconds(1));
 }
 
 bool
@@ -280,22 +261,24 @@ FlarmDevice::ReadFlightList(RecordedFlightList &flight_list,
 
   // Try to receive flight information until the list is full
   for (uint8_t i = 0; !flight_list.full(); ++i) {
-    FLARM::MessageType ack_result = SelectFlight(i, env);
+    try {
+      FLARM::MessageType ack_result = SelectFlight(i, env);
 
-    // Last record reached -> bail out and return list
-    if (ack_result == FLARM::MT_NACK)
-      break;
+      // Last record reached -> bail out and return list
+      if (ack_result == FLARM::MessageType::NACK)
+        break;
 
-    // If neither ACK nor NACK was received
-    if (ack_result != FLARM::MT_ACK || env.IsCancelled()) {
-      mode = Mode::UNKNOWN;
-      return false;
-    }
+      // If neither ACK nor NACK was received
+      if (ack_result != FLARM::MessageType::ACK) {
+        mode = Mode::UNKNOWN;
+        return false;
+      }
 
-    RecordedFlightInfo flight_info;
-    flight_info.internal.flarm = i;
-    if (ReadFlightInfo(flight_info, env))
-      flight_list.append(flight_info);
+      RecordedFlightInfo flight_info;
+      flight_info.internal.flarm = i;
+      if (ReadFlightInfo(flight_info, env))
+        flight_list.append(flight_info);
+    } catch (const DeviceTimeout &) {  }
   }
 
   return true;
@@ -307,44 +290,44 @@ FlarmDevice::DownloadFlight(Path path, OperationEnvironment &env)
   FileOutputStream fos(path);
   BufferedOutputStream os(fos);
 
-  if (env.IsCancelled())
-    return false;
-
   env.SetProgressRange(100);
   while (true) {
     // Create header for getting IGC file data
-    FLARM::FrameHeader header = PrepareFrameHeader(FLARM::MT_GETIGCDATA);
+    FLARM::FrameHeader header = PrepareFrameHeader(FLARM::MessageType::GETIGCDATA);
 
-    // Send request
-    if (!SendStartByte() ||
-        !SendFrameHeader(header, env, 1000) ||
-        env.IsCancelled())
-      return false;
+    AllocatedArray<std::byte> data;
+    uint16_t length = 0;
 
-    // Wait for an answer and save the payload for further processing
-    AllocatedArray<uint8_t> data;
-    uint16_t length;
-    bool ack = WaitForACKOrNACK(header.sequence_number, data,
-                                length, env, 10000) == FLARM::MT_ACK;
+    SendStartByte();
+    SendFrameHeader(header, env, std::chrono::seconds(1));
 
-    // If no ACK was received
-    if (!ack || length <= 3 || env.IsCancelled())
+    FLARM::MessageType result = FLARM::MessageType::ERROR;
+    try {
+      result = WaitForACKOrNACK(header.sequence_number, data,
+                                length, env,
+                                std::chrono::seconds(10));
+    } catch (const DeviceTimeout &) {
+      result = FLARM::MessageType::ERROR;
+    }
+
+    /* timeout, NACK, or ACK payload too short (need sequence,
+       progress, data); caller restarts from SELECTRECORD */
+    if (result != FLARM::MessageType::ACK || length <= 3)
       return false;
 
     length -= 3;
 
     // Read progress (in percent)
-    uint8_t progress = *(data.begin() + 2);
-    env.SetProgressPosition(std::min((unsigned)progress, 100u));
+    const auto progress = static_cast<unsigned>(data[2]);
+    env.SetProgressPosition(std::min(progress, 100u));
 
-    const char *last_char = (const char *)data.end() - 1;
-    bool is_last_packet = (*last_char == 0x1A);
+    const char last_char = (char)data.back();
+    bool is_last_packet = (last_char == 0x1A);
     if (is_last_packet)
       length--;
 
     // Read IGC data
-    const char *igc_data = (const char *)data.begin() + 3;
-    os.Write(igc_data, length);
+    os.Write({data.data() + 3, length});
 
     if (is_last_packet)
       break;
@@ -361,18 +344,21 @@ bool
 FlarmDevice::DownloadFlight(const RecordedFlightInfo &flight,
                             Path path, OperationEnvironment &env)
 {
-  if (!BinaryMode(env))
-    return false;
-
-  FLARM::MessageType ack_result = SelectFlight(flight.internal.flarm, env);
-
-  // If no ACK was received -> cancel
-  if (ack_result != FLARM::MT_ACK || env.IsCancelled())
-    return false;
-
   try {
-    if (DownloadFlight(path, env))
-      return true;
+    for (unsigned attempt = 0;
+         attempt < FLARM::MAX_IGC_DOWNLOAD_ATTEMPTS; ++attempt) {
+      if (!BinaryMode(env))
+        return false;
+
+      if (SelectFlight(flight.internal.flarm, env) !=
+          FLARM::MessageType::ACK) {
+        mode = Mode::UNKNOWN;
+        continue;
+      }
+
+      if (DownloadFlight(path, env))
+        return true;
+    }
   } catch (...) {
     mode = Mode::UNKNOWN;
     throw;

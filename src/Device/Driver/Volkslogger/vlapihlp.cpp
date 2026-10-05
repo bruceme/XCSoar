@@ -16,14 +16,14 @@
 ***********************************************************************/
 
 #include "vlapihlp.h"
-#include "Util/StringUtil.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
+#include "util/StringStrip.hxx"
 
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 
-gcc_const
+[[gnu::const]]
 static bool
 IsAllowedIGCChar(char ch)
 {

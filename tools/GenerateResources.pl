@@ -2,42 +2,42 @@
 
 use strict;
 
-sub generate_blob($$) {
-    my ($var, $path) = @_;
+sub generate_blob($) {
+    my ($var) = @_;
 
-    print "extern const uint8_t ${var}\[\];\n";
-    print "extern const uint8_t ${var}_end\[\];\n";
+    print "extern const std::byte ${var}\[\];\n";
+    print "extern const std::byte ${var}_end\[\];\n";
 }
 
-print "#include <stdint.h>\n";
+print "#include <cstddef>\n";
+print "#include <span>\n";
 
 my @named;
 
 while (<>) {
-    # merge adjacent strings
-    while (s/"([^"]*)"\s+"([^"]*)"\s*$/"$1$2"/) {}
+    next if /^\s*(?:#.*)?$/;
 
-    if (/^\s*([.\w]+)\s+(?:XMLDIALOG|WAVE)\s+DISCARDABLE\s+"(.*?)"\s*$/) {
-        push @named, [ $1, -s "Data/$2" ];
-        my $path = $2;
+    if (/^(?:bitmap_graphic|bitmap_icon_scaled)\s+([\w_]+)\s+"([^"]+)"\s*$/) {
+        # only sounds used here
+    } elsif (/^sound\s+([\w_]+)\s+"([^"]+)"\s*$/) {
+        push @named, [ $1, -s "output/data/sound/$2.raw" ];
         my $variable = "resource_$1";
         $variable =~ s,\.,_,g;
-        generate_blob($variable, "Data/$path");
+        generate_blob($variable);
+    } else {
+        die "Syntax error: $_";
     }
 }
 
-print "#include \"Util/ConstBuffer.hxx\"\n";
-print "#include <tchar.h>\n";
-
 print "static constexpr struct {\n";
-print "  const TCHAR *name;\n";
-print "  ConstBuffer<void> data;\n";
+print "  const char *name;\n";
+print "  std::span<const std::byte> data;\n";
 print "} named_resources[] = {";
 foreach my $i (@named) {
     my ($name, $size) = @$i;
     my $variable = "resource_${name}";
     $variable =~ s,\.,_,g;
-    print "  { _T(\"${name}\"), { ${variable}, ${size} } },\n";
+    print "  { \"${name}\", { ${variable}, ${size} } },\n";
 }
-print "  { 0, { nullptr, 0 } }\n";
+print "  { 0, {} }\n";
 print "};\n";

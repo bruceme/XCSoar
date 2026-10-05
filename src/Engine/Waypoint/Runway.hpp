@@ -1,32 +1,12 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef XCSOAR_RUNWAY_HPP
-#define XCSOAR_RUNWAY_HPP
+#pragma once
 
 #include "Math/Angle.hpp"
 #include "Math/Util.hpp"
 
-#include <stdint.h>
+#include <cstdint>
 
 class Runway {
   /** Main runway direction in degrees (0-359, -1 unknown) */
@@ -35,8 +15,11 @@ class Runway {
   /** Main runway length in m (0 for unknown) */
   uint16_t length;
 
-  constexpr Runway(int _direction, unsigned _length)
-    :direction(_direction), length(_length) {}
+  /** Main runway width in m (0 for unknown) */
+  uint16_t width;
+
+  constexpr Runway(int _direction, unsigned _length, unsigned _width)
+    :direction(_direction), length(_length), width(_width) {}
 
 public:
   /**
@@ -49,7 +32,7 @@ public:
    * false.
    */
   static constexpr Runway Null() {
-    return { -1, 0 };
+    return { -1, 0, 0 };
   }
 
   bool IsDirectionDefined() const {
@@ -60,9 +43,14 @@ public:
     return length > 0;
   }
 
+  bool IsWidthDefined() const {
+    return width > 0;
+  }
+
   void Clear() {
     ClearDirection();
     length = 0;
+    width = 0;
   }
 
   void ClearDirection() {
@@ -79,21 +67,21 @@ public:
     direction = degrees;
   }
 
-  gcc_pure
+  [[gnu::pure]]
   Angle GetDirection() const {
     assert(IsDirectionDefined());
 
     return Angle::Degrees(direction);
   }
 
-  gcc_pure
+  [[gnu::pure]]
   unsigned GetDirectionDegrees() const {
     assert(IsDirectionDefined());
 
     return direction;
   }
 
-  gcc_pure
+  [[gnu::pure]]
   unsigned GetDirectionName() const {
     assert(IsDirectionDefined());
 
@@ -104,12 +92,21 @@ public:
     length = _length;
   }
 
-  gcc_pure
+  [[gnu::pure]]
   unsigned GetLength() const {
     assert(IsLengthDefined());
 
     return length;
   }
-};
 
-#endif
+  void SetWidth(unsigned _width) {
+    width = _width;
+  }
+
+  [[gnu::pure]]
+  unsigned GetWidth() const {
+    assert(IsWidthDefined());
+
+    return width;
+  }
+};

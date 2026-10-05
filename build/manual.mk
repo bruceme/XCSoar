@@ -86,7 +86,6 @@ LATEX2HTML_RUN = $(TEX_VARS) L2HINIT_NAME=$(DOC)/manual/latex2html.config $(LATE
 MANUAL_PDF = \
 	$(MANUAL_OUTPUT_DIR)/XCSoar-in-a-flash.pdf \
 	$(MANUAL_OUTPUT_DIR)/XCSoar-manual.pdf \
-	$(MANUAL_OUTPUT_DIR)/XCSoar-developer-manual.pdf \
 	$(MANUAL_OUTPUT_DIR)/XCSoar-Blitzeinstieg.pdf \
 	$(MANUAL_OUTPUT_DIR)/XCSoar-manual-de.pdf \
 	$(MANUAL_OUTPUT_DIR)/XCSoar-Prise-en-main.pdf \
@@ -133,20 +132,6 @@ $(MANUAL_OUTPUT_DIR)/XCSoar-manual.pdf: $(DOC)/manual/en/XCSoar-manual.tex \
 $(MANUAL_OUTPUT_DIR)/html/en/index.html: $(DOC)/manual/en/XCSoar-manual.tex \
 	$(TEX_FILES_EN) $(TEX_INCLUDES_EN) $(TEX_INCLUDES) \
 	$(FIGURES_EN) $(SVG_ICONS) $(SVG_FIGURES) $(SVG_GRAPHICS) $(SVG_LOGOS) | $(MANUAL_OUTPUT_DIR)/html/en/dirstamp
-	$(LATEX2HTML_RUN) -dir $(@D) $<
-
-.DELETE_ON_ERROR: $(MANUAL_OUTPUT_DIR)/XCSoar-developer-manual.pdf
-$(MANUAL_OUTPUT_DIR)/XCSoar-developer-manual.pdf: $(DOC)/manual/en/XCSoar-developer-manual.tex $(DOC)/manual/en/tpl_format.tex \
-	$(TEX_FILES_EN) $(TEX_INCLUDES_EN) $(TEX_INCLUDES) \
-	$(FIGURES_EN) $(SVG_ICONS) $(SVG_FIGURES) $(SVG_GRAPHICS) $(SVG_LOGOS) | $(MANUAL_OUTPUT_DIR)/dirstamp
-	# run TeX twice to make sure that all references are resolved
-	$(TEX_RUN) $<
-	$(TEX_RUN) $<
-
-.DELETE_ON_ERROR: $(MANUAL_OUTPUT_DIR)/html/developer/index.html
-$(MANUAL_OUTPUT_DIR)/html/developer/index.html: $(DOC)/manual/en/XCSoar-developer-manual.tex \
-	$(TEX_FILES_EN) $(TEX_INCLUDES_EN) $(TEX_INCLUDES) \
-	$(FIGURES_EN) $(SVG_ICONS) $(SVG_FIGURES) $(SVG_GRAPHICS) $(SVG_LOGOS) | $(MANUAL_OUTPUT_DIR)/html/developer/dirstamp
 	$(LATEX2HTML_RUN) -dir $(@D) $<
 
 .DELETE_ON_ERROR: $(MANUAL_OUTPUT_DIR)/XCSoar-Blitzeinstieg.pdf
@@ -278,9 +263,7 @@ $(MANUAL_OUTPUT_DIR)/XCSoar-manual-dev.zip: VERSION.txt \
 	echo -e "#!/bin/bash\n\n# This is an example how the manuals get generated\n\n$(MKDIR) -p output" > $(T)/generate_manuals.sh
 	make manual -ns|grep -v mkdir|grep -v touch|sed s#doc/manual#.#g|sed s#output/manual#output#g >> $(T)/generate_manuals.sh
 	chmod +x $(T)/generate_manuals.sh
-	# Copy an example bat file to generate the manuals with MikTex on Windows
-	cp $(DOC)/manual/generate_manuals.bat $(T)/.
-	cd $(@D) && zip -r XCSoar-manual-dev.zip XCSoar-manual-dev
+	cd $(@D) && $(ZIP) -r XCSoar-manual-dev.zip XCSoar-manual-dev
 
 upload-html-manual: $(MANUAL_OUTPUT_DIR)/html/en/index.html $(MANUAL_OUTPUT_DIR)/html/developer/index.html
-	rsync -aP --delete-after --chmod=ugo+rX $(MANUAL_OUTPUT_DIR)/html/ max@www.xcsoar.org:/var/www/xcsoar/doc/
+	rsync -aP --delete-after --chmod=ugo+rX $(MANUAL_OUTPUT_DIR)/html/ max@xcsoar.org:/var/www/xcsoar/doc/

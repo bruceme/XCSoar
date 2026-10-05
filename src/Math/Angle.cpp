@@ -1,32 +1,38 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Angle.hpp"
 
-#include <assert.h>
+#include <cassert>
+#include <cmath>
+
+namespace {
+
+/**
+ * Reduce \a v radians to the half-open interval [0, 2π) in O(1) time.
+ * NaN and infinity map to 0 so callers never spin on pathological values.
+ */
+double
+NormalizeFullCircleRadians(const double v) noexcept
+{
+  if (std::isnan(v) || std::isinf(v))
+    return 0;
+
+  const double two_pi = Angle::FullCircle().Native();
+  double r = std::fmod(v, two_pi);
+  if (r < 0)
+    r += two_pi;
+  return r;
+}
+
+/** Beyond this |radian| magnitude, iterated wrap is too slow on the UI thread. */
+constexpr double kAsBearingFmodThresholdRadians =
+    1024 * Angle::FullCircle().Native();
+
+} // namespace
 
 Angle::DMS
-Angle::ToDMS() const
+Angle::ToDMS() const noexcept
 {
   DMS dms;
   dms.negative = value < 0;
@@ -44,38 +50,46 @@ Angle::ToDMS() const
   return dms;
 }
 
-void
-Angle::ToDMM(unsigned &dd, unsigned &mm, unsigned &mmm,
-             bool &is_positive) const
+Angle::DMM
+Angle::ToDMM() const noexcept
 {
-  is_positive = value >= 0;
+  DMM dmm;
+  dmm.positive = value >= 0;
 
   unsigned value = lround(AbsoluteDegrees() * 60000);
-  dd = value / 60000;
+  dmm.degrees = value / 60000;
   value %= 60000;
-  mm = value / 1000;
-  mmm = value % 1000;
+  dmm.minutes = value / 1000;
+  dmm.decimal_minutes = value % 1000;
+
+  return dmm;
 }
 
 double
-Angle::AbsoluteDegrees() const
+Angle::AbsoluteDegrees() const noexcept
 {
   return Absolute().Degrees();
 }
 
 double
-Angle::AbsoluteRadians() const
+Angle::AbsoluteRadians() const noexcept
 {
   return Absolute().Radians();
 }
 
 Angle
-Angle::AsBearing() const
+Angle::AsBearing() const noexcept
 {
-  assert(fabs(value) < 100 * FullCircle().Native());
+  assert(!std::isnan(value));
+  assert(!std::isinf(value));
 
-  Angle retval(value);
+  const double v = value;
+  if (fabs(v) >= kAsBearingFmodThresholdRadians)
+    return Native(NormalizeFullCircleRadians(v));
 
+  /* Historic path: repeated ±2π matches prior floating-point rounding in
+     typical ranges (see unit tests). */
+  Angle retval(v);
   while (retval < Zero())
     retval += FullCircle();
 
@@ -86,12 +100,21 @@ Angle::AsBearing() const
 }
 
 Angle
-Angle::AsDelta() const
+Angle::AsDelta() const noexcept
 {
-  assert(fabs(value) < 100 * FullCircle().Native());
+  assert(!std::isnan(value));
+  assert(!std::isinf(value));
 
-  Angle retval(value);
+  const double v = value;
+  if (fabs(v) >= kAsBearingFmodThresholdRadians) {
+    double r = NormalizeFullCircleRadians(v);
+    const double half = HalfCircle().Native();
+    if (r > half)
+      r -= FullCircle().Native();
+    return Native(r);
+  }
 
+  Angle retval(v);
   while (retval <= -HalfCircle())
     retval += FullCircle();
 
@@ -102,13 +125,13 @@ Angle::AsDelta() const
 }
 
 Angle
-Angle::Reciprocal() const
+Angle::Reciprocal() const noexcept
 {
   return (*this + HalfCircle()).AsBearing();
 }
 
 Angle
-Angle::HalfAngle(const Angle end) const
+Angle::HalfAngle(const Angle end) const noexcept
 {
   if (value == end.value) {
     return Reciprocal();
@@ -126,7 +149,7 @@ Angle::HalfAngle(const Angle end) const
 }
 
 Angle
-Angle::Fraction(const Angle end, const double fraction) const
+Angle::Fraction(const Angle end, const double fraction) const noexcept
 {
   if (value == end.value)
     return Angle(value);
@@ -135,9 +158,8 @@ Angle::Fraction(const Angle end, const double fraction) const
   return Angle(value + diff.value * fraction);
 }
 
-gcc_pure
 bool
-Angle::Between(const Angle start, const Angle end) const
+Angle::Between(const Angle start, const Angle end) const noexcept
 {
   Angle width = (end - start).AsBearing();
   Angle delta = (*this - start).AsBearing();
@@ -146,7 +168,7 @@ Angle::Between(const Angle start, const Angle end) const
 }
 
 bool
-Angle::CompareRoughly(Angle other, Angle threshold) const
+Angle::CompareRoughly(Angle other, Angle threshold) const noexcept
 {
   const Angle delta = (*this - other).AsDelta();
   return delta >= -threshold && delta <= threshold;

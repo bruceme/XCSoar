@@ -1,40 +1,48 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFOBOX_CONTENT_PLACES_HPP
-#define XCSOAR_INFOBOX_CONTENT_PLACES_HPP
+#include "InfoBoxes/Content/Base.hpp"
+#include "Engine/Waypoint/Ptr.hpp"
 
 struct InfoBoxData;
 
 void
-UpdateInfoBoxHomeDistance(InfoBoxData &data);
+UpdateInfoBoxHomeDistance(InfoBoxData &data) noexcept;
 
 void
-UpdateInfoBoxTakeoffDistance(InfoBoxData &data);
+UpdateInfoBoxHomeAltitudeDiff(InfoBoxData &data) noexcept;
+
+class InfoBoxContentHome : public InfoBoxContent
+{
+public:
+  void Update(InfoBoxData &data) noexcept override;
+  bool HandleClick() noexcept override;
+};
+
+class InfoBoxContentActiveWaypoint : public InfoBoxContent
+{
+public:
+  void Update(InfoBoxData &data) noexcept override;
+  bool HandleClick() noexcept override;
+};
+
+class InfoBoxContentPreviousWaypoint : public InfoBoxContent
+{
+  /* User override. nullptr = "auto": track the task waypoint before
+     the active leg (or task[0] when on the first leg). */
+  WaypointPtr override_waypoint;
+
+public:
+  void Update(InfoBoxData &data) noexcept override;
+  bool HandleClick() noexcept override;
+};
+
+void
+UpdateInfoBoxTakeoffDistance(InfoBoxData &data) noexcept;
 
 extern const struct InfoBoxPanel atc_infobox_panels[];
 
 void
-UpdateInfoBoxATCRadial(InfoBoxData &data);
-
-#endif
+UpdateInfoBoxATCRadial(InfoBoxData &data) noexcept;

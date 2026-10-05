@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "UIActions.hpp"
 #include "UIGlobals.hpp"
@@ -33,59 +13,116 @@ Copyright_License {
 #include "Gauge/BigThermalAssistantWidget.hpp"
 #include "Look/Look.hpp"
 #include "HorizonWidget.hpp"
+#include "Hardware/SystemPower.hpp"
 
 static bool force_shutdown = false;
+static UIActions::ExitAction exit_action = UIActions::ExitAction::NONE;
 
 void
 UIActions::SignalShutdown(bool force)
 {
   force_shutdown = force;
+  exit_action = force ? ExitAction::QUIT : ExitAction::NONE;
   CommonInterface::main_window->Close();
 }
 
+#if defined(__linux__) && !defined(ANDROID)
+static UIActions::ExitAction
+ShowExitDialog(SystemPower::Capabilities capabilities) noexcept
+{
+  enum Result {
+    QUIT = 100,
+    REBOOT,
+    POWER_OFF,
+  };
+
+  MessageBoxButton buttons[4];
+  unsigned n_buttons = 0;
+  buttons[n_buttons++] = {_("Quit"), QUIT};
+  if (capabilities.reboot)
+    buttons[n_buttons++] = {_("Restart"), REBOOT};
+  if (capabilities.power_off)
+    buttons[n_buttons++] = {_("Power off"), POWER_OFF};
+  buttons[n_buttons++] = {_("Cancel"), IDCANCEL};
+
+  const int result =
+    ShowMessageBox(_("What do you want to do?"), "XCSoar",
+                   std::span{buttons}.first(n_buttons), IDCANCEL);
+  switch (result) {
+  case QUIT:
+    return UIActions::ExitAction::QUIT;
+
+  case REBOOT:
+    return UIActions::ExitAction::REBOOT;
+
+  case POWER_OFF:
+    return UIActions::ExitAction::POWER_OFF;
+  }
+
+  return UIActions::ExitAction::NONE;
+}
+#endif
+
 bool
-UIActions::CheckShutdown()
+UIActions::CheckShutdown() noexcept
 {
   if (force_shutdown)
     return true;
 
-  return ShowMessageBox(_("Quit program?"), _T("XCSoar"),
-                     MB_YESNO | MB_ICONQUESTION) == IDYES;
+#if defined(__linux__) && !defined(ANDROID)
+  const auto capabilities = SystemPower::GetCapabilities();
+  if (capabilities.Any()) {
+    exit_action = ShowExitDialog(capabilities);
+    return exit_action != ExitAction::NONE;
+  }
+#endif
 
+  if (ShowMessageBox(_("Quit program?"), "XCSoar",
+                     MB_YESNO | MB_ICONQUESTION) != IDYES)
+    return false;
+
+  exit_action = ExitAction::QUIT;
+  return true;
+}
+
+UIActions::ExitAction
+UIActions::GetExitAction() noexcept
+{
+  return exit_action;
 }
 
 void
 UIActions::ShowTrafficRadar()
 {
-  if (InputEvents::IsFlavour(_T("Traffic")))
+  if (InputEvents::IsFlavour("Traffic"))
     return;
 
   LoadFlarmDatabases();
 
   CommonInterface::main_window->SetWidget(new TrafficWidget());
-  InputEvents::SetFlavour(_T("Traffic"));
+  InputEvents::SetFlavour("Traffic");
 }
 
 void
 UIActions::ShowThermalAssistant()
 {
-  if (InputEvents::IsFlavour(_T("TA")))
+  if (InputEvents::IsFlavour("TA"))
     return;
 
   auto ta_widget =
     new BigThermalAssistantWidget(CommonInterface::GetLiveBlackboard(),
                                   UIGlobals::GetLook().thermal_assistant_dialog);
   CommonInterface::main_window->SetWidget(ta_widget);
-  InputEvents::SetFlavour(_T("TA"));
+  InputEvents::SetFlavour("TA");
 }
 
 void
 UIActions::ShowHorizon()
 {
-  if (InputEvents::IsFlavour(_T("Horizon")))
+  if (InputEvents::IsFlavour("Horizon"))
     return;
 
   auto widget = new HorizonWidget();
   CommonInterface::main_window->SetWidget(widget);
-  InputEvents::SetFlavour(_T("Horizon"));
+  InputEvents::SetFlavour("Horizon");
 }

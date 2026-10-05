@@ -1,30 +1,10 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BarographRenderer.hpp"
 #include "ChartRenderer.hpp"
 #include "Look/CrossSectionLook.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
 #include "Units/Units.hpp"
 #include "Task/ProtectedTaskManager.hpp"
@@ -35,28 +15,40 @@ Copyright_License {
 #include "Engine/Task/TaskManager.hpp"
 #include "TaskLegRenderer.hpp"
 #include "GradientRenderer.hpp"
+#include "util/UTF8.hpp"
+
+#include <fmt/format.h>
 
 void
-BarographCaption(TCHAR *sTmp, const FlightStatistics &fs)
+BarographCaption(char *sTmp, size_t buffer_size, const FlightStatistics &fs)
 {
-  ScopeLock lock(fs.mutex);
+  if (sTmp == nullptr || buffer_size == 0)
+    return;
+
+  const std::lock_guard lock{fs.mutex};
+
   if (!fs.altitude_ceiling.HasResult() || fs.altitude_base.IsEmpty()) {
-    sTmp[0] = _T('\0');
+    sTmp[0] = '\0';
   } else if (fs.altitude_ceiling.GetCount() < 4) {
-    StringFormatUnsafe(sTmp, _T("%s:\r\n  %.0f-%.0f %s"),
-                       _("Working band"),
-                       (double)Units::ToUserAltitude(fs.GetMinWorkingHeight()),
-                       (double)Units::ToUserAltitude(fs.GetMaxWorkingHeight()),
-                       Units::GetAltitudeName());
+    auto result = fmt::format_to_n(sTmp, buffer_size - 1, "{}:\r\n  {:.0f}-{:.0f} {}",
+                                   _("Working band"),
+                                   (double)Units::ToUserAltitude(fs.GetMinWorkingHeight()),
+                                   (double)Units::ToUserAltitude(fs.GetMaxWorkingHeight()),
+                                   Units::GetAltitudeName());
+    *result.out = '\0';
+    CropIncompleteUTF8(sTmp);
   } else {
-    StringFormatUnsafe(sTmp, _T("%s:\r\n  %.0f-%.0f %s\r\n\r\n%s:\r\n  %.0f %s/hr"),
-                       _("Working band"),
-                       (double)Units::ToUserAltitude(fs.GetMinWorkingHeight()),
-                       (double)Units::ToUserAltitude(fs.GetMaxWorkingHeight()),
-                       Units::GetAltitudeName(),
-                       _("Ceiling trend"),
-                       (double)Units::ToUserAltitude(fs.altitude_ceiling.GetGradient()),
-                       Units::GetAltitudeName());
+    auto result = fmt::format_to_n(sTmp, buffer_size - 1,
+                                   "{}:\r\n  {:.0f}-{:.0f} {}\r\n\r\n{}:\r\n  {:.0f} {}/hr",
+                                   _("Working band"),
+                                   (double)Units::ToUserAltitude(fs.GetMinWorkingHeight()),
+                                   (double)Units::ToUserAltitude(fs.GetMaxWorkingHeight()),
+                                   Units::GetAltitudeName(),
+                                   _("Ceiling trend"),
+                                   (double)Units::ToUserAltitude(fs.altitude_ceiling.GetGradient()),
+                                   Units::GetAltitudeName());
+    *result.out = '\0';
+    CropIncompleteUTF8(sTmp);
   }
 }
 
@@ -70,8 +62,9 @@ RenderBarographSpark(Canvas &canvas, const PixelRect rc,
                      const DerivedInfo &derived_info,
                      const ProtectedTaskManager *_task)
 {
-  ScopeLock lock(fs.mutex);
+  const std::lock_guard lock{fs.mutex};
   ChartRenderer chart(chart_look, canvas, rc, false);
+  chart.Begin();
 
   if (!fs.altitude.HasResult())
     return;
@@ -99,9 +92,13 @@ RenderBarographSpark(Canvas &canvas, const PixelRect rc,
       chart.GetCanvas().SelectWhiteBrush();
     else
       chart.GetCanvas().SelectBlackBrush();
-    const auto &s = fs.altitude.GetSlots()[fs.altitude.GetCount()-1];
-    chart.DrawDot(s.x, s.y, Layout::Scale(2));
+
+    const auto &slots = fs.altitude.GetSlots();
+    const auto &s = slots[fs.altitude.GetCount()-1];
+    chart.DrawDot(s, Layout::Scale(2));
   }
+
+  chart.Finish();
 }
 
 void
@@ -114,9 +111,13 @@ RenderBarograph(Canvas &canvas, const PixelRect rc,
                 const ProtectedTaskManager *_task)
 {
   ChartRenderer chart(chart_look, canvas, rc);
+  chart.SetXLabel("t", "hr");
+  chart.SetYLabel("h", Units::GetAltitudeName());
+  chart.Begin();
 
   if (!fs.altitude.HasResult()) {
     chart.DrawNoData();
+    chart.Finish();
     return;
   }
 
@@ -129,7 +130,7 @@ RenderBarograph(Canvas &canvas, const PixelRect rc,
   chart.ScaleYFromValue(0);
   chart.ScaleXFromValue(fs.altitude.GetMinX());
   if (derived_info.flight.flying)
-    chart.ScaleXFromValue(derived_info.flight.flight_time/3600);
+    chart.ScaleXFromValue(derived_info.flight.flight_time / std::chrono::hours{1});
 
   if (!fs.altitude_ceiling.IsEmpty()) {
     chart.ScaleYFromValue(fs.altitude_ceiling.GetMaxY());
@@ -144,11 +145,14 @@ RenderBarograph(Canvas &canvas, const PixelRect rc,
   canvas.Select(cross_section_look.terrain_brush);
 
   chart.DrawFilledLineGraph(fs.altitude_terrain);
-  canvas.SelectWhitePen();
-  canvas.SelectWhiteBrush();
+
+  Pen bg_pen(1, chart_look.background_color);
+  Brush bg_brush(chart_look.background_color);
+  canvas.Select(bg_pen);
+  canvas.Select(bg_brush);
 
   chart.DrawXGrid(0.25, 0.25, ChartRenderer::UnitFormat::TIME);
-  chart.DrawYGrid(Units::ToSysAltitude(1000), 1000, ChartRenderer::UnitFormat::NUMERIC);
+  chart.DrawYGrid(Units::ToSysAltitude(250), 250, ChartRenderer::UnitFormat::NUMERIC);
 
   if (fs.altitude_base.HasResult()) {
     chart.DrawLineGraph(fs.altitude_base, ChartLook::STYLE_REDTHICKDASH);
@@ -162,8 +166,6 @@ RenderBarograph(Canvas &canvas, const PixelRect rc,
   }
 
   chart.DrawLineGraph(fs.altitude, ChartLook::STYLE_BLACK);
-
-  chart.DrawXLabel(_T("t"), _T("hr"));
-  chart.DrawYLabel(_T("h"), Units::GetAltitudeName());
+  chart.Finish();
 }
 

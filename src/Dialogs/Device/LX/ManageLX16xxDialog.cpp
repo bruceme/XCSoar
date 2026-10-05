@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ManageLX16xxDialog.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -40,11 +20,12 @@ public:
     :RowFormWidget(look), device(_device), info(info) {}
 
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc);
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept;
 };
 
 void
-ManageLX16xxWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+ManageLX16xxWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                            [[maybe_unused]] const PixelRect &rc) noexcept
 {
   StaticString<64> buffer;
 
@@ -67,18 +48,24 @@ ManageLX16xxWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
     buffer.SetASCII(info.software_version.c_str());
     AddReadOnly(_("Firmware version"), NULL, buffer.c_str());
   }
+
+  if (!info.license.empty()) {
+    buffer.SetASCII(info.license.c_str());
+    AddReadOnly(_("License"), NULL, buffer.c_str());
+  }
 }
 
 void
 ManageLX16xxDialog(Device &device, const DeviceInfo &info)
 {
   StaticString<64> title;
-  title.Format(_T("LX %s"), info.product.c_str());
+  title.Format("LX %s", info.product.c_str());
 
-  WidgetDialog dialog(UIGlobals::GetDialogLook());
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), title,
-                    new ManageLX16xxWidget(UIGlobals::GetDialogLook(),
-                                           (LXDevice &)device, info));
+  WidgetDialog dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+                      UIGlobals::GetDialogLook(),
+                      title,
+                      new ManageLX16xxWidget(UIGlobals::GetDialogLook(),
+                                             (LXDevice &)device, info));
   dialog.AddButton(_("Close"), mrCancel);
   dialog.ShowModal();
 }

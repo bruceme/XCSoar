@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TestMath.hpp"
 #include "Math/Point2D.hpp"
@@ -51,6 +32,15 @@ TestLine2D()
   ok1(a.SquareDistanceTo({2, 0}) == 0);
   ok1(a.SquareDistanceTo({6, 10}) == 100);
 
+  /* InterpolateClip() keeps the result between a and b */
+  ok1(a.InterpolateClip(0.25) == DoublePoint2D(1, 0));
+  ok1(a.InterpolateClip(0) == DoublePoint2D(0, 0));
+  ok1(a.InterpolateClip(1) == DoublePoint2D(4, 0));
+  ok1(a.InterpolateClip(-1) == DoublePoint2D(0, 0));
+  ok1(a.InterpolateClip(2) == DoublePoint2D(4, 0));
+  ok1(a.InterpolateClip(a.ProjectedRatio({6, 10})) == DoublePoint2D(4, 0));
+  ok1(a.InterpolateClip(a.ProjectedRatio({-3, 5})) == DoublePoint2D(0, 0));
+
   const DoubleLine2D b({0, 0}, {0, 4});
   ok1(b.GetSquaredDistance() == 16);
   ok1(b.GetMiddle() == DoublePoint2D(0, 2));
@@ -82,4 +72,13 @@ TestLine2D()
   ok1(c.SquareDistanceTo({1, 5}) == 0);
   ok1(c.SquareDistanceTo({5, 2}) == 5);
   ok1(c.SquareDistanceTo({0, 2}) == 5);
+  ok1(c.InterpolateClip(0.5) == DoublePoint2D(2, 3));
+
+  /* a line of zero length collapses every ratio onto its only
+     point; ProjectedRatio() is undefined there, so callers must not
+     feed its result into InterpolateClip() */
+  const DoubleLine2D d({2, 3}, {2, 3});
+  ok1(d.InterpolateClip(0.5) == DoublePoint2D(2, 3));
+  ok1(d.InterpolateClip(-1) == DoublePoint2D(2, 3));
+  ok1(d.InterpolateClip(2) == DoublePoint2D(2, 3));
 }

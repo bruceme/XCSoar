@@ -1,37 +1,17 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ATCReference.hpp"
 #include "Interface.hpp"
 #include "Widget/RowFormWidget.hpp"
-#include "Form/ActionListener.hpp"
 #include "UIGlobals.hpp"
 #include "Language/Language.hpp"
 #include "Formatter/GeoPointFormatter.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 #include "Components.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
 #include "Dialogs/Waypoint/WaypointDialogs.hpp"
+#include "DataComponents.hpp"
 
 enum Controls {
   WAYPOINT,
@@ -40,85 +20,71 @@ enum Controls {
   CLEAR,
 };
 
-class ATCReferencePanel : public RowFormWidget, ActionListener {
+class ATCReferencePanel : public RowFormWidget {
 public:
-  ATCReferencePanel()
+  ATCReferencePanel() noexcept
     :RowFormWidget(UIGlobals::GetDialogLook()) {}
 
-  void UpdateValues();
+  void UpdateValues() noexcept;
 
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
-
-private:
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
 };
 
 void
-ATCReferencePanel::UpdateValues()
+ATCReferencePanel::UpdateValues() noexcept
 {
   const GeoPoint &location =
     CommonInterface::GetComputerSettings().poi.atc_reference;
 
   const auto waypoint = location.IsValid()
-    ? way_points.GetNearest(location, 100)
+    ? data_components->waypoints->GetNearest(location, 100)
     : nullptr;
 
-  SetText(WAYPOINT, waypoint != nullptr ? waypoint->name.c_str() : _T("---"));
+  SetText(WAYPOINT, waypoint != nullptr ? waypoint->name.c_str() : "---");
 
-  const TCHAR *location_string;
-  TCHAR buffer[64];
+  const char *location_string;
+  char buffer[64];
   if (location.IsValid()) {
     FormatGeoPoint(location, buffer, ARRAY_SIZE(buffer),
                    CommonInterface::GetUISettings().format.coordinate_format);
     location_string = buffer;
   } else
-    location_string = _T("---");
+    location_string = "---";
 
   SetText(LOCATION, location_string);
 }
 
 void
-ATCReferencePanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+ATCReferencePanel::Prepare(ContainerWindow &parent,
+                           const PixelRect &rc) noexcept
 {
   RowFormWidget::Prepare(parent, rc);
 
   AddReadOnly(_("Waypoint"));
   AddReadOnly(_("Location"));
 
-  AddButton(_("Relocate"), *this, RELOCATE);
-  AddButton(_("Clear"), *this, CLEAR);
-
-  UpdateValues();
-}
-
-void
-ATCReferencePanel::OnAction(int id)
-{
-  GeoPoint &location =
-    CommonInterface::SetComputerSettings().poi.atc_reference;
-
-  switch (id) {
-  case RELOCATE: {
-    auto waypoint = ShowWaypointListDialog(CommonInterface::Basic().location);
+  AddButton(_("Relocate"), [this](){
+    auto &location = CommonInterface::SetComputerSettings().poi.atc_reference;
+    auto waypoint = ShowWaypointListDialog(*data_components->waypoints,
+                                           CommonInterface::Basic().location);
     if (waypoint != nullptr) {
       location = waypoint->location;
       UpdateValues();
     }
-  }
-    break;
+  });
 
-  case CLEAR:
+  AddButton(_("Clear"), [this](){
+    auto &location = CommonInterface::SetComputerSettings().poi.atc_reference;
     location.SetInvalid();
     UpdateValues();
-    break;
-  }
+  });
+
+  UpdateValues();
 }
 
-Widget *
-LoadATCReferencePanel(unsigned id)
+std::unique_ptr<Widget>
+LoadATCReferencePanel([[maybe_unused]] unsigned id)
 {
-  return new ATCReferencePanel();
+  return std::make_unique<ATCReferencePanel>();
 }

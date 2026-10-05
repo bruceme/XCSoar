@@ -1,33 +1,14 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "IGC/IGCWriter.hpp"
-#include "OS/FileUtil.hpp"
+#include "system/FileUtil.hpp"
 #include "NMEA/Info.hpp"
-#include "IO/FileLineReader.hpp"
+#include "io/FileLineReader.hpp"
 #include "TestUtil.hpp"
-#include "Util/PrintException.hxx"
+#include "util/PrintException.hxx"
 
-#include <assert.h>
+#include <cassert>
 #include <cstdio>
 
 static void
@@ -62,6 +43,7 @@ static const char *const expect[] = {
   "HFDTE040910",
   "HFFXA050",
   "HFPLTPILOTINCHARGE:Pilot Name",
+  "HFCM2CREW2:CoPilot Name",
   "HFGTYGLIDERTYPE:ASK-21",
   "HFGIDGLIDERID:D-1234",
   "HFCIDCOMPETITIONID:34",
@@ -82,6 +64,8 @@ static const char *const expect[] = {
   "LPLTmy_note",
   "F112253121701",
   "B1122535103117S00742367WA004900048700000",
+  "B1122585103117S00742367WA004900000000000",
+  "B1123035103117S00742367WA004900048700000",
   NULL
 };
 
@@ -94,8 +78,7 @@ Run(IGCWriter &writer)
                            Angle::Degrees(50.6322));
 
   static NMEAInfo i;
-  i.clock = 1;
-  i.time = 1;
+  i.clock = i.time = TimeStamp{std::chrono::seconds{1}};
   i.time_available.Update(i.clock);
   i.date_time_utc.year = 2010;
   i.date_time_utc.month = 9;
@@ -107,15 +90,17 @@ Run(IGCWriter &writer)
   i.location_available.Update(i.clock);
   i.gps_altitude = 487;
   i.gps_altitude_available.Update(i.clock);
+  i.gps_ellipsoid_altitude = 487;
+  i.gps_ellipsoid_altitude_available.Update(i.clock);
   i.ProvidePressureAltitude(490);
   i.ProvideBaroAltitudeTrue(400);
 
-  writer.WriteHeader(i.date_time_utc, _T("Pilot Name"), _T("ASK-21"),
-                     _T("D-1234"), _T("34"), "FOO", _T("bar"), false);
+  writer.WriteHeader(i.date_time_utc, "Pilot Name", "CoPilot Name", "ASK-21",
+                     "D-1234", "34", "FOO", "bar", false);
   writer.StartDeclaration(i.date_time_utc, 3);
-  writer.AddDeclaration(home, _T("Bergneustadt"));
-  writer.AddDeclaration(tp, _T("Suhl"));
-  writer.AddDeclaration(home, _T("Bergneustadt"));
+  writer.AddDeclaration(home, "Bergneustadt");
+  writer.AddDeclaration(tp, "Suhl");
+  writer.AddDeclaration(home, "Bergneustadt");
   writer.EndDeclaration();
 
   writer.LogEmptyFRecord(i.date_time_utc);
@@ -125,7 +110,7 @@ Run(IGCWriter &writer)
   i.date_time_utc.second += 5;
   writer.LogEvent(i, "my_event");
   i.date_time_utc.second += 5;
-  writer.LoggerNote(_T("my_note"));
+  writer.LoggerNote("my_note");
 
   int satellites[GPSState::MAXSATELLITES];
   for (unsigned i = 0; i < GPSState::MAXSATELLITES; ++i)
@@ -142,6 +127,19 @@ Run(IGCWriter &writer)
                         Angle::Degrees(-51.051944444444445));
   writer.LogPoint(i);
 
+  /* A true-zero ellipsoid height must be written as 00000, not
+     replaced by AMSL + geoid. */
+  i.date_time_utc.second += 5;
+  i.gps_ellipsoid_altitude = 0;
+  i.gps_ellipsoid_altitude_available.Update(i.clock);
+  writer.LogPoint(i);
+
+  /* Unknown ellipsoid height is derived as AMSL + FakeGeoid (0). */
+  i.date_time_utc.minute += 1;
+  i.date_time_utc.second = 3;
+  i.gps_ellipsoid_altitude_available.Clear();
+  writer.LogPoint(i);
+
   writer.Flush();
   writer.Sign();
   writer.Flush();
@@ -154,23 +152,58 @@ Run(Path path)
   Run(writer);
 }
 
-int main(int argc, char **argv)
-try {
-  plan_tests(49);
+static void
+TestIGCFixApplyEllipsoid()
+{
+  NMEAInfo basic{};
+  basic.clock = TimeStamp{std::chrono::seconds{1}};
+  basic.time = TimeStamp{std::chrono::seconds{1}};
+  basic.time_available.Update(basic.clock);
+  basic.date_time_utc.year = 2010;
+  basic.date_time_utc.month = 9;
+  basic.date_time_utc.day = 4;
+  basic.date_time_utc.hour = 11;
+  basic.date_time_utc.minute = 22;
+  basic.date_time_utc.second = 33;
+  basic.location = GeoPoint(Angle::Degrees(7.7061111111111114),
+                             Angle::Degrees(51.051944444444445));
+  basic.location_available.Update(basic.clock);
+  basic.gps_altitude = 487;
+  basic.gps_altitude_available.Update(basic.clock);
 
-  const Path path(_T("output/test/test.igc"));
+  IGCFix fix;
+  fix.Clear();
+  ok1(fix.Apply(basic));
+  ok1(!fix.gps_ellipsoid_altitude_available);
+  ok1(fix.gps_ellipsoid_altitude == 0);
+  ok1(fix.gps_altitude == 487);
+
+  basic.gps_ellipsoid_altitude = 0;
+  basic.gps_ellipsoid_altitude_available.Update(basic.clock);
+  ok1(fix.Apply(basic));
+  ok1(fix.gps_ellipsoid_altitude_available);
+  ok1(fix.gps_ellipsoid_altitude == 0);
+}
+
+int main()
+try {
+  plan_tests(51 + 4 + 7);
+
+  const Path path("output/test/test.igc");
   File::Delete(path);
 
   Run(path);
 
   CheckTextFile(path, expect);
 
+  TestIGCFixApplyEllipsoid();
+
   GRecord grecord;
   grecord.Initialize();
   grecord.VerifyGRecordInFile(path);
 
   return exit_status();
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

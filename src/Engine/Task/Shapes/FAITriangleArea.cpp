@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FAITriangleArea.hpp"
 #include "FAITriangleRules.hpp"
@@ -31,13 +11,13 @@ Copyright_License {
 
 #include <algorithm>
 
-#include <assert.h>
+#include <cassert>
 
 using namespace FAITriangleRules;
 
 static constexpr unsigned STEPS = FAI_TRIANGLE_SECTOR_MAX / 3 / 8;
 
-gcc_const
+[[gnu::const]]
 static Angle
 CalcAlpha(double dist_a, double dist_b, double dist_c)
 {
@@ -46,7 +26,7 @@ CalcAlpha(double dist_a, double dist_b, double dist_c)
     return Angle::acos(cos_alpha);
 }
 
-gcc_const
+[[gnu::const]]
 static Angle
 CalcAngle(Angle angle, double dist_a, double dist_b, double dist_c,
           bool reverse)
@@ -57,7 +37,7 @@ CalcAngle(Angle angle, double dist_a, double dist_b, double dist_c,
     : angle - alpha;
 }
 
-gcc_pure
+[[gnu::pure]]
 static GeoPoint
 CalcGeoPoint(const GeoPoint &origin, Angle angle,
              double dist_a, double dist_b, double dist_c, bool reverse)
@@ -148,7 +128,7 @@ GenerateFAITriangleLargeBottom(GeoPoint *dest,
 {
   const auto total = leg_c.distance / LARGE_MAX_LEG;
 
-  auto dist_b = LargeMinLeg(total);
+  auto dist_b = total * LARGE_MIN_LEG;
   auto dist_a = total - leg_c.distance - dist_b;
 
   const auto delta_distance = (dist_a - dist_b) / STEPS;
@@ -172,7 +152,7 @@ GenerateFAITriangleLargeBottomRight(GeoPoint *dest,
   const auto min_leg = large_threshold - max_leg - leg_c.distance;
   assert(max_leg >= min_leg);
 
-  const auto min_a = LargeMinLeg(large_threshold);
+  const auto min_a = large_threshold * LARGE_MIN_LEG;
 
   const auto a_start = large_threshold * SMALL_MIN_LEG;
   const auto a_end = std::max(min_leg, min_a);
@@ -206,7 +186,7 @@ GenerateFAITriangleLargeRight1(GeoPoint *dest,
 
   for (unsigned i = 0; i < STEPS; ++i,
          total_distance += delta_distance) {
-    const auto dist_a = LargeMinLeg(total_distance);
+    const auto dist_a = total_distance * LARGE_MIN_LEG;
     const auto dist_b = total_distance - dist_a - leg_c.distance;
     if (dist_b > total_distance * LARGE_MAX_LEG)
       break;
@@ -286,7 +266,7 @@ GenerateFAITriangleLargeLeft2(GeoPoint *dest,
 
     const auto dist_a = total_distance * LARGE_MAX_LEG;
     const auto dist_b = total_distance - dist_a - leg_c.distance;
-    if (dist_b < LargeMinLeg(total_distance))
+    if (dist_b < total_distance * LARGE_MIN_LEG)
       break;
 
     *dest++ = CalcGeoPoint(origin, leg_c.bearing,
@@ -320,7 +300,7 @@ GenerateFAITriangleLargeLeft1(GeoPoint *dest,
 
   for (unsigned i = 0; i < STEPS; ++i,
          total_distance -= delta_distance) {
-    const auto dist_b = LargeMinLeg(total_distance);
+    const auto dist_b = total_distance * LARGE_MIN_LEG;
     const auto dist_a = total_distance - dist_b - leg_c.distance;
 
     *dest++ = CalcGeoPoint(origin, leg_c.bearing,
@@ -344,7 +324,7 @@ GenerateFAITriangleLargeBottomLeft(GeoPoint *dest,
   const auto min_leg = large_threshold - max_leg - leg_c.distance;
   assert(max_leg >= min_leg);
 
-  const auto min_b = LargeMinLeg(large_threshold);
+  const auto min_b = large_threshold * LARGE_MIN_LEG;
 
   const auto b_start = std::max(min_leg, min_b);
   const auto b_end = large_threshold * SMALL_MIN_LEG;

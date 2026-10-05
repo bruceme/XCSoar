@@ -1,49 +1,30 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DigitEntry.hpp"
-#include "ActionListener.hpp"
-#include "Screen/Font.hpp"
+#include "ui/canvas/Font.hpp"
 #include "Screen/Layout.hpp"
-#include "Screen/Point.hpp"
-#include "Event/KeyCode.hpp"
-#include "Screen/Canvas.hpp"
+#include "Form/Button.hpp"
+#include "ui/dim/Rect.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Look/DialogLook.hpp"
 #include "Units/Descriptor.hpp"
-#include "Time/RoughTime.hpp"
+#include "time/RoughTime.hpp"
+#include "time/BrokenDate.hpp"
 #include "Math/Angle.hpp"
 #include "Math/Util.hpp"
 #include "Renderer/SymbolRenderer.hpp"
 #include "Geo/CoordinateFormat.hpp"
+#include "Formatter/TimeFormatter.hpp"
+#include "Asset.hpp"
+#include "util/StringFormat.hpp"
 
 #include <algorithm>
 
-#include <stdio.h>
-
 DigitEntry::DigitEntry(const DialogLook &_look)
   :look(_look),
-   button_renderer(look.button),
-   action_listener(nullptr)
+   button_renderer(look.button)
 {
 }
 
@@ -240,6 +221,22 @@ DigitEntry::CreateTime(ContainerWindow &parent, const PixelRect &rc,
 }
 
 void
+DigitEntry::CreateDate(ContainerWindow &parent, const PixelRect &rc,
+                       const WindowStyle style)
+{
+  Create(parent, rc, style, 5);
+
+  columns[0].type = Column::Type::YEAR;
+  columns[1].type = Column::Type::COLON;
+  columns[2].type = Column::Type::MONTH;
+  columns[3].type = Column::Type::COLON;
+  columns[4].type = Column::Type::DAY;
+  cursor = 0;
+
+  CalculateLayout();
+}
+
+void
 DigitEntry::CalculateLayout()
 {
   const unsigned control_height = Layout::GetMaximumControlHeight();
@@ -247,19 +244,19 @@ DigitEntry::CalculateLayout()
 
   const unsigned min_value_height = control_height * 3 / 2;
 
-  PixelSize digit_size = look.text_font.TextSize(_T("8"));
-  digit_size.cy += 2 * padding;
-  if (digit_size.cy < (int)min_value_height)
-    digit_size.cy = min_value_height;
+  PixelSize digit_size = look.text_font.TextSize("8");
+  digit_size.height += 2 * padding;
+  if (digit_size.height < min_value_height)
+    digit_size.height = min_value_height;
 
   top = control_height;
-  bottom = top + digit_size.cy;
+  bottom = top + digit_size.height;
 
   unsigned last_right = 0;
   for (unsigned i = 0; i < length; ++i) {
     Column &digit = columns[i];
 
-    unsigned value_width = digit.GetWidth() * digit_size.cx;
+    unsigned value_width = digit.GetWidth() * digit_size.width;
     value_width += 2 * padding;
     if (value_width < control_height)
       value_width = control_height;
@@ -432,6 +429,21 @@ DigitEntry::SetValue(Angle value)
   Invalidate();
 }
 
+void
+DigitEntry::SetValue(BrokenDate value)
+{
+  assert(length == 5);
+  assert(columns[0].type == Column::Type::YEAR);
+  assert(columns[2].type == Column::Type::MONTH);
+  assert(columns[4].type == Column::Type::DAY);
+
+  columns[0].value = value.year - 1900;
+  columns[2].value = value.month - 1;
+  columns[4].value = value.day - 1;
+
+  Invalidate();
+}
+
 unsigned
 DigitEntry::GetPositiveInteger() const
 {
@@ -490,6 +502,24 @@ DigitEntry::GetTimeValue() const
 
   return RoughTime(columns[0].value,
                    columns[2].value * 10 + columns[3].value);
+}
+
+BrokenDate
+DigitEntry::GetDateValue() const
+{
+  assert(length == 5);
+  assert(columns[0].type == Column::Type::YEAR);
+  assert(columns[1].type == Column::Type::COLON);
+  assert(columns[2].type == Column::Type::MONTH);
+  assert(columns[3].type == Column::Type::COLON);
+  assert(columns[4].type == Column::Type::DAY);
+
+  if (!valid)
+    return BrokenDate::Invalid();
+
+  return BrokenDate(columns[0].value + 1900,
+                    columns[2].value + 1,
+                    columns[4].value + 1);
 }
 
 void
@@ -765,11 +795,14 @@ DigitEntry::IncrementColumn(unsigned i)
     if (c.value < c.GetMaxNumber())
       ++c.value;
     else {
-      c.value = 0;
-
-      int previous = FindNumberLeft(i - 1);
-      if (previous >= 0)
-        IncrementColumn(previous);
+      if (c.NoOverflow()) {
+        c.value = c.GetMaxNumber();
+      } else {
+        c.value = 0;
+        int previous = FindNumberLeft(i - 1);
+        if (previous >= 0)
+          IncrementColumn(previous);
+      }
     }
   } else if (c.IsSign()) {
     c.value = !c.value;
@@ -790,11 +823,14 @@ DigitEntry::DecrementColumn(unsigned i)
     if (c.value > 0)
       --c.value;
     else {
-      c.value = c.GetMaxNumber();
-
-      int previous = FindNumberLeft(i - 1);
-      if (previous >= 0)
-        DecrementColumn(previous);
+      if (c.NoOverflow()) {
+        c.value = 0;
+      } else {
+        c.value = c.GetMaxNumber();
+        int previous = FindNumberLeft(i - 1);
+        if (previous >= 0)
+          DecrementColumn(previous);
+      }
     }
   } else if (c.IsSign()) {
     c.value = !c.value;
@@ -843,10 +879,14 @@ DigitEntry::GetAngleValue() const
 }
 
 bool
-DigitEntry::OnMouseDown(PixelPoint p)
+DigitEntry::OnMouseDown(PixelPoint p) noexcept
 {
   int i = FindColumnAt(p.x);
   if (i >= 0 && columns[i].IsEditable()) {
+#ifdef HAVE_VIBRATOR
+    PlayHapticFeedback(HapticFeedbackType::PRESS);
+#endif
+
     SetCursor(i);
     SetFocus();
 
@@ -862,7 +902,7 @@ DigitEntry::OnMouseDown(PixelPoint p)
 }
 
 bool
-DigitEntry::OnKeyCheck(unsigned key_code) const
+DigitEntry::OnKeyCheck(unsigned key_code) const noexcept
 {
   switch (key_code) {
   case KEY_UP:
@@ -881,7 +921,7 @@ DigitEntry::OnKeyCheck(unsigned key_code) const
 }
 
 bool
-DigitEntry::OnKeyDown(unsigned key_code)
+DigitEntry::OnKeyDown(unsigned key_code) noexcept
 {
   assert(cursor < length);
 
@@ -909,8 +949,8 @@ DigitEntry::OnKeyDown(unsigned key_code)
     return true;
 
   case KEY_RETURN:
-    if (action_listener != nullptr) {
-      action_listener->OnAction(action_id);
+    if (callback) {
+      callback();
       return true;
     }
 
@@ -921,28 +961,25 @@ DigitEntry::OnKeyDown(unsigned key_code)
 }
 
 void
-DigitEntry::OnSetFocus()
+DigitEntry::OnSetFocus() noexcept
 {
   PaintWindow::OnSetFocus();
   Invalidate();
 }
 
 void
-DigitEntry::OnKillFocus()
+DigitEntry::OnKillFocus() noexcept
 {
   PaintWindow::OnKillFocus();
   Invalidate();
 }
 
 void
-DigitEntry::OnPaint(Canvas &canvas)
+DigitEntry::OnPaint(Canvas &canvas) noexcept
 {
   assert(cursor < length);
 
   const bool focused = HasCursorKeys() && HasFocus();
-
-  if (HaveClipping())
-    canvas.Clear(look.background_color);
 
   canvas.Select(look.text_font);
   canvas.SetBackgroundOpaque();
@@ -954,7 +991,7 @@ DigitEntry::OnPaint(Canvas &canvas)
   rc.top = top;
   rc.bottom = bottom;
 
-  TCHAR buffer[4];
+  char buffer[5];
 
   for (unsigned i = 0; i < length; ++i) {
     const Column &c = columns[i];
@@ -973,61 +1010,71 @@ DigitEntry::OnPaint(Canvas &canvas)
       canvas.SetBackgroundColor(look.background_color);
     }
 
-    const TCHAR *text = buffer;
-    buffer[1] = _T('\0');
+    const char *text = buffer;
+    buffer[1] = '\0';
 
     switch (c.type) {
     case Column::Type::DIGIT:
     case Column::Type::DIGIT6:
       assert(c.value < 10);
-      buffer[0] = _T('0') + c.value;
+      buffer[0] = '0' + c.value;
       break;
 
     case Column::Type::HOUR:
       assert(c.value < 24);
-      _stprintf(buffer, _T("%02u"), c.value);
+      StringFormat(buffer, sizeof(buffer), "%02u", c.value);
       break;
 
     case Column::Type::DIGIT36:
       assert(c.value < 36);
-      _stprintf(buffer, _T("%02u"), c.value);
+      StringFormat(buffer, sizeof(buffer), "%02u", c.value);
       break;
 
     case Column::Type::DIGIT19:
       assert(c.value < 19);
-      _stprintf(buffer, _T("%02u"), c.value);
+      StringFormat(buffer, sizeof(buffer), "%02u", c.value);
       break;
 
     case Column::Type::SIGN:
-      buffer[0] = c.IsNegative() ? _T('-') : _T('+');
+      buffer[0] = c.IsNegative() ? '-' : '+';
       break;
 
     case Column::Type::DECIMAL_POINT:
-      buffer[0] = _T('.');
+      buffer[0] = '.';
       break;
 
     case Column::Type::COLON:
-      buffer[0] = _T(':');
+      buffer[0] = ':';
       break;
 
     case Column::Type::NORTH_SOUTH:
-      buffer[0] = c.IsNegative() ? _T('S') : _T('N');
+      buffer[0] = c.IsNegative() ? 'S' : 'N';
       break;
 
     case Column::Type::EAST_WEST:
-      buffer[0] = c.IsNegative() ? _T('W') : _T('E');
+      buffer[0] = c.IsNegative() ? 'W' : 'E';
       break;
 
     case Column::Type::DEGREES:
-      text = _T("°");
+      text = "°";
       break;
 
     case Column::Type::APOSTROPHE:
-      text = _T("'");
+      text = "'";
       break;
 
     case Column::Type::QUOTE:
-      text = _T("\"");
+      text = "\"";
+      break;
+
+    case Column::Type::DAY:
+      StringFormat(buffer, sizeof(buffer), "%02u", c.value + 1);
+      break;
+    case Column::Type::MONTH:
+      StringFormat(buffer, sizeof(buffer), "%02u", c.value + 1);
+      break;
+    case Column::Type::YEAR:
+      StringFormat(buffer, sizeof(buffer), "%04u", c.value + 1900);
       break;
 
     case Column::Type::UNIT:
@@ -1037,11 +1084,11 @@ DigitEntry::OnPaint(Canvas &canvas)
     }
 
     if (c.IsEditable() && !valid)
-      buffer[0] = _T('\0');
+      buffer[0] = '\0';
 
     const int x = (c.left + c.right - canvas.CalcTextWidth(text)) / 2;
 
-    canvas.DrawOpaqueText(x, y, rc, text);
+    canvas.DrawOpaqueText({x, y}, rc, text);
   }
 
   canvas.SetBackgroundTransparent();
@@ -1060,8 +1107,8 @@ DigitEntry::OnPaint(Canvas &canvas)
     plus_rc.left = minus_rc.left = c.left;
     plus_rc.right = minus_rc.right = c.right;
 
-    button_renderer.DrawButton(canvas, plus_rc, false, false);
-    button_renderer.DrawButton(canvas, minus_rc, false, false);
+    button_renderer.DrawButton(canvas, plus_rc, ButtonState::ENABLED);
+    button_renderer.DrawButton(canvas, minus_rc, ButtonState::ENABLED);
 
     canvas.SelectNullPen();
     canvas.Select(look.button.standard.foreground_brush);

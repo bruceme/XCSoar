@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "VolumeController.hpp"
 
@@ -28,15 +8,11 @@ Copyright_License {
 #include "PCMMixer.hpp"
 
 #include "LogFile.hpp"
-#include "Util/Macros.hpp"
-#include "Util/StringAPI.hxx"
+#include "util/Macros.hpp"
+#include "util/StringAPI.hxx"
 
-#include <assert.h>
-
+#include <cassert>
 #include <list>
-
-#include <boost/assert.hpp>
-
 
 #if defined(HAVE_EXT_VOLUME_CONTROLLER) && defined(ENABLE_ALSA)
 
@@ -73,13 +49,12 @@ static constexpr const char *CONTROL_NAMES_PRIORITY[] =
 VolumeController::~VolumeController()
 {
   if (nullptr != alsa_mixer_handle)
-    BOOST_VERIFY(0 == snd_mixer_close(alsa_mixer_handle));
+    snd_mixer_close(alsa_mixer_handle);
 }
 
 bool
 VolumeController::SetExternalVolumeNoLock(unsigned vol_percent)
 {
-  assert(alsa_lock.IsLockedByCurrent());
   assert(nullptr != alsa_mixer_handle);
 
   if (nullptr == ext_master_volume_ctl)
@@ -101,13 +76,11 @@ VolumeController::SetExternalVolumeNoLock(unsigned vol_percent)
           static_cast<float>(vol_percent) / GetMaxValue();
 
     if (ext_master_ctl_has_vol)
-      BOOST_VERIFY(0 == snd_mixer_selem_set_playback_volume_all(
-                            ext_master_volume_ctl, ext_vol));
+      snd_mixer_selem_set_playback_volume_all(ext_master_volume_ctl, ext_vol);
 
     if (ext_master_ctl_has_switch)
-      BOOST_VERIFY(0 == snd_mixer_selem_set_playback_switch_all(
-                            ext_master_volume_ctl,
-                            (0 == vol_percent) ? 0 : 1));
+      snd_mixer_selem_set_playback_switch_all(ext_master_volume_ctl,
+                                              (0 == vol_percent) ? 0 : 1);
 
     return ext_master_ctl_has_vol;
   }
@@ -116,7 +89,7 @@ VolumeController::SetExternalVolumeNoLock(unsigned vol_percent)
 bool
 VolumeController::SetExternalVolume(unsigned vol_percent)
 {
-  const ScopeLock protect(alsa_lock);
+  const std::lock_guard lock{alsa_lock};
   if (alsa_mixer_initialised)
     return SetExternalVolumeNoLock(vol_percent);
   else
@@ -126,7 +99,6 @@ VolumeController::SetExternalVolume(unsigned vol_percent)
 bool
 VolumeController::InitExternalVolumeControl(unsigned initial_vol_percent)
 {
-  assert(alsa_lock.IsLockedByCurrent());
   assert(!alsa_mixer_initialised);
   assert(nullptr == alsa_mixer_handle);
   assert(nullptr == ext_master_volume_ctl);
@@ -147,7 +119,7 @@ VolumeController::InitExternalVolumeControl(unsigned initial_vol_percent)
   const char *alsa_device_name = ALSAEnv::GetALSADeviceName();
   alsa_error = snd_mixer_attach(alsa_mixer_handle, alsa_device_name);
   if (0 != alsa_error) {
-    LogFormat("snd_mixer_attach(0x%p, \"%s\") failed: %d - %s",
+    LogFormat("snd_mixer_attach(0x%p, %s) failed: %d - %s",
               alsa_mixer_handle,
               alsa_device_name,
               alsa_error,
@@ -198,7 +170,7 @@ VolumeController::InitExternalVolumeControl(unsigned initial_vol_percent)
   }
 
   if (0 == elements.size()) {
-    LogFormat("No usable master volume control found for ALSA device \"%s\"",
+    LogFormat("No usable master volume control found for ALSA device: %s",
               alsa_device_name);
     return false;
   }
@@ -243,10 +215,9 @@ VolumeController::InitExternalVolumeControl(unsigned initial_vol_percent)
       (0 != snd_mixer_selem_has_playback_switch(ext_master_volume_ctl));
 
   if (ext_master_ctl_has_vol) {
-    BOOST_VERIFY(0 == snd_mixer_selem_get_playback_volume_range(
-                          ext_master_volume_ctl,
-                          &ext_master_min,
-                          &ext_master_max));
+    snd_mixer_selem_get_playback_volume_range(ext_master_volume_ctl,
+                                              &ext_master_min,
+                                              &ext_master_max);
     if (0 != snd_mixer_selem_ask_playback_dB_vol(
                  ext_master_volume_ctl, 0, 0, &ext_master_zero_db))
       ext_master_zero_db = ext_master_max;
@@ -256,13 +227,11 @@ VolumeController::InitExternalVolumeControl(unsigned initial_vol_percent)
       snd_mixer_selem_get_name(ext_master_volume_ctl);
   assert(nullptr != master_ctl_name);
   if (ext_master_ctl_has_vol) {
-    LogFormat("Using mixer element \"%s\" to control master volume control "
-                  "on ALSA device \"%s\"",
+    LogFormat("Using mixer element %s to control master volume on ALSA device: %s",
               master_ctl_name, alsa_device_name);
   } else {
     assert(ext_master_ctl_has_switch);
-    LogFormat("No usable mixer element for volume control found on ALSA "
-                  "device \"%s\", but using on/off switch \"%s\"",
+    LogFormat("No usable mixer element for volume control found on ALSA device: %s, but using on/off switch: %s",
               alsa_device_name, master_ctl_name);
   }
 
@@ -278,27 +247,21 @@ VolumeController::InitExternalVolumeControl(unsigned initial_vol_percent)
       if (0 != snd_mixer_selem_ask_playback_dB_vol(
                    pcm_volume_ctl, 0, 0, &pcm_value)) {
         long pcm_min;
-        BOOST_VERIFY(0 == snd_mixer_selem_get_playback_volume_range(
-                              pcm_volume_ctl,
-                              &pcm_min,
-                              &pcm_value));
+        snd_mixer_selem_get_playback_volume_range(pcm_volume_ctl,
+                                                  &pcm_min,
+                                                  &pcm_value);
       }
 
-      LogFormat("Ensuring that PCM mixer element on ALSA device \"%s\" is "
-                    "set to 100%%",
+      LogFormat("Ensuring that PCM mixer element on ALSA device %s is set to 100%%",
                 alsa_device_name);
 
-      BOOST_VERIFY(0 == snd_mixer_selem_set_playback_volume_all(
-                            pcm_volume_ctl, pcm_value));
+      snd_mixer_selem_set_playback_volume_all(pcm_volume_ctl, pcm_value);
     }
 
     if (snd_mixer_selem_has_playback_switch(pcm_volume_ctl)) {
-      LogFormat("Ensuring that PCM mixer element on ALSA device \"%s\" is "
-                    "not muted",
+      LogFormat("Ensuring that PCM mixer element on ALSA device %s is not muted",
                 alsa_device_name);
-      BOOST_VERIFY(0 == snd_mixer_selem_set_playback_switch_all(
-                            pcm_volume_ctl,
-                            1));
+      snd_mixer_selem_set_playback_switch_all(pcm_volume_ctl, 1);
     }
   }
 

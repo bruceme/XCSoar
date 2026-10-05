@@ -1,32 +1,44 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include <cstdint>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_OS_COMMAND_LINE_HPP
-#define XCSOAR_OS_COMMAND_LINE_HPP
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 class Args;
 
 namespace CommandLine {
+
+  /**
+   * If Auto, @ref HasTouchScreen follows device detection.  Force/Disable
+   * come from the @c -touchscreen and @c -notouchscreen switches; if both
+   * are given, the last one wins.
+   */
+  enum class TouchInput : uint8_t { Auto, Force, Disable };
+  inline TouchInput touch_input = TouchInput::Auto;
+
+  /**
+   * Apply the command-line @ref touch_input override to a hardware
+   * detection value.
+   */
+  inline bool
+  ApplyTouchInputOverride(bool from_hardware) noexcept
+  {
+    switch (touch_input) {
+    case TouchInput::Force:
+      return true;
+    case TouchInput::Disable:
+      return false;
+    case TouchInput::Auto:
+    default:
+      return from_hardware;
+    }
+  }
+
   extern unsigned width, height;
 
 #ifdef KOBO
@@ -38,16 +50,36 @@ namespace CommandLine {
   static constexpr bool full_screen = false;
 #endif
 
-#if defined(__linux__) && !defined(ANDROID)
+#if (defined(__linux__) && !defined(ANDROID)) || \
+    (defined(__APPLE__) && !TARGET_OS_IPHONE)
 #define HAVE_CMDLINE_REPLAY
   extern const char *replay_path;
 #endif
+
+/**
+ * Multi-line option text for Args (printed by UsageError on stderr);
+ * begins with a newline.
+ */
+[[nodiscard]] const char *
+OptionSummary() noexcept;
+
+/**
+ * Print full option summary to standard output (--help), then the caller
+ * should exit successfully.
+ */
+void
+PrintHelp() noexcept;
 
 /**
  * Reads and parses arguments/options from the command line
  * @param CommandLine command line argument string
  */
   void Parse(Args &args);
-}
 
-#endif
+/**
+ * Apply a pending @c -profile= value after the data path is known
+ * (@c -datapath= and/or InitialiseDataPath()).  Basename profiles are
+ * resolved under the primary data path / @c profiles/.
+ */
+  void ApplyPendingProfile() noexcept;
+}

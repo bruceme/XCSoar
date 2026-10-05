@@ -1,8 +1,12 @@
 ######## tools
 
-CCACHE := 
+CCACHE :=
 ifeq ($(USE_CCACHE),y)
   CCACHE := ccache$(EXE)
+  # ccache will not use the optimisation of avoiding the 2nd call to the
+  # pre-processor by compiling the pre-processed output that was used for
+  # finding the hash in the case of a cache miss.
+  export CCACHE_CPP2 = yes
 endif
 
 EXE := $(findstring .exe,$(MAKE))
@@ -28,10 +32,6 @@ ifeq ($(CLANG),y)
     ASFLAGS += $(TARGET_ARCH)
   endif
 
-  ifeq ($(call bool_or,$(MIPS),$(MIPS64)),y)
-    # work around "Fatal error: invalid -march= option: `mips32'"
-    ASFLAGS += -integrated-as
-  endif
 else
   AS = $(TCPREFIX)as$(EXE)
 endif
@@ -55,16 +55,12 @@ AR = $(LLVM_PREFIX)llvm-ar$(LLVM_SUFFIX)$(EXE)
 RANLIB = true
 endif
 
-CXX_VERSION := $(shell $(CXX) -dumpversion)
+CXX_VERSION = $(shell $(CXX) -dumpversion)
+CXX_MAJOR_VERSION = $(firstword $(subst ., ,$(CXX_VERSION)))
 
 ####### paths
 
-ifeq ($(LLVM),y)
-# generate LLVM bitcode
-OBJ_SUFFIX = .bc
-else
 OBJ_SUFFIX = .o
-endif
 
 # Converts a list of source file names to *.o
 SRC_TO_OBJ = $(subst /./,/,$(patsubst %.cpp,%$(OBJ_SUFFIX),$(patsubst %.cxx,%$(OBJ_SUFFIX),$(patsubst %.c,%$(OBJ_SUFFIX),$(addprefix $(ABI_OUTPUT_DIR)/,$(1))))))
@@ -72,9 +68,9 @@ SRC_TO_OBJ = $(subst /./,/,$(patsubst %.cpp,%$(OBJ_SUFFIX),$(patsubst %.cxx,%$(O
 ####### dependency handling
 
 DEPFILE = $(@:$(OBJ_SUFFIX)=.d)
-DEPFLAGS = -Wp,-MD,$(DEPFILE),-MT,$@
-cc-flags = $(DEPFLAGS) $(ALL_CFLAGS) $(ALL_CPPFLAGS) $(TARGET_ARCH) $(FLAGS_COVERAGE)
-cxx-flags = $(DEPFLAGS) $(ALL_CXXFLAGS) $(ALL_CPPFLAGS) $(TARGET_ARCH) $(FLAGS_COVERAGE)
+DEPFLAGS = -MD -MP -MF $(DEPFILE) -MT $@
+cc-flags = $(DEPFLAGS) $(ALL_CFLAGS) $(ALL_CPPFLAGS) $(TARGET_ARCH) $(FLAGS_COVERAGE)  $(EXTRA_CPPFLAGS)  $(EXTRA_CFLAGS)
+cxx-flags = $(DEPFLAGS) $(ALL_CXXFLAGS) $(ALL_CPPFLAGS) $(TARGET_ARCH) $(FLAGS_COVERAGE)  $(EXTRA_CPPFLAGS)  $(EXTRA_CXXFLAGS)
 
 #
 # Useful debugging targets - make preprocessed versions of the source
@@ -100,21 +96,23 @@ $(ABI_OUTPUT_DIR)/%.i: %.c FORCE
 # Provide our own rules for building...
 #
 
-WRAPPED_CC = $(CCACHE) $(CC)
-WRAPPED_CXX = $(CCACHE) $(CXX)
+.SECONDEXPANSION:
 
-$(ABI_OUTPUT_DIR)/%$(OBJ_SUFFIX): %.c | $(ABI_OUTPUT_DIR)/%/../dirstamp $(compile-depends)
+WRAPPED_CC = $(strip $(CCACHE) $(CC))
+WRAPPED_CXX = $(strip $(CCACHE) $(CXX))
+
+$(ABI_OUTPUT_DIR)/%$(OBJ_SUFFIX): %.c | $$(dir $$@)dirstamp $(compile-depends)
 	@$(NQ)echo "  CC      $@"
 	$(Q)$(WRAPPED_CC) $< -c -o $@ $(cc-flags)
 
-$(ABI_OUTPUT_DIR)/%$(OBJ_SUFFIX): %.cpp | $(ABI_OUTPUT_DIR)/%/../dirstamp $(compile-depends)
+$(ABI_OUTPUT_DIR)/%$(OBJ_SUFFIX): %.cpp | $$(dir $$@)dirstamp $(compile-depends)
 	@$(NQ)echo "  CXX     $@"
 	$(Q)$(WRAPPED_CXX) $< -c -o $@ $(cxx-flags)
 ifeq ($(IWYU),y)
 	$(Q)iwyu $< $(cxx-flags)
 endif
 
-$(ABI_OUTPUT_DIR)/%$(OBJ_SUFFIX): %.cxx | $(ABI_OUTPUT_DIR)/%/../dirstamp $(compile-depends)
+$(ABI_OUTPUT_DIR)/%$(OBJ_SUFFIX): %.cxx | $$(dir $$@)dirstamp $(compile-depends)
 	@$(NQ)echo "  CXX     $@"
 	$(Q)$(WRAPPED_CXX) $< -c -o $@ $(cxx-flags)
 ifeq ($(IWYU),y)

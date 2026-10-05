@@ -1,67 +1,71 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef XCSOAR_START_STATS_HPP
-#define XCSOAR_START_STATS_HPP
+#include "time/Stamp.hpp"
 
 #include <type_traits>
 
 struct AircraftState;
+class TimeSpan;
 
 /**
  * Container for start point statistics.
  */
 struct StartStats {
-  bool task_started;
-
   /**
    * The time when the task was started [UTC seconds of day].  Only
-   * valid if #task_started is true.
+   * valid if HasStarted() is true.
    */
-  double time;
+  TimeStamp time;
 
   /**
    * The aircraft's altitude when the task was started [m MSL].  Only
-   * valid if #task_started is true.
+   * valid if HasStarted() is true.
    */
   double altitude;
 
   /**
    * The aircraft's ground speed when the task was started [m/s].
-   * Only valid if #task_started is true.
+   * Only valid if HasStarted() is true.
    */
   double ground_speed;
 
-  void Reset() {
-    task_started = false;
+  /**
+   * True when #pev_offset_seconds records start time minus PEV window
+   * start (#CommonStats::pev_start_time_span) at the crossing.
+   */
+  bool pev_offset_available;
+
+  /** Seconds from PEV window start to actual start; only if
+   * #pev_offset_available. */
+  int pev_offset_seconds;
+
+  constexpr void Reset() noexcept {
+    time = TimeStamp::Undefined();
+    pev_offset_available = false;
+    pev_offset_seconds = 0;
+  }
+
+  bool HasStarted() const noexcept {
+    return time.IsDefined();
   }
 
   /**
-   * Enable the #task_started flag and copy data from the
+   * Enable the #HasStarted() flag and copy data from the
    * #AircraftState.
+   *
+   * @param pev_span optional PEV window snapshot; if defined with a
+   * valid start, #pev_offset_seconds records start time minus that
+   * start.
    */
-  void SetStarted(const AircraftState &aircraft);
+  void SetStarted(const AircraftState &aircraft,
+                  const TimeSpan *pev_span = nullptr) noexcept;
+
+  TimeStamp GetStartedTime() const noexcept {
+    return time;
+  }
 };
 
 static_assert(std::is_trivial<StartStats>::value, "type is not trivial");
-
-#endif

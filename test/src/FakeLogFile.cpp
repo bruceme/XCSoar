@@ -1,35 +1,53 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "LogFile.hpp"
+#include "FakeLogFile.hpp"
+#include "util/Exception.hxx"
+
+#include <fmt/format.h>
 
 #include <exception>
 #include <cstdarg>
 #include <cstdio>
+#include <iterator>
+
+static bool quiet;
 
 void
-LogFormat(const char *fmt, ...)
+SetFakeLogFileQuiet(bool _quiet) noexcept
 {
+  quiet = _quiet;
+}
+
+void
+LogString(std::string_view s) noexcept
+{
+  if (quiet)
+    return;
+
+  fprintf(stderr, "%.*s\n",
+          int(s.size()), s.data());
+}
+
+void
+LogVFmt(fmt::string_view format_str, fmt::format_args args) noexcept
+{
+	fmt::memory_buffer buffer;
+#if FMT_VERSION >= 80000
+	fmt::vformat_to(std::back_inserter(buffer), format_str, args);
+#else
+	fmt::vformat_to(buffer, format_str, args);
+#endif
+	LogString({buffer.data(), buffer.size()});
+}
+
+void
+LogFormat(const char *fmt, ...) noexcept
+{
+  if (quiet)
+    return;
+
   va_list ap;
 
   va_start(ap, fmt);
@@ -39,30 +57,14 @@ LogFormat(const char *fmt, ...)
   fputc('\n', stderr);
 }
 
-#ifdef _UNICODE
-
 void
-LogFormat(const TCHAR *fmt, ...)
+LogError(std::exception_ptr e) noexcept
 {
-  va_list ap;
-
-  va_start(ap, fmt);
-  _vftprintf(stderr, fmt, ap);
-  va_end(ap);
-
-  fputc('\n', stderr);
-}
-
-#endif
-
-void
-LogError(const std::exception &exception)
-{
-  LogFormat("%s", exception.what());
+  LogFormat("%s", GetFullMessage(e).c_str());
 }
 
 void
-LogError(const char *msg, const std::exception &exception)
+LogError(std::exception_ptr e, const char *msg) noexcept
 {
-  LogFormat("%s: %s", msg, exception.what());
+  LogFormat("%s: %s", msg, GetFullMessage(e).c_str());
 }

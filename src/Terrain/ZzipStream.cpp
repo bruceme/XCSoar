@@ -1,32 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ZzipStream.hpp"
+#include "lib/fmt/RuntimeError.hxx"
 
 #include <zzip/util.h>
 
 static int
-jas_zzip_read(jas_stream_obj_t *obj, char *buf, int cnt)
+jas_zzip_read(jas_stream_obj_t *obj, char *buf, unsigned cnt)
 {
   const auto f = (struct zzip_file *)obj;
 
@@ -34,7 +15,7 @@ jas_zzip_read(jas_stream_obj_t *obj, char *buf, int cnt)
 }
 
 static int
-jas_zzip_write(jas_stream_obj_t *obj, char *buf, int cnt)
+jas_zzip_write([[maybe_unused]] jas_stream_obj_t *obj, [[maybe_unused]] const char *buf, [[maybe_unused]] unsigned cnt)
 {
   return -1;
 }
@@ -52,7 +33,7 @@ jas_zzip_close(jas_stream_obj_t *obj)
 {
   const auto f = (struct zzip_file *)obj;
 
-  return zzip_file_close(f);
+  return zzip_close(f);
 }
 
 static constexpr jas_stream_ops_t zzip_stream_ops = {
@@ -67,12 +48,12 @@ OpenJasperZzipStream(struct zzip_dir *dir, const char *path)
 {
   const auto f = zzip_open_rb(dir, path);
   if (f == nullptr)
-    return nullptr;
+    throw FmtRuntimeError("Failed to open '{}' from map file", path);
 
   jas_stream_t *stream = jas_stream_create();
   if (stream == nullptr) {
-    zzip_file_close(f);
-    return nullptr;
+    zzip_close(f);
+    throw std::runtime_error("jas_stream_create() failed");
   }
 
   stream->openmode_ = JAS_STREAM_READ|JAS_STREAM_BINARY;

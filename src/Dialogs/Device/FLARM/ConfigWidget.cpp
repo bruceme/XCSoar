@@ -1,203 +1,190 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ConfigWidget.hpp"
+#include "RangeConfigWidget.hpp"
+#include "Dialogs/Error.hpp"
 #include "Device/Driver/FLARM/Device.hpp"
 #include "FLARM/Traffic.hpp"
 #include "Form/DataField/Enum.hpp"
 #include "Language/Language.hpp"
+#include "Operation/Cancelled.hpp"
 #include "Operation/PopupOperationEnvironment.hpp"
-#include "OS/Sleep.h"
+#include "FLARM/Hardware.hpp"
+#include "UIGlobals.hpp"
+#include "Dialogs/WidgetDialog.hpp"
+#include "lib/fmt/ToBuffer.hxx"
+
+#include <fmt/format.h>
+
+FlarmHardware hardware;
 
 static const char *const flarm_setting_names[] = {
   "BAUD",
-  "PRIV",
   "THRE",
-  "RANGE",
   "ACFT",
   "LOGINT",
+  "PRIV",
   "NOTRACK",
   NULL
 };
 
-gcc_pure
-static bool
-SettingExists(FlarmDevice &device, const char *name)
-{
-  return device.GetSetting(name).first;
-}
-
-/**
- * Wait for a setting to be received from the FLARM.
- */
-static bool
-WaitForSetting(FlarmDevice &device, const char *name, unsigned timeout_ms)
-{
-  for (unsigned i = 0; i < timeout_ms / 100; ++i) {
-    if (SettingExists(device, name))
-      return true;
-    Sleep(100);
-  }
-
-  return false;
-}
-
-static bool
-RequestAllSettings(FlarmDevice &device)
-{
-  PopupOperationEnvironment env;
-
-  for (auto i = flarm_setting_names; *i != NULL; ++i)
-    if (!device.RequestSetting(*i, env))
-      return false;
-
-  for (auto i = flarm_setting_names; *i != NULL; ++i)
-    WaitForSetting(device, *i, 500);
-
-  return true;
-}
-
-static unsigned
-GetUnsignedValue(const FlarmDevice &device, const char *name,
-                 unsigned default_value)
-{
-  auto x = device.GetSetting(name);
-  if (x.first) {
-    char *endptr;
-    unsigned long y = strtoul(x.second.c_str(), &endptr, 10);
-    if (endptr > x.second.c_str() && *endptr == 0)
-      return (unsigned)y;
-  }
-
-  return default_value;
-}
+static const char *const pf_setting_names[] = {
+  "BAUD1",
+  "BAUD2",
+  NULL
+};
 
 void
-FLARMConfigWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+FLARMConfigWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                           [[maybe_unused]] const PixelRect &rc) noexcept
 {
-  RequestAllSettings(device);
+  PopupOperationEnvironment env; 
+  device.RequestAllSettings(flarm_setting_names, env);
+  if (hardware.isPowerFlarm()) {
+    device.RequestAllSettings(pf_setting_names, env);
+    baud1 = device.GetUnsignedValue("BAUD1", 2);
+    baud2 = device.GetUnsignedValue("BAUD2", 2);
+  } else {
+    baud = device.GetUnsignedValue("BAUD", 2);
+  }
 
-  baud = GetUnsignedValue(device, "BAUD", 2);
-  priv = GetUnsignedValue(device, "PRIV", 0);
-  thre = GetUnsignedValue(device, "THRE", 2);
-  range = GetUnsignedValue(device, "RANGE", 3000);
-  acft = GetUnsignedValue(device, "ACFT", 0);
-  log_int = GetUnsignedValue(device, "LOGINT", 2);
-  notrack = GetUnsignedValue(device, "NOTRACK", 0);
+  unsigned thre_default = hardware.isPowerFlarm() ? 255 : 1;
+  thre = device.GetUnsignedValue("THRE", thre_default);
+  acft = device.GetUnsignedValue("ACFT", 0);
+  log_int = device.GetUnsignedValue("LOGINT", 2);
+  priv = device.GetUnsignedValue("PRIV", 0) == 1;
+  notrack = device.GetUnsignedValue("NOTRACK", 0) == 1;
 
   static constexpr StaticEnumChoice baud_list[] = {
-    { 0, _T("4800"), NULL },
-    { 1, _T("9600"), NULL },
-    { 2, _T("19200"), NULL },
-    { 4, _T("38400"), NULL },
-    { 5, _T("57600"), NULL },
-    { 0 }
+    { 0, "4800" },
+    { 1, "9600" },
+    { 2, "19200" },
+    { 4, "38400" },
+    { 5, "57600" },
+    nullptr
   };
 
-  AddEnum(_("Baud rate"), NULL, baud_list, baud);
-  AddBoolean(_("Stealth mode"), NULL, priv == 1);
-  AddInteger(_("Threshold"), NULL, _T("%d m/s"), _T("%d"), 1, 10, 1, thre);
-  AddInteger(_("Range"), NULL, _T("%d m"), _T("%d"), 2000, 25500, 250, range);
+  static constexpr StaticEnumChoice baud_list_pf[] = {
+    { 0, "4800" },
+    { 1, "9600" },
+    { 2, "19200" },
+    { 4, "38400" },
+    { 5, "57600" },
+    { 6, "115200" },
+    { 7, "230400" },
+    nullptr
+  };
+
+
+  if (hardware.isPowerFlarm()) {
+    AddEnum(_("Baud rate port 1"), NULL, baud_list_pf, baud1);
+    AddEnum(_("Baud rate port 2"), NULL, baud_list_pf, baud2);
+  } else {
+    AddEnum(_("Baud rate"), NULL, baud_list, baud);
+    AddDummy();
+  }
+
+  WndProperty *wp_threshold = AddEnum(_("Threshold"),
+                                      _("Select a speed threshold."));
+  if (wp_threshold != nullptr) {
+    DataFieldEnum &df = *(DataFieldEnum *)wp_threshold->GetDataField();
+    if (hardware.isPowerFlarm()) {
+      df.AddChoice(255, "Automatic");
+    }
+    char buffer[64];
+    for (unsigned i = 0; i <= 20; ++i) {
+      StringFormatUnsafe(buffer, "%u m/s", i);
+      df.AddChoice(i, buffer);
+    }
+    df.SetValue(thre);
+    wp_threshold->RefreshDisplay();
+  }
 
   static constexpr StaticEnumChoice acft_list[] = {
-    { (unsigned)FlarmTraffic::AircraftType::UNKNOWN, N_("Unkown") },
-    { (unsigned)FlarmTraffic::AircraftType::GLIDER, N_("Glider") },
-    { (unsigned)FlarmTraffic::AircraftType::TOW_PLANE, N_("Tow plane") },
-    { (unsigned)FlarmTraffic::AircraftType::HELICOPTER, N_("Helicopter") },
-    { (unsigned)FlarmTraffic::AircraftType::PARACHUTE, N_("Parachute") },
-    { (unsigned)FlarmTraffic::AircraftType::DROP_PLANE, N_("Drop plane") },
-    { (unsigned)FlarmTraffic::AircraftType::HANG_GLIDER, N_("Hang glider") },
-    { (unsigned)FlarmTraffic::AircraftType::PARA_GLIDER, N_("Paraglider") },
-    { (unsigned)FlarmTraffic::AircraftType::POWERED_AIRCRAFT,
-      N_("Powered aircraft") },
-    { (unsigned)FlarmTraffic::AircraftType::JET_AIRCRAFT, N_("Jet aircraft") },
-    { (unsigned)FlarmTraffic::AircraftType::FLYING_SAUCER,
-      N_("Flying saucer") },
-    { (unsigned)FlarmTraffic::AircraftType::BALLOON, N_("Balloon") },
-    { (unsigned)FlarmTraffic::AircraftType::AIRSHIP, N_("Airship") },
-    { (unsigned)FlarmTraffic::AircraftType::UAV,
-      N_("Unmanned aerial vehicle") },
-    { (unsigned)FlarmTraffic::AircraftType::STATIC_OBJECT,
-      N_("Static object") },
-    { 0 }
+    { FlarmTraffic::AircraftType::UNKNOWN, N_("Unknown") },
+    { FlarmTraffic::AircraftType::GLIDER, N_("Glider") },
+    { FlarmTraffic::AircraftType::TOW_PLANE, N_("Tow plane") },
+    { FlarmTraffic::AircraftType::HELICOPTER, N_("Helicopter") },
+    { FlarmTraffic::AircraftType::PARACHUTE, N_("Parachute") },
+    { FlarmTraffic::AircraftType::DROP_PLANE, N_("Drop plane") },
+    { FlarmTraffic::AircraftType::HANG_GLIDER, N_("Hang glider") },
+    { FlarmTraffic::AircraftType::PARA_GLIDER, N_("Paraglider") },
+    { FlarmTraffic::AircraftType::POWERED_AIRCRAFT, N_("Powered aircraft") },
+    { FlarmTraffic::AircraftType::JET_AIRCRAFT, N_("Jet aircraft") },
+    { FlarmTraffic::AircraftType::FLYING_SAUCER, N_("Flying saucer") },
+    { FlarmTraffic::AircraftType::BALLOON, N_("Balloon") },
+    { FlarmTraffic::AircraftType::AIRSHIP, N_("Airship") },
+    { FlarmTraffic::AircraftType::UAV, N_("Unmanned aerial vehicle") },
+    { FlarmTraffic::AircraftType::STATIC_OBJECT, N_("Static object") },
+    nullptr
   };
 
   AddEnum(_("Type"), NULL, acft_list, acft);
-  AddInteger(_("Logger interval"), NULL, _T("%d s"), _T("%d"),
+  AddInteger(_("Logger interval"), NULL, "%d s", "%d",
              1, 8, 1, log_int);
-  AddBoolean(_("No tracking mode"), NULL, notrack == 1);
+  AddBoolean(_("Stealth mode"), NULL, priv);
+  AddBoolean(_("No tracking mode"), NULL, notrack);
 
+  AddButton(_("Range setup"), [this](){
+    FLARMRangeConfigWidget widget(GetLook(), device, hardware);
+    DefaultWidgetDialog(UIGlobals::GetMainWindow(), GetLook(),
+                        "FLARM range setup", widget);
+  });
 }
 
 bool
-FLARMConfigWidget::Save(bool &_changed)
-{
+FLARMConfigWidget::Save(bool &_changed) noexcept
+try {
   PopupOperationEnvironment env;
   bool changed = false;
-  NarrowString<32> buffer;
 
-  if (SaveValue(Baud, baud)) {
-    buffer.UnsafeFormat("%u", baud);
-    device.SendSetting("BAUD", buffer, env);
+  if (hardware.isPowerFlarm()) {
+    if (SaveValueEnum(Baud1, baud1)) {
+      device.SendSetting("BAUD1", fmt::format_int{baud1}.c_str(), env);
+      changed = true;
+    }
+    if (SaveValueEnum(Baud2, baud2)) {
+      device.SendSetting("BAUD2", fmt::format_int{baud2}.c_str(), env);
+      changed = true;
+    }
+  } else {
+    if (SaveValueEnum(Baud1, baud)) {
+      device.SendSetting("BAUD", fmt::format_int{baud}.c_str(), env);
+      changed = true;
+    }
+  }
+
+  if (SaveValueEnum(Thre, thre)) {
+    device.SendSetting("THRE", fmt::format_int{thre}.c_str(), env);
+    changed = true;
+  }
+
+  if (SaveValueEnum(Acft, acft)) {
+    device.SendSetting("ACFT",  fmt::format_int{acft}.c_str(), env);
+    changed = true;
+  }
+
+  if (SaveValueInteger(LogInt, log_int)) {
+    device.SendSetting("LOGINT", fmt::format_int{log_int}.c_str(), env);
     changed = true;
   }
 
   if (SaveValue(Priv, priv)) {
-    buffer.UnsafeFormat("%u", priv);
-    device.SendSetting("PRIV", buffer, env);
-    changed = true;
-  }
-
-  if (SaveValue(Thre, thre)) {
-    buffer.UnsafeFormat("%u", thre);
-    device.SendSetting("THRE", buffer, env);
-    changed = true;
-  }
-
-  if (SaveValue(Range, range)) {
-    buffer.UnsafeFormat("%u", range);
-    device.SendSetting("RANGE", buffer, env);
-    changed = true;
-  }
-
-  if (SaveValue(Acft, acft)) {
-    buffer.UnsafeFormat("%u", acft);
-    device.SendSetting("ACFT", buffer, env);
-    changed = true;
-  }
-
-  if (SaveValue(LogInt, log_int)) {
-    buffer.UnsafeFormat("%u", log_int);
-    device.SendSetting("LOGINT", buffer, env);
+    device.SendSetting("PRIV", fmt::format_int{priv}.c_str(), env);
     changed = true;
   }
 
   if (SaveValue(NoTrack, notrack)) {
-    buffer.UnsafeFormat("%u", notrack);
-    device.SendSetting("NOTRACK", buffer, env);
+    device.SendSetting("NOTRACK", fmt::format_int{notrack}.c_str(), env);
     changed = true;
   }
 
   _changed |= changed;
   return true;
+} catch (OperationCancelled) {
+  return false;
+} catch (...) {
+  ShowError(std::current_exception(), "FLARM");
+  return false;
 }

@@ -1,32 +1,17 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#include "lua/Basic.hpp"
+#include "lua/Log.hpp"
+#include "lua/Geo.hpp"
+#include "lua/RunFile.hxx"
+#include "lua/Ptr.hpp"
+#include "system/Args.hpp"
+#include "util/PrintException.hxx"
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Lua/Basic.hpp"
-#include "Lua/Log.hpp"
-#include "Lua/RunFile.hxx"
-#include "Lua/Ptr.hpp"
-#include "OS/Args.hpp"
-#include "Util/PrintException.hxx"
+#ifdef HAVE_HTTP
+#include "lua/Http.hpp"
+#endif
 
 extern "C" {
 #include <lua.h>
@@ -49,13 +34,17 @@ try {
 
   Lua::StatePtr state(Lua::NewBasicState());
   Lua::InitLog(state.get());
+#ifdef HAVE_HTTP
+  Lua::InitHttp(state.get());
+#endif
+  Lua::InitGeo(state.get());
 
   lua_register(state.get(), "alert", l_alert);
 
   Lua::RunFile(state.get(), path);
 
   return EXIT_SUCCESS;
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

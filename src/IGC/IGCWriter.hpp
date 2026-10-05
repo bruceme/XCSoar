@@ -1,35 +1,15 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_IGC_WRITER_HPP
-#define XCSOAR_IGC_WRITER_HPP
+#pragma once
 
 #include "Logger/GRecord.hpp"
 #include "IGCFix.hpp"
-#include "IO/FileOutputStream.hxx"
-#include "IO/BufferedOutputStream.hxx"
+#include "io/FileOutputStream.hxx"
+#include "io/BufferedOutputStream.hxx"
 
-#include <tchar.h>
+#include <array>
+#include <string_view>
 
 class Path;
 struct GPSState;
@@ -38,10 +18,6 @@ struct NMEAInfo;
 struct GeoPoint;
 
 class IGCWriter {
-  enum {
-    MAX_IGC_BUFF = 255,
-  };
-
   FileOutputStream file;
   BufferedOutputStream buffered;
 
@@ -49,11 +25,11 @@ class IGCWriter {
 
   IGCFix fix;
 
-  char buffer[MAX_IGC_BUFF];
+  std::array<char, 255> buffer;
 
 public:
   /**
-   * Create a new IGC file.  The caller must check IsOpen().
+   * Throws on error.
    */
   explicit IGCWriter(Path path);
 
@@ -65,24 +41,12 @@ public:
 
 private:
   /**
-   * Begin writing a new line.  The returned buffer has #MAX_IGC_BUFF
-   * bytes.  Call CommitLine() when you are done writing to the buffer.
-   *
-   * @return nullptr on error
-   */
-  char *BeginLine() {
-    return buffer;
-  }
-
-  /**
    * Finish writing the line.
-   *
-   * @param line the buffer obtained with BeginLine()
    */
-  void CommitLine(char *line);
+  void CommitLine(std::string_view line);
 
   void WriteLine(const char *line);
-  void WriteLine(const char *a, const TCHAR *b);
+  void WriteLine(const char *a, const char *b);
 
   static const char *GetHFFXARecord();
   static const char *GetIRecord();
@@ -96,18 +60,20 @@ public:
    * alphanumeric characters (plain ASCII)
    */
   void WriteHeader(const BrokenDateTime &date_time,
-                   const TCHAR *pilot_name, const TCHAR *aircraft_model,
-                   const TCHAR *aircraft_registration,
-                   const TCHAR *competition_id,
-                   const char *logger_id, const TCHAR *driver_name,
+                   const char *pilot_name,
+                   const char *copilot_name,
+                   const char *aircraft_model,
+                   const char *aircraft_registration,
+                   const char *competition_id,
+                   const char *logger_id, const char *driver_name,
                    bool simulator);
 
-  void AddDeclaration(const GeoPoint &location, const TCHAR *ID);
+  void AddDeclaration(const GeoPoint &location, const char *ID);
   void StartDeclaration(const BrokenDateTime &date_time,
                         const int number_of_turnpoints);
   void EndDeclaration();
 
-  void LoggerNote(const TCHAR *text);
+  void LoggerNote(const char *text);
 
   void LogPoint(const IGCFix &fix, int epe, int satellites);
   void LogPoint(const NMEAInfo &gps_info);
@@ -120,5 +86,3 @@ public:
 protected:
   void LogEvent(const BrokenTime &time, const char *event = "");
 };
-
-#endif

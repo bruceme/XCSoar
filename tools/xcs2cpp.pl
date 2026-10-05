@@ -9,7 +9,7 @@ my $line = 0;
 sub c_string($) {
     my $value = shift;
     return 'NULL' unless defined $value;
-    return qq|_T("$value")|;
+    return qq|"$value"|;
 }
 
 sub c_bool($) {
@@ -35,7 +35,7 @@ while (<>) {
             print_element(c_string($rec{key}));
             print_element(c_string($rec{sound}));
             print_element(c_bool(not $rec{hide} or $rec{hide} ne "yes"));
-            print_element($rec{delay}) if exists $rec{delay};
+            print_element("std::chrono::milliseconds($rec{delay})") if exists $rec{delay};
             print "  },\n",
         }
         %rec = ();

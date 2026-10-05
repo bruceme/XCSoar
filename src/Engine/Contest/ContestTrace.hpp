@@ -1,31 +1,12 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CONTEST_TRACE_HPP
-#define XCSOAR_CONTEST_TRACE_HPP
-
-#include "Util/TrivialArray.hxx"
-#include "Util/TypeTraits.hpp"
+#include "util/TrivialArray.hxx"
 #include "Geo/GeoPoint.hpp"
+
+#include <type_traits>
 
 class TracePoint;
 
@@ -34,50 +15,50 @@ class TracePoint;
  * necessary for the contest trace.
  */
 struct ContestTracePoint {
-  unsigned time;
+  using Duration = std::chrono::duration<unsigned>;
+  Duration time;
 
   GeoPoint location;
 
   ContestTracePoint() = default;
-  ContestTracePoint(const TracePoint &src);
+  ContestTracePoint(const TracePoint &src) noexcept;
 
-  void Clear() {
-    time = (unsigned)(0 - 1);
+  void Clear() noexcept {
+    time = Duration::max();
   }
 
-  bool IsDefined() const {
-    return time != (unsigned)(0 - 1);
+  constexpr bool IsDefined() const noexcept {
+    return time != Duration::max();
   }
 
-  unsigned GetTime() const {
+  constexpr Duration GetTime() const noexcept {
     return time;
   }
 
-  bool IsOlderThan(const ContestTracePoint &other) const {
+  constexpr bool IsOlderThan(const ContestTracePoint &other) const noexcept {
     return time < other.time;
   }
 
-  bool IsNewerThan(const ContestTracePoint &other) const {
+  constexpr bool IsNewerThan(const ContestTracePoint &other) const noexcept {
     return time > other.time;
   }
 
-  unsigned DeltaTime(const ContestTracePoint &previous) const {
+  constexpr Duration DeltaTime(const ContestTracePoint &previous) const noexcept {
     assert(!IsOlderThan(previous));
 
     return time - previous.time;
   }
 
-  const GeoPoint &GetLocation() const {
+  constexpr const GeoPoint &GetLocation() const noexcept {
     return location;
   }
 
-  double DistanceTo(const GeoPoint &other) const {
+  [[gnu::pure]]
+  double DistanceTo(const GeoPoint &other) const noexcept {
     return location.Distance(other);
   }
 };
 
 class ContestTraceVector : public TrivialArray<ContestTracePoint, 10> {};
 
-static_assert(is_trivial_ndebug<ContestTraceVector>::value, "type is not trivial");
-
-#endif
+static_assert(std::is_trivial_v<ContestTraceVector>, "type is not trivial");

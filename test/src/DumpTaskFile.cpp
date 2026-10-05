@@ -1,29 +1,57 @@
-#include "OS/Args.hpp"
-#include "Task/TaskFile.hpp"
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-#include <memory>
+#include "system/Args.hpp"
+#include "XML/Node.hpp"
+#include "XML/DataNodeXML.hpp"
+#include "Task/Ordered/OrderedTask.hpp"
+#include "Task/Serialiser.hpp"
+#include "Task/TaskFile.hpp"
+#include "io/BufferedOutputStream.hxx"
+#include "io/StdioOutputStream.hxx"
+#include "util/PrintException.hxx"
 
 int
 main(int argc, char **argv)
-{
-  Args args(argc, argv, "FILE.tsk|cup|igc");
+try {
+  Args args(argc, argv, "FILE.tsk|cup|igc [IDX]");
   const auto path = args.ExpectNextPath();
+  int idx = -1;
+  if (!args.IsEmpty())
+    idx = args.ExpectNextInt();
   args.ExpectEnd();
 
-  std::unique_ptr<TaskFile> file(TaskFile::Create(path));
+  const auto file = TaskFile::Create(path);
   if (!file) {
     fprintf(stderr, "TaskFile::Create() failed\n");
     return EXIT_FAILURE;
   }
 
-  unsigned count = file->Count();
-  printf("Number of tasks: %u\n---\n", count);
+  if (idx >= 0) {
+    TaskBehaviour task_behaviour;
+    task_behaviour.SetDefaults();
 
-  for (unsigned i = 0; i < count; ++i) {
-    const TCHAR *saved_name = file->GetName(i);
-    _tprintf(_T("%u: %s\n"), i, saved_name != NULL ? saved_name : _T(""));
+    const auto task = file->GetTask(task_behaviour, nullptr, idx);
+    if (task == nullptr)
+      throw "No such task";
+
+    auto xml_node = XMLNode::CreateRoot("Task");
+    WritableDataNodeXML data_node{xml_node};
+
+    SaveTask(data_node, *task);
+
+    StdioOutputStream _stdout{stdout};
+    WithBufferedOutputStream(_stdout, [&xml_node](auto &bos){
+      xml_node.Serialise(bos, true);
+    });
+  } else {
+    for (const auto &i : file->GetList())
+      printf("task: %s\n", i.c_str());
   }
 
   return EXIT_SUCCESS;
+} catch (...) {
+  PrintException(std::current_exception());
+  return EXIT_FAILURE;
 }
 

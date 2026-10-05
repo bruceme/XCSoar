@@ -1,27 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "OS/Args.hpp"
+#include "system/Args.hpp"
 #include "DebugReplay.hpp"
 #include "Task/TaskFile.hpp"
 #include "Engine/Navigation/Aircraft.hpp"
@@ -100,20 +80,20 @@ Run(DebugReplay &replay, OrderedTask &task, const GlidePolar &glide_polar)
   const TaskStats &task_stats = task.GetStats();
 
   printf("task_started=%d task_finished=%d\n",
-         task_stats.start.task_started,
+         task_stats.start.HasStarted(),
          task_stats.task_finished);
 
-  printf("task elapsed %ds\n", (int)task_stats.total.time_elapsed);
+  printf("task elapsed %ds\n", (int)task_stats.total.time_elapsed.count());
   printf("task speed %1.2f kph\n",
          double(task_stats.total.travelled.GetSpeed() * 3.6));
   printf("travelled distance %1.3f km\n",
          double(task_stats.total.travelled.GetDistance() / 1000));
   printf("scored distance %1.3f km\n",
          double(task_stats.distance_scored / 1000));
-  if (task_stats.total.time_elapsed > 0)
+  if (task_stats.total.time_elapsed.count() > 0)
     printf("scored speed %1.2f kph\n",
            double(task_stats.distance_scored
-                  / task_stats.total.time_elapsed * 3.6));
+                  / task_stats.total.time_elapsed.count() * 3.6));
 }
 
 int main(int argc, char **argv)
@@ -129,8 +109,7 @@ int main(int argc, char **argv)
   TaskBehaviour task_behaviour;
   task_behaviour.SetDefaults();
 
-  OrderedTask *task = TaskFile::GetTask(task_path, task_behaviour,
-                                        NULL, 0);
+  auto task = TaskFile::GetTask(task_path, task_behaviour, nullptr, 0);
   if (task == NULL) {
     fprintf(stderr, "Failed to load task\n");
     return EXIT_FAILURE;
@@ -141,7 +120,6 @@ int main(int argc, char **argv)
   const GlidePolar glide_polar(1);
 
   Run(*replay, *task, glide_polar);
-  delete task;
   delete replay;
 
   return EXIT_SUCCESS;

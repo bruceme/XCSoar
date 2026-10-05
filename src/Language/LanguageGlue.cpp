@@ -1,48 +1,37 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "LanguageGlue.hpp"
-#include "Language/Language.hpp"
+#include "Language.hpp"
+#include "Table.hpp"
 #include "LocalPath.hpp"
-#include "OS/Path.hpp"
+#include "lib/fmt/PathFormatter.hpp"
+#include "system/Path.hpp"
 #include "LogFile.hpp"
 #include "Profile/Profile.hpp"
-#include "Util/StringCompare.hxx"
-#include "Util/StringAPI.hxx"
+#include "util/StringCompare.hxx"
+#include "util/StringUtil.hpp"
+#include "util/AllocatedString.hxx"
 
-#ifdef HAVE_NATIVE_GETTEXT
+#ifdef USE_LIBINTL
+
+#include <cstdlib>
+#include <fmt/format.h>
 #include <locale.h>
+#include <string_view>
 #endif
 
 #ifdef ANDROID
-#include "Java/Global.hxx"
-#include "Java/Class.hxx"
-#include "Java/Object.hxx"
+#include "java/Global.hxx"
+#include "java/Class.hxx"
+#include "java/Object.hxx"
+#include "java/String.hxx"
 #endif
 
-#ifdef WIN32
-#include <windows.h>
+#include <cassert>
+
+#ifdef _WIN32
+#include <winnls.h>
 #endif
 
 #ifdef __APPLE__
@@ -51,7 +40,9 @@ Copyright_License {
 
 #include <windef.h> /* for MAX_PATH */
 
-#ifndef HAVE_NATIVE_GETTEXT
+#ifdef HAVE_NLS
+
+#ifndef USE_LIBINTL
 
 #include "MOLoader.hpp"
 
@@ -59,171 +50,31 @@ static MOLoader *mo_loader;
 
 #endif
 
-#ifdef HAVE_BUILTIN_LANGUAGES
+#ifdef _WIN32
 
-#ifndef WIN32
-/**
- * Several fake WIN32 constants.  These are not used on Android, but
- * we need them or we have to have a separate version of
- * #language_table on Android.
- */
-enum {
-  LANG_NULL,
-  LANG_CHINESE,
-  LANG_CZECH,
-  LANG_DANISH,
-  LANG_GERMAN,
-  LANG_GREEK,
-  LANG_SPANISH,
-  LANG_FINNISH,
-  LANG_FRENCH,
-  LANG_HEBREW,
-  LANG_CROATIAN,
-  LANG_HUNGARIAN,
-  LANG_ITALIAN,
-  LANG_JAPANESE,
-  LANG_KOREAN,
-  LANG_LITHUANIAN,
-  LANG_NORWEGIAN,
-  LANG_DUTCH,
-  LANG_POLISH,
-  LANG_PORTUGUESE,
-  LANG_ROMANIAN,
-  LANG_RUSSIAN,
-  LANG_SLOVAK,
-  LANG_SLOVENIAN,
-  LANG_SERBIAN,
-  LANG_SWEDISH,
-  LANG_TURKISH,
-  LANG_UKRAINIAN,
-  LANG_VIETNAMESE,
-};
-#endif
-
-extern "C"
-{
-  extern const uint8_t cs_mo[];
-  extern const size_t cs_mo_size;
-  extern const uint8_t da_mo[];
-  extern const size_t da_mo_size;
-  extern const uint8_t de_mo[];
-  extern const size_t de_mo_size;
-  extern const uint8_t el_mo[];
-  extern const size_t el_mo_size;
-  extern const uint8_t es_mo[];
-  extern const size_t es_mo_size;
-  extern const uint8_t fi_mo[];
-  extern const size_t fi_mo_size;
-  extern const uint8_t fr_mo[];
-  extern const size_t fr_mo_size;
-  extern const uint8_t he_mo[];
-  extern const size_t he_mo_size;
-  extern const uint8_t hr_mo[];
-  extern const size_t hr_mo_size;
-  extern const uint8_t hu_mo[];
-  extern const size_t hu_mo_size;
-  extern const uint8_t it_mo[];
-  extern const size_t it_mo_size;
-  extern const uint8_t ja_mo[];
-  extern const size_t ja_mo_size;
-  extern const uint8_t ko_mo[];
-  extern const size_t ko_mo_size;
-  extern const uint8_t lt_mo[];
-  extern const size_t lt_mo_size;
-  extern const uint8_t nb_mo[];
-  extern const size_t nb_mo_size;
-  extern const uint8_t nl_mo[];
-  extern const size_t nl_mo_size;
-  extern const uint8_t pl_mo[];
-  extern const size_t pl_mo_size;
-  extern const uint8_t pt_BR_mo[];
-  extern const size_t pt_BR_mo_size;
-  extern const uint8_t pt_mo[];
-  extern const size_t pt_mo_size;
-  extern const uint8_t ro_mo[];
-  extern const size_t ro_mo_size;
-  extern const uint8_t ru_mo[];
-  extern const size_t ru_mo_size;
-  extern const uint8_t sk_mo[];
-  extern const size_t sk_mo_size;
-  extern const uint8_t sl_mo[];
-  extern const size_t sl_mo_size;
-  extern const uint8_t sr_mo[];
-  extern const size_t sr_mo_size;
-  extern const uint8_t sv_mo[];
-  extern const size_t sv_mo_size;
-  extern const uint8_t tr_mo[];
-  extern const size_t tr_mo_size;
-  extern const uint8_t uk_mo[];
-  extern const size_t uk_mo_size;
-  extern const uint8_t vi_mo[];
-  extern const size_t vi_mo_size;
-  extern const uint8_t zh_CN_mo[];
-  extern const size_t zh_CN_mo_size;
-}
-
-const BuiltinLanguage language_table[] = {
-  { LANG_CHINESE, zh_CN_mo, zh_CN_mo_size, _T("zh_CN.mo"), _T("Simplified Chinese") },
-  { LANG_CZECH, cs_mo, cs_mo_size, _T("cs.mo"), _T("Czech") },
-  { LANG_DANISH, da_mo, da_mo_size, _T("da.mo"), _T("Danish") },
-  { LANG_GERMAN, de_mo, de_mo_size, _T("de.mo"), _T("German") },
-  { LANG_GREEK, el_mo, el_mo_size, _T("el.mo"), _T("Greek") },
-  { LANG_SPANISH, es_mo, es_mo_size, _T("es.mo"), _T("Spanish") },
-  { LANG_FINNISH, fi_mo, fi_mo_size, _T("fi.mo"), _T("Finnish") },
-  { LANG_FRENCH, fr_mo, fr_mo_size, _T("fr.mo"), _T("French") },
-  { LANG_HEBREW, he_mo, he_mo_size, _T("he.mo"), _T("Hebrew") },
-  { LANG_CROATIAN, hr_mo, hr_mo_size, _T("hr.mo"), _T("Croatian") },
-  { LANG_HUNGARIAN, hu_mo, hu_mo_size, _T("hu.mo"), _T("Hungarian") },
-  { LANG_ITALIAN, it_mo, it_mo_size, _T("it.mo"), _T("Italian") },
-  { LANG_JAPANESE, ja_mo, ja_mo_size, _T("ja.mo"), _T("Japanese") },
-  { LANG_KOREAN, ko_mo, ko_mo_size, _T("ko.mo"), _T("Korean") },
-  { LANG_LITHUANIAN, lt_mo, lt_mo_size, _T("lt.mo"), _T("Lithuanian") },
-  { LANG_NORWEGIAN, nb_mo, nb_mo_size, _T("nb.mo"), _T("Norwegian") },
-  { LANG_DUTCH, nl_mo, nl_mo_size, _T("nl.mo"), _T("Dutch") },
-  { LANG_POLISH, pl_mo, pl_mo_size, _T("pl.mo"), _T("Polish") },
-  { LANG_PORTUGUESE, pt_BR_mo, pt_BR_mo_size, _T("pt_BR.mo"), _T("Brazilian Portuguese") },
-
-  /* our Portuguese translation is less advanced than Brazilian
-     Portuguese */
-  { LANG_PORTUGUESE, pt_mo, pt_mo_size, _T("pt.mo"), _T("Portuguese") },
-
-  { LANG_ROMANIAN, ro_mo, ro_mo_size, _T("ro.mo"), _T("Romanian") },
-  { LANG_RUSSIAN, ru_mo, ru_mo_size, _T("ru.mo"), _T("Russian") },
-  { LANG_SLOVAK, sk_mo, sk_mo_size, _T("sk.mo"), _T("Slovak") },
-  { LANG_SLOVENIAN, sl_mo, sl_mo_size, _T("sl.mo"), _T("Slovenian") },
-  { LANG_SERBIAN, sr_mo, sr_mo_size, _T("sr.mo"), _T("Serbian") },
-  { LANG_SWEDISH, sv_mo, sv_mo_size, _T("sv.mo"), _T("Swedish") },
-  { LANG_TURKISH, tr_mo, tr_mo_size, _T("tr.mo"), _T("Turkish") },
-  { LANG_UKRAINIAN, uk_mo, uk_mo_size, _T("uk.mo"), _T("Ukranian") },
-  { LANG_VIETNAMESE, vi_mo, vi_mo_size, _T("vi.mo"), _T("Vietnamese") },
-  { 0, nullptr, 0, nullptr, nullptr }
-};
-
-#ifdef WIN32
-
-gcc_pure
+[[gnu::pure]]
 static const BuiltinLanguage *
-FindLanguage(WORD language)
+FindLanguage(WORD language) noexcept
 {
   // Search for supported languages matching the language code
-  for (unsigned i = 0; language_table[i].resource != NULL; ++i)
+  for (unsigned i = 0; language_table[i].resource != nullptr; ++i)
     if (language_table[i].language == language)
       // .. and return the MO file name if found
       return &language_table[i];
 
-  return NULL;
+  return nullptr;
 }
 
 #endif
 
-gcc_pure
+[[gnu::pure]]
 static const BuiltinLanguage *
-FindLanguage(const TCHAR *resource)
+FindLanguage(const char *resource) noexcept
 {
-  assert(resource != NULL);
+  assert(resource != nullptr);
 
   // Search for supported languages matching the MO file name
-  for (unsigned i = 0; language_table[i].resource != NULL; ++i)
+  for (unsigned i = 0; language_table[i].resource != nullptr; ++i)
     if (StringIsEqual(language_table[i].resource, resource))
       // .. and return the language code
       return &language_table[i];
@@ -231,8 +82,10 @@ FindLanguage(const TCHAR *resource)
   return nullptr;
 }
 
+#ifdef HAVE_BUILTIN_LANGUAGES
+
 static const BuiltinLanguage *
-DetectLanguage()
+DetectLanguage() noexcept
 {
 #ifdef ANDROID
 
@@ -245,34 +98,28 @@ DetectLanguage()
 
   jmethodID cid = env->GetStaticMethodID(cls, "getDefault",
                                          "()Ljava/util/Locale;");
-  assert(cid != NULL);
+  assert(cid != nullptr);
 
-  jobject _obj = env->CallStaticObjectMethod(cls, cid);
-  if (_obj == NULL)
-    return NULL;
-
-  Java::LocalObject obj(env, _obj);
+  Java::LocalObject obj(env, env->CallStaticObjectMethod(cls, cid));
+  if (!obj)
+    return nullptr;
 
   // Call function Locale.getLanguage() that
   // returns a two-letter language string
 
   cid = env->GetMethodID(cls, "getLanguage", "()Ljava/lang/String;");
-  assert(cid != NULL);
+  assert(cid != nullptr);
 
-  jstring language = (jstring)env->CallObjectMethod(obj, cid);
-  if (language == NULL)
-    return NULL;
+  Java::String language{env, (jstring)env->CallObjectMethod(obj, cid)};
+  if (language == nullptr)
+    return nullptr;
 
   // Convert the jstring to a char string
-  const char *language2 = env->GetStringUTFChars(language, NULL);
-  if (language2 == NULL) {
-    env->DeleteLocalRef(language);
-    return NULL;
-  }
+  const auto language2 = language.GetUTFChars();
 
   /* generate the resource name */
 
-  const char *language3 = language2;
+  const char *language3 = language2.c_str();
   if (strcmp(language3, "pt") == 0)
     /* hack */
     language3 = "pt_BR";
@@ -281,20 +128,16 @@ DetectLanguage()
   static char language_buffer[16];
   snprintf(language_buffer, sizeof(language_buffer), "%s.mo", language3);
 
-  // Clean up the memory
-  env->ReleaseStringUTFChars(language, language2);
-  env->DeleteLocalRef(language);
-
   // Return e.g. "de.mo"
   return FindLanguage(language_buffer);
 
-#elif defined(WIN32)
+#elif defined(_WIN32)
 
   // Retrieve the default user language identifier from the OS
   LANGID lang_id = GetUserDefaultUILanguage();
-  LogFormat("Language: GetUserDefaultUILanguage()=0x%x", (int)lang_id);
+  LogFormat("GetUserDefaultUILanguage() = 0x%x", (int)lang_id);
   if (lang_id == 0)
-    return NULL;
+    return nullptr;
 
   // Try to convert the primary language part of the language identifier
   // to a MO file name in the language table
@@ -329,111 +172,205 @@ DetectLanguage()
 #endif
 }
 
-static bool
-ReadBuiltinLanguage(const BuiltinLanguage &language)
-{
-  LogFormat(_T("Language: loading resource '%s'"), language.resource);
+#endif // HAVE_BUILTIN_LANGUAGES
 
-  // Load MO file from resource
-  delete mo_loader;
-  mo_loader = new MOLoader(language.begin, (size_t)language.size);
-  if (mo_loader->error()) {
-    LogFormat(_T("Language: could not load resource '%s'"), language.resource);
-    delete mo_loader;
-    mo_loader = NULL;
+#ifdef USE_LIBINTL
+
+static bool
+SetLanguageEnvironment(const char *locale) noexcept
+{
+  if (locale == nullptr || *locale == '\0')
+    return true;
+
+  std::string_view locale_view{locale};
+
+  if (const auto dot = locale_view.find('.'); dot != std::string_view::npos)
+    locale_view = locale_view.substr(0, dot);
+
+  char base[16]{};
+  if (locale_view.empty() || locale_view.size() > sizeof(base) - 1)
     return false;
-  }
 
-  LogFormat(_T("Loaded translations from resource '%s'"), language.resource);
+  CopyString(base, sizeof(base), locale_view);
 
-  mo_file = &mo_loader->get();
-  return true;
+  const auto country_separator = locale_view.find('_');
+  if (country_separator == std::string_view::npos)
+    return setenv("LANGUAGE", base, 1) == 0;
+
+  const std::string_view language_view =
+    locale_view.substr(0, country_separator);
+  char language[8]{};
+  if (language_view.empty() || language_view.size() > sizeof(language) - 1)
+    return false;
+
+  CopyString(language, sizeof(language), language_view);
+
+  char lang_override[24]{};
+  auto [end, size] = fmt::format_to_n(lang_override,
+                                      sizeof(lang_override) - 1,
+                                      "{}:{}", base, language);
+  if (size >= sizeof(lang_override))
+    return false;
+  *end = '\0';
+
+  return setenv("LANGUAGE", lang_override, 1) == 0;
 }
 
 static bool
-ReadResourceLanguageFile(const TCHAR *resource)
+RestoreLanguageEnvironment() noexcept
 {
-  auto language = FindLanguage(resource);
-  return language != nullptr && ReadBuiltinLanguage(*language);
+  static const AllocatedString initial_language = []() {
+    const char *const value = getenv("LANGUAGE");
+    return value != nullptr ? AllocatedString(value) : AllocatedString::Empty();
+  }();
+
+  if (initial_language.empty())
+    return unsetenv("LANGUAGE") == 0;
+
+  return setenv("LANGUAGE", initial_language.c_str(), 1) == 0;
 }
-
-#else /* !HAVE_BUILTIN_LANGUAGES */
-
-#ifndef HAVE_NATIVE_GETTEXT
-
-static inline const char *
-DetectLanguage()
-{
-  return NULL;
-}
-
-static inline bool
-ReadBuiltinLanguage(char dummy)
-{
-  return false;
-}
-
-static bool
-ReadResourceLanguageFile(const TCHAR *resource)
-{
-  return false;
-}
-
-#endif /* HAVE_NATIVE_GETTEXT */
-
-#endif /* !HAVE_BUILTIN_LANGUAGES */
-
-#ifndef HAVE_NATIVE_GETTEXT
 
 static void
-AutoDetectLanguage()
+InitNativeGettext(const char *locale) noexcept
 {
-  // Try to detect the language by calling the OS's corresponding functions
-  const auto l = DetectLanguage();
-  if (l != nullptr)
-    // If a language was detected -> try to load the MO file
-    ReadBuiltinLanguage(*l);
-}
-
-static bool
-LoadLanguageFile(Path path)
-{
-  LogFormat(_T("Language: loading file '%s'"), path.c_str());
-
-  delete mo_loader;
-  mo_loader = new MOLoader(path);
-  if (mo_loader->error()) {
-    LogFormat(_T("Language: could not load file '%s'"), path.c_str());
-    delete mo_loader;
-    mo_loader = NULL;
-    return false;
-  }
-
-  LogFormat(_T("Loaded translations from file '%s'"), path.c_str());
-
-  mo_file = &mo_loader->get();
-  return true;
-}
-
-#endif /* !HAVE_NATIVE_GETTEXT */
-
-void
-InitLanguage()
-{
-#ifdef HAVE_NATIVE_GETTEXT
-
   const char *const domain = "xcsoar";
 
   /* we want to get UTF-8 strings from gettext() */
   bind_textdomain_codeset(domain, "utf8");
 
-  // Set the current locale to the environment's default
-  setlocale(LC_ALL, "");
+  if (locale != nullptr && *locale != '\0') {
+    if (!SetLanguageEnvironment(locale))
+      LogFmt("Language: failed to set LANGUAGE from '{}'", locale);
+  } else if (!RestoreLanguageEnvironment()) {
+    LogString("Language: failed to restore LANGUAGE");
+  }
+
+  bool locale_ok = setlocale(LC_ALL, locale) != nullptr;
+
+  if (!locale_ok && locale != nullptr && *locale != '\0') {
+    std::string_view locale_view{locale};
+    if (locale_view.ends_with(".UTF-8")) {
+      char locale_utf8[32]{};
+      const size_t prefix = locale_view.size() - 6;
+      auto [end, size] = fmt::format_to_n(locale_utf8,
+                                          sizeof(locale_utf8) - 1,
+                                          "{}.utf8",
+                                          locale_view.substr(0, prefix));
+      if (size < sizeof(locale_utf8)) {
+        *end = '\0';
+        locale_ok = setlocale(LC_ALL, locale_utf8) != nullptr;
+      }
+    }
+
+    if (!locale_ok) {
+      LogFmt("Language: failed to activate locale '{}'", locale);
+
+      if (setlocale(LC_ALL, "") != nullptr)
+        LogString("Language: using system locale fallback");
+      else
+        LogString("Language: failed to activate system locale fallback");
+    }
+  }
+
   // always use a dot as decimal point in printf/scanf()
   setlocale(LC_NUMERIC, "C");
   bindtextdomain(domain, "/usr/share/locale");
   textdomain(domain);
 
+  /* trigger gettext's locale fallback initialization eagerly */
+  [[maybe_unused]] const char *dummy = dcgettext(domain, "", LC_MESSAGES);
+
+}
+
+#endif // USE_LIBINTL
+
+static bool
+ReadBuiltinLanguage(const BuiltinLanguage &language) noexcept
+{
+  LogFmt("Language: loading resource '{}'", language.resource);
+
+#ifdef HAVE_BUILTIN_LANGUAGES
+  // Load MO file from resource
+  delete mo_loader;
+  mo_loader = new MOLoader({language.begin, (size_t)language.size});
+  if (mo_loader->error()) {
+    LogFmt("Language: could not load resource '{}'", language.resource);
+    delete mo_loader;
+    mo_loader = nullptr;
+    return false;
+  }
+
+  LogFmt("Loaded translations from resource '{}'", language.resource);
+
+  mo_file = &mo_loader->get();
+#else
+  InitNativeGettext(language.locale);
+#endif
+
+  return true;
+}
+
+static bool
+ReadResourceLanguageFile(const char *resource) noexcept
+{
+  auto language = FindLanguage(resource);
+  return language != nullptr && ReadBuiltinLanguage(*language);
+}
+
+static void
+AutoDetectLanguage() noexcept
+{
+#ifdef USE_LIBINTL
+  // Set the current locale to the environment's default
+  InitNativeGettext("");
+#else
+  // Try to detect the language by calling the OS's corresponding functions
+  const auto l = DetectLanguage();
+  if (l != nullptr)
+    // If a language was detected -> try to load the MO file
+    ReadBuiltinLanguage(*l);
+#endif
+}
+
+static bool
+LoadLanguageFile([[maybe_unused]] Path path) noexcept
+{
+#ifdef HAVE_BUILTIN_LANGUAGES
+  LogFmt("Language: loading file '{}'", path);
+
+  delete mo_loader;
+  mo_loader = nullptr;
+
+  try {
+    mo_loader = new MOLoader(path);
+    if (mo_loader->error()) {
+      LogFmt("Language: could not load file '{}'", path);
+      delete mo_loader;
+      mo_loader = nullptr;
+      return false;
+    }
+  } catch (...) {
+    LogError(std::current_exception(), "Language: could not load file");
+    return false;
+  }
+
+  LogFmt("Loaded translations from file '{}'", path);
+
+  mo_file = &mo_loader->get();
+  return true;
+#else
+  return false;
+#endif
+}
+
+#endif // HAVE_NLS
+
+void
+InitLanguage() noexcept
+{
+#ifdef USE_LIBINTL
+  // Set the current locale to the environment's default
+  InitNativeGettext("");
 #endif
 }
 
@@ -441,22 +378,26 @@ InitLanguage()
  * Reads the selected LanguageFile into the cache
  */
 void
-ReadLanguageFile()
+ReadLanguageFile() noexcept
 {
-#ifndef HAVE_NATIVE_GETTEXT
+#ifdef HAVE_NLS
   CloseLanguageFile();
 
-  LogFormat("Loading language file");
+  LogString("Loading language file");
 
   auto value = Profile::GetPath(ProfileKeys::LanguageFile);
 
-  if (value == nullptr || value.IsEmpty() || value == Path(_T("auto"))) {
+  if (value == nullptr || value.empty() || value == Path("auto")) {
     AutoDetectLanguage();
     return;
   }
 
-  if (value == Path(_T("none")))
+  if (value == Path("none")) {
+#ifdef USE_LIBINTL
+    InitNativeGettext("C");
+#endif
     return;
+  }
 
   Path base = value.GetBase();
   if (base == nullptr)
@@ -473,16 +414,17 @@ ReadLanguageFile()
 
   if (!LoadLanguageFile(value) && !ReadResourceLanguageFile(base.c_str()))
     AutoDetectLanguage();
-#endif
+
+#endif // HAVE_NLS
 }
 
 void
-CloseLanguageFile()
+CloseLanguageFile() noexcept
 {
-#ifndef HAVE_NATIVE_GETTEXT
-  mo_file = NULL;
+#ifndef USE_LIBINTL
+  mo_file = nullptr;
   reset_gettext_cache();
   delete mo_loader;
-  mo_loader = NULL;
+  mo_loader = nullptr;
 #endif
 }

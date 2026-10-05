@@ -1,37 +1,55 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BestCruiseArrowRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "Screen/Layout.hpp"
 #include "Look/TaskLook.hpp"
 #include "Math/Angle.hpp"
 #include "Math/Screen.hpp"
 #include "NMEA/Derived.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scope.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
 #endif
+
+static constexpr struct {
+  int x, y;
+} template_arrow[] = {
+  { -1, -40 },
+  { -1, -62 },
+  { -6, -62 },
+  {  0, -70 },
+  {  6, -62 },
+  {  1, -62 },
+  {  1, -40 },
+};
+
+static_assert(ARRAY_SIZE(template_arrow) == BestCruiseArrowRenderer::arrow_size,
+              "template must match arrow_size");
+
+unsigned
+BestCruiseArrowRenderer::GetScale() noexcept
+{
+  return Layout::Scale(100U);
+}
+
+void
+BestCruiseArrowRenderer::Build(BulkPixelPoint *dest, int y_offset) noexcept
+{
+  for (unsigned i = 0; i < arrow_size; ++i) {
+    dest[i].x = template_arrow[i].x;
+    dest[i].y = template_arrow[i].y + y_offset;
+  }
+}
+
+int
+BestCruiseArrowRenderer::YOffsetForRadius(unsigned radius_from_center,
+                                          int scale) noexcept
+{
+  return -center_y - int(radius_from_center * 100 / scale);
+}
 
 void
 BestCruiseArrowRenderer::Draw(Canvas &canvas, const TaskLook &look,
@@ -42,23 +60,15 @@ BestCruiseArrowRenderer::Draw(Canvas &canvas, const TaskLook &look,
   canvas.Select(look.best_cruise_track_pen);
   canvas.Select(look.best_cruise_track_brush);
 
-  BulkPixelPoint arrow[] = {
-    { -1, -40 },
-    { -1, -62 },
-    { -6, -62 },
-    {  0, -70 },
-    {  6, -62 },
-    {  1, -62 },
-    {  1, -40 },
-    { -1, -40 },
-  };
+  BulkPixelPoint arrow[arrow_size];
+  Build(arrow);
 
-  PolygonRotateShift(arrow, ARRAY_SIZE(arrow), pos,
-                     best_cruise_angle - screen_angle);
+  const unsigned scale = GetScale();
+  PolygonRotateShift(arrow, pos, best_cruise_angle - screen_angle, scale);
 #ifdef ENABLE_OPENGL
   const ScopeAlphaBlend alpha_blend;
 #endif
-  canvas.DrawPolygon(arrow, ARRAY_SIZE(arrow));
+  canvas.DrawPolygon(arrow, arrow_size);
 }
 
 void
@@ -76,6 +86,5 @@ BestCruiseArrowRenderer::Draw(Canvas &canvas, const TaskLook &look,
   if (!solution.IsOk() || solution.vector.distance < 0.01)
     return;
 
-  BestCruiseArrowRenderer::Draw(canvas, look, screen_angle,
-                                solution.cruise_track_bearing, pos);
+  Draw(canvas, look, screen_angle, solution.cruise_track_bearing, pos);
 }

@@ -1,45 +1,25 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFO_BOX_HPP
-#define XCSOAR_INFO_BOX_HPP
+#pragma once
 
 #include "InfoBoxes/Content/Base.hpp"
-#include "Screen/LazyPaintWindow.hpp"
-#include "Screen/Timer.hpp"
+#include "ui/window/LazyPaintWindow.hpp"
+#include "ui/event/PeriodicTimer.hpp"
+#include "ui/event/Timer.hpp"
 #include "Data.hpp"
+
+#include <chrono>
+#include <memory>
 
 struct InfoBoxSettings;
 struct InfoBoxLook;
 class Color;
+class Canvas;
 
 class InfoBoxWindow : public LazyPaintWindow
 {
-  /** timeout of infobox focus [ms] */
-  static constexpr unsigned FOCUS_TIMEOUT_MAX = 20 * 1000;
-
-private:
-  InfoBoxContent *content;
+  std::unique_ptr<InfoBoxContent> content;
 
   const InfoBoxSettings &settings;
   const InfoBoxLook &look;
@@ -48,34 +28,64 @@ private:
 
   const unsigned id;
 
+  /**
+   * This value is an identifier for the #content field; it is
+   * incremented each time a new #InfoBoxContent is installed.  It is
+   * used to check whether a custom repaint is necessary.
+   */
+  unsigned content_serial;
+
   InfoBoxData data;
 
-  bool dragging;
+  bool dragging = false;
 
   /**
    * Is the mouse currently pressed inside this InfoBox?
    */
-  bool pressed;
+  bool pressed = false;
 
   /**
    * draw the selector event if the InfoBox window is not the system focus
    */
-  bool force_draw_selector;
+  bool force_draw_selector = false;
+
+  /**
+   * A press is still down and has not become a drag.  Lift before
+   * #hold_armed is a tap; lift after it opens arrange.
+   */
+  bool long_press_pending = false;
+
+  /** the hold finished; the action waits for lift-off */
+  bool hold_armed = false;
+
+  /** the position of the press which #dialog_timer is watching */
+  PixelPoint press_point{0, 0};
+
+  /** when the long-press glow started */
+  std::chrono::steady_clock::time_point press_start{};
+
+  /** starts the fill once the press is past a tap */
+  UI::Timer hold_timer{[this]{ OnHoldArmed(); }};
+
+  /** fades the long-press fill while the hold is running */
+  UI::PeriodicTimer fade_timer{[this]{ Invalidate(); }};
 
   /** a timer which returns keyboard focus back to the map window after a while */
-  WindowTimer focus_timer;
+  UI::Timer focus_timer{[this]{ FocusParent(); }};
 
   /**
    * This timer opens the dialog.  It is used to check for "long
    * click" and to delay the dialog a bit (for double click
    * detection).
    */
-  WindowTimer dialog_timer;
+  UI::Timer dialog_timer{[this]{ OnDialogTimer(); }};
 
   PixelRect title_rect;
   PixelRect value_rect;
   PixelRect comment_rect;
   PixelRect value_and_comment_rect;
+
+  unsigned unit_width = 0;
 
   /**
    * Paints the InfoBox title to the given canvas
@@ -105,9 +115,9 @@ public:
    * Sets the InfoBox title to the given Value
    * @param Value New value of the InfoBox title
    */
-  void SetTitle(const TCHAR *title);
+  void SetTitle(const char *title);
 
-  const TCHAR* GetTitle() {
+  const char* GetTitle() {
     return data.title;
   };
 
@@ -120,13 +130,16 @@ public:
                 unsigned id,
                 WindowStyle style=WindowStyle());
 
-  ~InfoBoxWindow();
-
   const InfoBoxLook &GetLook() const {
     return look;
   }
 
-  void SetContentProvider(InfoBoxContent *_content);
+  void SetContentProvider(std::unique_ptr<InfoBoxContent> _content);
+
+  [[nodiscard]] bool HasContent() const noexcept {
+    return content != nullptr;
+  }
+
   void UpdateContent();
 
 private:
@@ -144,7 +157,7 @@ protected:
   bool HandleKey(InfoBoxContent::InfoBoxKeyCodes keycode);
 
 public:
-  gcc_pure
+  [[gnu::pure]]
   const InfoBoxPanel *GetDialogContent() const;
 
   const PixelRect GetValueRect() const {
@@ -154,23 +167,26 @@ public:
     return value_and_comment_rect;
   }
 
+private:
+  void OnDialogTimer() noexcept;
+  void OnHoldArmed() noexcept;
+  void StopLongPress() noexcept;
+  void PaintLongPressGlow(Canvas &canvas) noexcept;
+
 protected:
-  virtual void OnDestroy() override;
-  virtual void OnResize(PixelSize new_size) override;
-  virtual void OnSetFocus() override;
-  virtual void OnKillFocus() override;
-  virtual void OnCancelMode() override;
-  virtual bool OnTimer(WindowTimer &timer) override;
+  void OnDestroy() noexcept override;
+  void OnResize(PixelSize new_size) noexcept override;
+  void OnSetFocus() noexcept override;
+  void OnKillFocus() noexcept override;
+  void OnCancelMode() noexcept override;
 
-  virtual bool OnKeyDown(unsigned key_code) override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
 
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  bool OnMouseDouble(PixelPoint p) override;
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  bool OnMouseDouble(PixelPoint p) noexcept override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
 
-  /* virtual methods from class LazyPaintWindow */
-  void OnPaintBuffer(Canvas &canvas) override;
+  /* methods from class LazyPaintWindow */
+  void OnPaintBuffer(Canvas &canvas) noexcept override;
 };
-
-#endif

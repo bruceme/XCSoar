@@ -1,5 +1,7 @@
-#ifndef ZZIP_UTIL_H
-#define ZZIP_UTIL_H
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
 
 #include <zzip/lib.h>
 
@@ -26,5 +28,3 @@ zzip_open_rb(ZZIP_DIR *dir, const char *path)
     ? zzip_file_open(dir, path, mode)
     : zzip_open(path, mode);
 }
-
-#endif

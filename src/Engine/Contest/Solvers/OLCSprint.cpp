@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "OLCSprint.hpp"
 #include "Trace/Trace.hpp"
@@ -52,20 +33,20 @@
     potentially implement as circular buffer (emulate as dequeue)
 */
 
-OLCSprint::OLCSprint(const Trace &_trace)
+OLCSprint::OLCSprint(const Trace &_trace) noexcept
   :ContestDijkstra(_trace, false, 4, 0) {}
 
 unsigned
-OLCSprint::FindStart() const
+OLCSprint::FindStart() const noexcept
 {
   assert(num_stages <= MAX_STAGES);
   assert(n_points >= 2);
 
   unsigned start_index = 0;
   const auto end_time = TraceManager::GetPoint(n_points - 1).GetTime();
-  if (end_time > 9000) {
+  if (end_time > std::chrono::minutes{120}) {
     // fast forward to 2.5 hours before finish
-    const unsigned start_time = end_time-9000;
+    const auto start_time = end_time - std::chrono::minutes{120};
     assert(start_index < n_points);
     while (TraceManager::GetPoint(start_index).GetTime() < start_time) {
       ++start_index;
@@ -77,7 +58,7 @@ OLCSprint::FindStart() const
 }
 
 void
-OLCSprint::AddStartEdges()
+OLCSprint::AddStartEdges() noexcept
 {
   assert(num_stages <= MAX_STAGES);
   assert(num_stages > 0);
@@ -92,7 +73,7 @@ OLCSprint::AddStartEdges()
 }
 
 void
-OLCSprint::AddEdges(const ScanTaskPoint origin)
+OLCSprint::AddEdges(const ScanTaskPoint origin) noexcept
 {
   const ScanTaskPoint destination(origin.GetStageNumber() + 1, n_points - 1);
   if (IsFinal(destination)) {
@@ -105,7 +86,7 @@ OLCSprint::AddEdges(const ScanTaskPoint origin)
 }
 
 ContestResult
-OLCSprint::CalculateResult() const
+OLCSprint::CalculateResult() const noexcept
 {
   ContestResult result = ContestDijkstra::CalculateResult();
   result.score = ApplyShiftedHandicap(result.distance / 2500.);
@@ -113,7 +94,7 @@ OLCSprint::CalculateResult() const
 }
 
 void
-OLCSprint::UpdateTrace(bool force)
+OLCSprint::UpdateTrace(bool force) noexcept
 {
   /* since this is online, all solutions must have start to end of
      trace satisfy the finish altitude requirements.  otherwise there

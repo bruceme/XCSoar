@@ -1,32 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "java/Object.hxx"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ANDROID_TEXT_UTIL_HPP
-#define XCSOAR_ANDROID_TEXT_UTIL_HPP
-
-#include "Java/Object.hxx"
-#include "Compiler.h"
-
+#include <string_view>
 #include <utility>
 
 struct PixelSize;
@@ -38,19 +17,18 @@ class TextUtil : protected Java::GlobalObject {
   static jmethodID midGetTextTextureGL;
 
   unsigned height, ascent_height, capital_height;
-  unsigned line_spacing, style;
+  unsigned line_spacing;
 
-  TextUtil(jobject _obj);
+  TextUtil(const Java::LocalObject &_obj) noexcept;
 
 public:
-  static void Initialise(JNIEnv *env);
-  static void Deinitialise(JNIEnv *env);
+  static void Initialise(JNIEnv *env) noexcept;
+  static void Deinitialise(JNIEnv *env) noexcept;
 
-  gcc_malloc
   static TextUtil *create(const FontDescription &d);
 
-  gcc_pure
-  PixelSize getTextBounds(const char *text) const;
+  [[gnu::pure]]
+  PixelSize getTextBounds(std::string_view text) const noexcept;
 
   struct Texture {
     unsigned id;
@@ -58,33 +36,27 @@ public:
     unsigned allocated_width, allocated_height;
 
     Texture(unsigned _id, unsigned _width, unsigned _height,
-            unsigned _allocated_width, unsigned _allocated_height)
+            unsigned _allocated_width, unsigned _allocated_height) noexcept
       :id(_id), width(_width), height(_height),
        allocated_width(_allocated_width),
        allocated_height(_allocated_height) {}
   };
 
-  Texture getTextTextureGL(const char *text) const;
+  Texture getTextTextureGL(std::string_view text) const noexcept;
 
-  unsigned get_height() const {
+  unsigned get_height() const noexcept {
     return height;
   }
 
-  unsigned get_ascent_height() const {
+  unsigned get_ascent_height() const noexcept {
     return ascent_height;
   }
 
-  unsigned get_capital_height() const {
+  unsigned get_capital_height() const noexcept {
     return capital_height;
   }
 
-  unsigned GetLineSpacing() const {
+  unsigned GetLineSpacing() const noexcept {
     return line_spacing;
   }
-
-  unsigned get_style() const {
-    return style;
-  }
 };
-
-#endif

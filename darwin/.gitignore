@@ -1,0 +1,10 @@
+# Signing
+.env
+*.mobileprovision
+*.provisionprofile
+# Xcode
+xcuserdata
+DerivedData/
+build/
+XCSoarExecutable
+XCSoar.xcodeproj/XCSoar.app

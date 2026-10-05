@@ -1,246 +1,300 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TrackingGlue.hpp"
+#include "Tracking/SkyLines/FlarmTrafficBuilder.hpp"
+#include "Tracking/TrackingSettings.hpp"
 #include "NMEA/MoreData.hpp"
-#include "NMEA/Derived.hpp"
-#include "Units/System.hpp"
-#include "Operation/Operation.hpp"
+#include "NMEA/Info.hpp"
+#include "event/net/cares/Error.hxx"
 #include "LogFile.hpp"
-#include "Util/Macros.hpp"
 
-static LiveTrack24::VehicleType
-MapVehicleTypeToLivetrack24(LiveTrack24::Settings::VehicleType vt)
+#include <ares.h>
+
+#include <chrono>
+
+using namespace std::chrono;
+
+static constexpr int MAX_ONLINE_TRAFFIC_ALTITUDE_SEPARATION = 5000;
+
+[[nodiscard]] static bool
+IsDNSUnavailable(std::exception_ptr error) noexcept
 {
-  static constexpr LiveTrack24::VehicleType vehicleTypeMap[] = {
-    LiveTrack24::VehicleType::GLIDER,
-    LiveTrack24::VehicleType::PARAGLIDER,
-    LiveTrack24::VehicleType::POWERED_AIRCRAFT,
-    LiveTrack24::VehicleType::HOT_AIR_BALLOON,
-    LiveTrack24::VehicleType::FLEX_WING_FAI1,
-    LiveTrack24::VehicleType::RIGID_WING_FAI5,
-  };
+  if (error == nullptr)
+    return false;
 
-  unsigned vti = (unsigned) vt;
-  if (vti >= ARRAY_SIZE(vehicleTypeMap))
-    vti = 0;
-
-  return vehicleTypeMap[vti];
+  try {
+    std::rethrow_exception(error);
+  } catch (const Cares::Error &e) {
+    return e.GetCode() == ARES_ECONNREFUSED;
+  } catch (...) {
+    return false;
+  }
 }
 
-TrackingGlue::TrackingGlue(boost::asio::io_service &io_service)
-  :StandbyThread("Tracking"),
-   skylines(io_service, this)
+[[gnu::pure]]
+static int
+OwnAltitudeMeters(const NMEAInfo &basic) noexcept
 {
-  settings.SetDefaults();
-  LiveTrack24::SetServer(settings.livetrack24.server);
+  if (basic.baro_altitude_available)
+    return int(basic.baro_altitude);
+
+  if (basic.gps_altitude_available)
+    return int(basic.gps_altitude);
+
+  return -1;
 }
 
-void
-TrackingGlue::StopAsync()
+[[gnu::pure]]
+static bool
+WithinOnlineAltitudeBand(int own_alt, int target_alt,
+                         bool target_altitude_valid) noexcept
 {
-  ScopeLock protect(mutex);
-  StandbyThread::StopAsync();
+  if (own_alt < 0)
+    return !target_altitude_valid;
+
+  if (!target_altitude_valid)
+    return false;
+
+  const int separation = target_alt - own_alt;
+  return separation <= MAX_ONLINE_TRAFFIC_ALTITUDE_SEPARATION &&
+    separation >= -MAX_ONLINE_TRAFFIC_ALTITUDE_SEPARATION;
 }
 
-void
-TrackingGlue::WaitStopped()
+static constexpr auto ONLINE_BUFFER_STALE = minutes(5);
+
+/**
+ * Configured own FLARM ids plus the device radio id when known.
+ */
+static StaticArray<FlarmId, CloudSettings::MAX_OWN_FLARM_IDS + 1>
+MakeEffectiveOwnFlarmIds(const CloudSettings::OwnFlarmIdList &configured,
+                         FlarmId radio_id) noexcept
 {
-  ScopeLock protect(mutex);
-  StandbyThread::WaitStopped();
+  StaticArray<FlarmId, CloudSettings::MAX_OWN_FLARM_IDS + 1> ids;
+  for (const FlarmId id : configured)
+    ids.append(id);
+  if (radio_id.IsDefined() && !ids.contains(radio_id))
+    ids.append(radio_id);
+  return ids;
+}
+
+TrackingGlue::TrackingGlue(EventLoop &event_loop,
+                           CurlGlobal &curl) noexcept
+  :skylines(event_loop, this),
+   livetrack24(curl)
+{
+  online_traffic.Clear();
 }
 
 void
 TrackingGlue::SetSettings(const TrackingSettings &_settings)
 {
-  skylines.SetSettings(_settings.skylines);
+  cloud_enabled = _settings.cloud.enabled;
+  cloud_show_traffic = _settings.cloud.show_traffic;
 
-  if (_settings.livetrack24.server != settings.livetrack24.server ||
-      _settings.livetrack24.username != settings.livetrack24.username ||
-      _settings.livetrack24.password != settings.livetrack24.password) {
-    /* wait for the current job to finish */
-    LockWaitDone();
+  {
+    const std::lock_guard lock{online_mutex};
+    configured_own_flarm_ids = _settings.cloud.own_flarm_ids;
+    own_flarm_ids = MakeEffectiveOwnFlarmIds(configured_own_flarm_ids,
+                                             device_radio_id);
 
-    /* now it's safe to access these variables without a lock */
-    settings = _settings;
-    state.ResetSession();
-    LiveTrack24::SetServer(_settings.livetrack24.server);
-  } else {
-    /* no fundamental setting changes; the write needs to be protected
-       by the mutex, because another job may be running already */
-    ScopeLock protect(mutex);
-    settings = _settings;
+    if (cloud_enabled != TriState::TRUE || !cloud_show_traffic) {
+      online_traffic.Clear();
+      online_pilot_ids.clear();
+      online_last_received.clear();
+    }
   }
+
+  skylines.SetSettings(_settings.skylines, _settings.cloud);
+  livetrack24.SetSettings(_settings.livetrack24);
+}
+
+void
+TrackingGlue::BeginShutdown() noexcept
+{
+  if (shutting_down)
+    return;
+
+  shutting_down = true;
+  skylines.BeginShutdown();
+  livetrack24.BeginShutdown();
 }
 
 void
 TrackingGlue::OnTimer(const MoreData &basic, const DerivedInfo &calculated)
 {
+  if (shutting_down)
+    return;
+
+  {
+    const std::lock_guard lock{online_mutex};
+    own_altitude = OwnAltitudeMeters(basic);
+    device_radio_id = basic.flarm.hardware.radio_id;
+    own_flarm_ids = MakeEffectiveOwnFlarmIds(configured_own_flarm_ids,
+                                             device_radio_id);
+  }
+
   try {
     skylines.Tick(basic, calculated);
-  } catch (const std::runtime_error &e) {
-    LogError("SkyLines error", e);
+  } catch (...) {
+    const auto error = std::current_exception();
+    if (!IsDNSUnavailable(error))
+      LogError(error, "SkyLines error");
   }
 
-  if (!settings.livetrack24.enabled)
-    /* disabled by configuration */
-    /* note that we are allowed to read "settings" without locking the
-       mutex, because the background thread never writes to this
-       attribute */
-    return;
-
-  if (!basic.time_available || !basic.gps.real || !basic.location_available)
-    /* can't track without a valid GPS fix */
-    return;
-
-  if (!clock.CheckUpdate(settings.livetrack24.interval * 1000))
-    /* later */
-    return;
-
-  ScopeLock protect(mutex);
-  if (IsBusy())
-    /* still running, skip this submission */
-    return;
-
-  date_time = basic.date_time_utc;
-  if (!date_time.IsDatePlausible())
-    /* use "today" if the GPS didn't provide a date */
-    (BrokenDate &)date_time = BrokenDate::TodayUTC();
-
-  location = basic.location;
-  /* XXX use nav_altitude? */
-  altitude = basic.NavAltitudeAvailable() && basic.nav_altitude > 0
-    ? (unsigned)basic.nav_altitude
-    : 0u;
-  ground_speed = basic.ground_speed_available
-    ? (unsigned)Units::ToUserUnit(basic.ground_speed, Unit::KILOMETER_PER_HOUR)
-    : 0u;
-  track = basic.track_available
-    ? basic.track
-    : Angle::Zero();
-
-  last_flying = flying;
-  flying = calculated.flight.flying;
-
-  Trigger();
+  livetrack24.OnTimer(basic, calculated);
 }
 
 void
-TrackingGlue::Tick()
+TrackingGlue::MergeOnlineTraffic(FlarmData &flarm,
+                                 const NMEAInfo &basic) noexcept
 {
-  if (!settings.livetrack24.enabled)
-    /* settings have been cleared meanwhile, bail out */
-    return;
+  flarm.traffic.ClampListSize();
 
-  unsigned tracking_interval = settings.livetrack24.interval;
-  LiveTrack24::Settings copy = this->settings.livetrack24;
+  const std::lock_guard lock{online_mutex};
 
-  const ScopeUnlock unlock(mutex);
+  own_altitude = OwnAltitudeMeters(basic);
+  device_radio_id = flarm.hardware.radio_id;
+  own_flarm_ids = MakeEffectiveOwnFlarmIds(configured_own_flarm_ids,
+                                           device_radio_id);
 
-  QuietOperationEnvironment env;
+  online_traffic.ClampListSize();
 
-  try {
-    if (!flying) {
-      if (last_flying && state.HasSession()) {
-        /* landing: end tracking session */
-        LiveTrack24::EndTracking(state.session_id, state.packet_id, env);
-        state.ResetSession();
-        last_timestamp = 0;
+  const auto now = steady_clock::now();
+
+  for (unsigned i = 0; i < online_traffic.list.size(); ) {
+    const FlarmTraffic &t = online_traffic.list[i];
+    const auto last_i = online_last_received.find(t.id);
+    if (last_i == online_last_received.end() ||
+        now - last_i->second > ONLINE_BUFFER_STALE ||
+        !WithinOnlineAltitudeBand(own_altitude, int(t.altitude),
+                                  t.altitude_available) ||
+        SkyLinesTracking::FlarmTrafficBuilder::IsOwnShipId(own_flarm_ids,
+                                                           t.id)) {
+      online_last_received.erase(t.id);
+      online_pilot_ids.erase(t.id);
+      online_traffic.list.quick_remove(i);
+    } else
+      ++i;
+  }
+
+  for (const auto &online : online_traffic.list) {
+    FlarmTraffic *existing = flarm.traffic.FindTraffic(online.id);
+    if (existing != nullptr &&
+        !FlarmTraffic::IsInjectedSource(existing->source) &&
+        existing->valid)
+      continue;
+
+    FlarmTraffic built = online;
+    if (!SkyLinesTracking::FlarmTrafficBuilder::FillRelative(built, basic))
+      continue;
+
+    if (existing != nullptr) {
+      existing->UpdateOnline(built);
+      if (basic.time_available)
+        existing->valid.Update(basic.time);
+    } else {
+      FlarmTraffic *slot = flarm.traffic.AllocateTraffic();
+      if (slot == nullptr)
+        continue;
+
+      *slot = built;
+      if (basic.time_available) {
+        slot->valid.Update(basic.time);
+        flarm.traffic.new_traffic.Update(basic.time);
       }
+    }
 
-      /* don't track if not flying */
+    if (basic.time_available)
+      flarm.traffic.modified.Update(basic.time);
+  }
+}
+
+uint32_t
+TrackingGlue::GetOnlinePilotId(FlarmId id) const noexcept
+{
+  const std::lock_guard lock{online_mutex};
+  const auto i = online_pilot_ids.find(id);
+  return i != online_pilot_ids.end() ? i->second : 0;
+}
+
+void
+TrackingGlue::OnTraffic(uint32_t pilot_id,
+                        [[maybe_unused]] unsigned time_of_day_ms,
+                        const GeoPoint &location, int altitude,
+                        bool altitude_valid,
+                        SkyLinesTracking::TrafficSource source,
+                        unsigned track_deg, bool track_valid,
+                        FlarmId flarm_id, unsigned aircraft_type)
+{
+  if (source == SkyLinesTracking::TrafficSource::CLOUD) {
+    if (cloud_enabled != TriState::TRUE || !cloud_show_traffic)
       return;
-    }
-
-    const int64_t current_timestamp = date_time.ToUnixTimeUTC();
-
-    if (state.HasSession() && current_timestamp + 60 < last_timestamp) {
-      /* time warp: create a new session */
-      LiveTrack24::EndTracking(state.session_id, state.packet_id, env);
-      state.ResetSession();
-    }
-
-    last_timestamp = current_timestamp;
-
-    if (!state.HasSession()) {
-      LiveTrack24::UserID user_id = 0;
-      if (!copy.username.empty() && !copy.password.empty())
-        user_id = LiveTrack24::GetUserID(copy.username, copy.password, env);
-
-      if (user_id == 0) {
-        copy.username.clear();
-        copy.password.clear();
-        state.session_id = LiveTrack24::GenerateSessionID();
-      } else {
-        state.session_id = LiveTrack24::GenerateSessionID(user_id);
-      }
-
-      if (!LiveTrack24::StartTracking(state.session_id, copy.username,
-                                      copy.password, tracking_interval,
-                                      MapVehicleTypeToLivetrack24(settings.livetrack24.vehicleType),
-                                      settings.livetrack24.vehicle_name,
-                                      env)) {
-        state.ResetSession();
-        return;
-      }
-
-      state.packet_id = 2;
-    }
-
-    LiveTrack24::SendPosition(state.session_id, state.packet_id++,
-                              location, altitude, ground_speed, track,
-                              current_timestamp,
-                              env);
-  } catch (const std::exception &exception) {
-    LogError("LiveTrack24 error", exception);
   }
-}
 
-void
-TrackingGlue::OnTraffic(uint32_t pilot_id, unsigned time_of_day_ms,
-                        const GeoPoint &location, int altitude)
-{
+  int own_alt;
+  StaticArray<FlarmId, CloudSettings::MAX_OWN_FLARM_IDS + 1> own_ids;
+  {
+    const std::lock_guard lock{online_mutex};
+    own_alt = own_altitude;
+    own_ids = own_flarm_ids;
+  }
+
+  if (!WithinOnlineAltitudeBand(own_alt, altitude, altitude_valid))
+    return;
+
+  StaticString<64> server_name_buffer;
+  CopyOnlineUserName(pilot_id, server_name_buffer);
+  const char *server_name = server_name_buffer.empty()
+    ? nullptr
+    : server_name_buffer.c_str();
+
+  FlarmTraffic built = SkyLinesTracking::FlarmTrafficBuilder::Build(
+    pilot_id, location, altitude, altitude_valid, source,
+    track_deg, track_valid, flarm_id, aircraft_type, server_name);
+
+  if (!built.location_available)
+    return;
+
+  if (SkyLinesTracking::FlarmTrafficBuilder::IsOwnShipId(own_ids, built.id))
+    return;
+
   bool user_known;
 
   {
-    const ScopeLock protect(skylines_data.mutex);
-    const SkyLinesTracking::Data::Traffic traffic(time_of_day_ms,
-                                                  location, altitude);
-    skylines_data.traffic[pilot_id] = traffic;
+    const std::lock_guard lock{online_mutex};
 
+    online_traffic.ClampListSize();
+
+    FlarmTraffic *slot = online_traffic.FindTraffic(built.id);
+    if (slot == nullptr) {
+      slot = online_traffic.AllocateTraffic();
+      if (slot == nullptr)
+        return;
+
+      slot->Clear();
+      slot->id = built.id;
+    }
+
+    slot->UpdateOnline(built);
+
+    online_pilot_ids[built.id] = pilot_id;
+    online_last_received[built.id] = steady_clock::now();
+  }
+
+  {
+    const std::lock_guard lock{skylines_data.mutex};
     user_known = skylines_data.IsUserKnown(pilot_id);
   }
 
   if (!user_known)
-    /* we don't know this user's name yet - try to find it out by
-       asking the server */
     skylines.RequestUserName(pilot_id);
 }
 
 void
-TrackingGlue::OnUserName(uint32_t user_id, const TCHAR *name)
+TrackingGlue::OnUserName(uint32_t user_id, const char *name)
 {
-  const ScopeLock protect(skylines_data.mutex);
+  const std::lock_guard lock{skylines_data.mutex};
   skylines_data.user_names[user_id] = name;
 }
 
@@ -248,7 +302,7 @@ void
 TrackingGlue::OnWave(unsigned time_of_day_ms,
                      const GeoPoint &a, const GeoPoint &b)
 {
-  const ScopeLock protect(skylines_data.mutex);
+  const std::lock_guard lock{skylines_data.mutex};
 
   /* garbage collection - hard-coded upper limit */
   auto n = skylines_data.waves.size();
@@ -256,15 +310,16 @@ TrackingGlue::OnWave(unsigned time_of_day_ms,
     skylines_data.waves.pop_front();
 
   // TODO: replace existing item?
-  skylines_data.waves.emplace_back(time_of_day_ms, a, b);
+  skylines_data.waves.emplace_back(SkyLinesTracking::Data::Time{time_of_day_ms},
+                                   a, b);
 }
 
 void
-TrackingGlue::OnThermal(unsigned time_of_day_ms,
+TrackingGlue::OnThermal([[maybe_unused]] unsigned time_of_day_ms,
                         const AGeoPoint &bottom, const AGeoPoint &top,
                         double lift)
 {
-  const ScopeLock protect(skylines_data.mutex);
+  const std::lock_guard lock{skylines_data.mutex};
 
   /* garbage collection - hard-coded upper limit */
   auto n = skylines_data.thermals.size();
@@ -276,7 +331,8 @@ TrackingGlue::OnThermal(unsigned time_of_day_ms,
 }
 
 void
-TrackingGlue::OnSkyLinesError(const std::exception &e)
+TrackingGlue::OnSkyLinesError(std::exception_ptr e)
 {
-  LogError("SkyLines error", e);
+  if (!IsDNSUnavailable(e))
+    LogError(e, "SkyLines error");
 }

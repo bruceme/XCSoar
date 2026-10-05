@@ -1,25 +1,5 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TrafficDialogs.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -28,7 +8,7 @@
 #include "Dialogs/Message.hpp"
 #include "Widget/RowFormWidget.hpp"
 #include "UIGlobals.hpp"
-#include "FLARM/FlarmDetails.hpp"
+#include "FLARM/Details.hpp"
 #include "FLARM/Glue.hpp"
 #include "Computer/Settings.hpp"
 #include "Profile/Profile.hpp"
@@ -39,19 +19,16 @@
 #include "Blackboard/BlackboardListener.hpp"
 #include "Language/Language.hpp"
 #include "TeamActions.hpp"
-#include "Util/StringCompare.hxx"
-#include "Util/TruncateString.hpp"
-#include "Util/Macros.hpp"
+#include "util/StringCompare.hxx"
+#include "util/StringStrip.hxx"
+#include "util/TruncateString.hpp"
+#include "util/Macros.hpp"
+#include "Components.hpp"
+#include "DataComponents.hpp"
 
 class TeamCodeWidget final
-  : public RowFormWidget, NullBlackboardListener, ActionListener {
+  : public RowFormWidget, NullBlackboardListener {
   enum Controls {
-    SET_CODE,
-    SET_WAYPOINT,
-    SET_FLARM_LOCK,
-  };
-
-  enum Buttons {
     OWN_CODE,
     MATE_CODE,
     RANGE,
@@ -73,13 +50,10 @@ private:
   void OnFlarmLockClicked();
 
   /* virtual methods from class Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
-  virtual void Show(const PixelRect &rc) override;
-  virtual void Hide() override;
-
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override;
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
+  void Hide() noexcept override;
 
   /* virtual methods from class BlackboardListener */
   virtual void OnCalculatedUpdate(const MoreData &basic,
@@ -89,25 +63,25 @@ private:
 inline void
 TeamCodeWidget::CreateButtons(WidgetDialog &buttons)
 {
-  buttons.AddButton(_("Set code"), *this, SET_CODE);
-  buttons.AddButton(_("Set WP"), *this, SET_WAYPOINT);
-  buttons.AddButton(_("Flarm Lock"), *this, SET_FLARM_LOCK);
+  buttons.AddButton(_("Set code"), [this](){ OnCodeClicked(); });
+  buttons.AddButton(_("Set WP"), [this](){ OnSetWaypointClicked(); });
+  buttons.AddButton(_("Flarm Lock"), [this](){ OnFlarmLockClicked(); });
 }
 
 void
-TeamCodeWidget::Prepare(ContainerWindow &parent,
-                        const PixelRect &rc)
+TeamCodeWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                        [[maybe_unused]] const PixelRect &rc) noexcept
 {
   AddReadOnly(_("Own code"));
   AddReadOnly(_("Mate code"));
   AddReadOnly(_("Range"));
   AddReadOnly(_("Bearing"));
   AddReadOnly(_("Rel. bearing"));
-  AddReadOnly(_("Flarm lock"));
+  AddReadOnly(_("Flarm Lock"));
 }
 
 void
-TeamCodeWidget::Show(const PixelRect &rc)
+TeamCodeWidget::Show(const PixelRect &rc) noexcept
 {
   Update(CommonInterface::Basic(), CommonInterface::Calculated());
   CommonInterface::GetLiveBlackboard().AddListener(*this);
@@ -115,7 +89,7 @@ TeamCodeWidget::Show(const PixelRect &rc)
 }
 
 void
-TeamCodeWidget::Hide()
+TeamCodeWidget::Hide() noexcept
 {
   RowFormWidget::Hide();
   CommonInterface::GetLiveBlackboard().RemoveListener(*this);
@@ -131,7 +105,7 @@ TeamCodeWidget::Update(const MoreData &basic, const DerivedInfo &calculated)
   SetText(RELATIVE_BEARING,
           teamcode_info.teammate_available && basic.track_available
           ? FormatAngleDelta(teamcode_info.teammate_vector.bearing - basic.track).c_str()
-          : _T("---"));
+          : "---");
 
   if (teamcode_info.teammate_available) {
     SetText(BEARING,
@@ -146,7 +120,7 @@ TeamCodeWidget::Update(const MoreData &basic, const DerivedInfo &calculated)
   SetText(FLARM_LOCK,
           settings.team_flarm_id.IsDefined()
           ? settings.team_flarm_callsign.c_str()
-          : _T(""));
+          : "");
 }
 
 void
@@ -160,17 +134,18 @@ inline void
 TeamCodeWidget::OnSetWaypointClicked()
 {
   const auto wp =
-    ShowWaypointListDialog(CommonInterface::Basic().location);
+    ShowWaypointListDialog(*data_components->waypoints, CommonInterface::Basic().location);
   if (wp != nullptr) {
     CommonInterface::SetComputerSettings().team_code.team_code_reference_waypoint = wp->id;
     Profile::Set(ProfileKeys::TeamcodeRefWaypoint, wp->id);
+    Profile::Save();
   }
 }
 
 inline void
 TeamCodeWidget::OnCodeClicked()
 {
-  TCHAR newTeammateCode[10];
+  char newTeammateCode[10];
 
   CopyTruncateString(newTeammateCode, ARRAY_SIZE(newTeammateCode),
                      CommonInterface::GetComputerSettings().team_code.team_code.GetCode());
@@ -192,8 +167,8 @@ TeamCodeWidget::OnFlarmLockClicked()
 {
   TeamCodeSettings &settings =
     CommonInterface::SetComputerSettings().team_code;
-  TCHAR newTeamFlarmCNTarget[settings.team_flarm_callsign.capacity()];
-  _tcscpy(newTeamFlarmCNTarget, settings.team_flarm_callsign.c_str());
+  char newTeamFlarmCNTarget[decltype(settings.team_flarm_callsign)::capacity()];
+  strcpy(newTeamFlarmCNTarget, settings.team_flarm_callsign.c_str());
 
   if (!TextEntryDialog(newTeamFlarmCNTarget, 4))
     return;
@@ -212,7 +187,7 @@ TeamCodeWidget::OnFlarmLockClicked()
 
   if (count == 0) {
     ShowMessageBox(_("Unknown Competition Number"),
-                   _("Not Found"), MB_OK | MB_ICONINFORMATION);
+                   _("Not found"), MB_OK | MB_ICONINFORMATION);
     return;
   }
 
@@ -224,32 +199,14 @@ TeamCodeWidget::OnFlarmLockClicked()
 }
 
 void
-TeamCodeWidget::OnAction(int id)
-{
-  switch (id) {
-  case SET_CODE:
-    OnCodeClicked();
-    break;
-
-  case SET_WAYPOINT:
-    OnSetWaypointClicked();
-    break;
-
-  case SET_FLARM_LOCK:
-    OnFlarmLockClicked();
-    break;
-  }
-}
-
-void
 dlgTeamCodeShowModal()
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
-  TeamCodeWidget widget(look);
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _("Team Code"), &widget);
-  widget.CreateButtons(dialog);
+  TWidgetDialog<TeamCodeWidget>
+    dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+           look, _("Team Code"));
+  dialog.SetWidget(look);
+  dialog.GetWidget().CreateButtons(dialog);
   dialog.AddButton(_("Close"), mrOK);
   dialog.ShowModal();
-  dialog.StealWidget();
 }

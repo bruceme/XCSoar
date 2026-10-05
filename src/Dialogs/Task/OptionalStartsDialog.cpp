@@ -1,33 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskDialogs.hpp"
 #include "Dialogs/WidgetDialog.hpp"
 #include "Dialogs/Waypoint/WaypointDialogs.hpp"
-#include "Form/List.hpp"
 #include "Form/Button.hpp"
 #include "Widget/ListWidget.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Renderer/TextRowRenderer.hpp"
 #include "Task/Factory/AbstractTaskFactory.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
@@ -36,14 +15,10 @@ Copyright_License {
 #include "UIGlobals.hpp"
 #include "Look/DialogLook.hpp"
 
-#include <assert.h>
+#include <cassert>
 
-class OptionStartsWidget : public ListWidget, private ActionListener {
-  enum Buttons {
-    RELOCATE,
-    REMOVE,
-  };
-
+class OptionStartsWidget : public ListWidget {
+  Waypoints &waypoints;
   OrderedTask &task;
   bool modified = false;
 
@@ -52,12 +27,18 @@ class OptionStartsWidget : public ListWidget, private ActionListener {
   TextRowRenderer row_renderer;
 
 public:
-  explicit OptionStartsWidget(OrderedTask &_task)
-    :task(_task) {}
+  OptionStartsWidget(Waypoints &_waypoints, OrderedTask &_task) noexcept
+    :waypoints(_waypoints), task(_task) {}
 
   void CreateButtons(WidgetDialog &dialog) {
-    relocate_button = dialog.AddButton(_("Relocate"), *this, RELOCATE);
-    remove_button = dialog.AddButton(_("Remove"), *this, REMOVE);
+    relocate_button = dialog.AddButton(_("Relocate"), [this](){
+      Relocate(GetList().GetCursorIndex());
+    });
+
+    remove_button = dialog.AddButton(_("Remove"), [this](){
+      Remove(GetList().GetCursorIndex());
+    });
+
     dialog.AddButton(_("Close"), mrCancel);
   }
 
@@ -93,32 +74,28 @@ protected:
 
 public:
   /* virtual methods from class Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  void Unprepare() override {
-    DeleteWindow();
-  }
+  void Prepare([[maybe_unused]] ContainerWindow &parent, [[maybe_unused]] const PixelRect &rc) noexcept override;
 
   /* virtual methods from class List::Handler */
-  void OnPaintItem(Canvas &canvas, const PixelRect rc, unsigned idx) override;
+  void OnPaintItem(Canvas &canvas, const PixelRect rc,
+                   unsigned idx) noexcept override;
 
-  void OnCursorMoved(unsigned index) override {
+  void OnCursorMoved([[maybe_unused]] unsigned index) noexcept override {
     UpdateButtons();
   }
 
-  bool CanActivateItem(unsigned index) const override {
+  bool CanActivateItem([[maybe_unused]] unsigned index) const noexcept override {
     return index > 0;
   }
 
-  void OnActivateItem(unsigned index) override {
+  void OnActivateItem([[maybe_unused]] unsigned index) noexcept override {
     Relocate(index);
   }
-
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override;
 };
 
 void
-OptionStartsWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+OptionStartsWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                            [[maybe_unused]] const PixelRect &rc) noexcept
 {
   CreateList(parent, UIGlobals::GetDialogLook(),
              rc, row_renderer.CalculateLayout(*UIGlobals::GetDialogLook().list.font));
@@ -128,7 +105,7 @@ OptionStartsWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
 
 void
 OptionStartsWidget::OnPaintItem(Canvas &canvas, PixelRect rc,
-                                unsigned DrawListIndex)
+                                unsigned DrawListIndex) noexcept
 {
   assert(DrawListIndex < task.GetOptionalStartPointCount() + 2);
   assert(GetList().GetLength() == task.GetOptionalStartPointCount() + 2);
@@ -142,27 +119,13 @@ OptionStartsWidget::OnPaintItem(Canvas &canvas, PixelRect rc,
     const OrderedTaskPoint *tp;
     if (DrawListIndex == 0) {
       tp = &task.GetPoint(0);
-      rc.left = row_renderer.DrawColumn(canvas, rc, _T("*"));
+      rc.left = row_renderer.DrawColumn(canvas, rc, "*");
     } else
       tp = &task.GetOptionalStartPoint(index_optional_starts);
 
     assert(tp != nullptr);
 
     row_renderer.DrawTextRow(canvas, rc, tp->GetWaypoint().name.c_str());
-  }
-}
-
-void
-OptionStartsWidget::OnAction(int id)
-{
-  switch (id) {
-  case RELOCATE:
-    Relocate(GetList().GetCursorIndex());
-    break;
-
-  case REMOVE:
-    Remove(GetList().GetCursorIndex());
-    break;
   }
 }
 
@@ -179,7 +142,7 @@ OptionStartsWidget::Relocate(unsigned ItemIndex)
   const unsigned index_optional_starts = ItemIndex - 1;
 
   const GeoPoint &location = task.GetPoint(0).GetLocation();
-  auto way_point = ShowWaypointListDialog(location);
+  auto way_point = ShowWaypointListDialog(waypoints, location);
   if (!way_point)
     return;
 
@@ -207,19 +170,19 @@ OptionStartsWidget::Remove(unsigned i)
 }
 
 bool
-dlgTaskOptionalStarts(OrderedTask &task)
+dlgTaskOptionalStarts(Waypoints &waypoints, OrderedTask &task)
 {
   assert(task.TaskSize() > 0);
 
-  OptionStartsWidget widget(task);
-  WidgetDialog dialog(UIGlobals::GetDialogLook());
-  dialog.CreateFull(UIGlobals::GetMainWindow(),
-                    _("Alternate Start Points"), &widget);
-  widget.CreateButtons(dialog);
+  TWidgetDialog<OptionStartsWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           UIGlobals::GetDialogLook(),
+           _("Alternate Start Points"));
+  dialog.SetWidget(waypoints, task);
+  dialog.GetWidget().CreateButtons(dialog);
   dialog.EnableCursorSelection();
 
   dialog.ShowModal();
-  dialog.StealWidget();
 
-  return widget.IsModified();
+  return dialog.GetWidget().IsModified();
 }

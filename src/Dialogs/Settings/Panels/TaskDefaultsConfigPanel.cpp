@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Profile/Profile.hpp"
 #include "Language/Language.hpp"
@@ -32,6 +12,8 @@ Copyright_License {
 #include "Widget/RowFormWidget.hpp"
 #include "TaskDefaultsConfigPanel.hpp"
 #include "UIGlobals.hpp"
+
+using namespace std::chrono;
 
 enum ControlIndex {
   StartType,
@@ -59,16 +41,16 @@ public:
   void SetFinishLabel();
 
   /* methods from Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
 private:
   /* methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override;
+  void OnModified(DataField &df) noexcept override;
 };
 
 void
-TaskDefaultsConfigPanel::OnModified(DataField &df)
+TaskDefaultsConfigPanel::OnModified(DataField &df) noexcept
 {
   if (IsDataField(StartType, df))
     SetStartLabel();
@@ -76,15 +58,15 @@ TaskDefaultsConfigPanel::OnModified(DataField &df)
     SetFinishLabel();
 }
 
-static const TCHAR *const Caption_GateWidth = N_("Gate width");
-static const TCHAR *const Caption_Radius = N_("Radius");
+static const char *const Caption_GateWidth = N_("Gate width");
+static const char *const Caption_Radius = N_("Radius");
 
 void
 TaskDefaultsConfigPanel::SetStartLabel()
 {
   WndProperty &wp = GetControl(StartRadius);
 
-  if (GetValueInteger(StartType) == (int)TaskPointFactoryType::START_LINE)
+  if ((TaskPointFactoryType)GetValueEnum(StartType) == TaskPointFactoryType::START_LINE)
     wp.SetCaption(gettext(Caption_GateWidth));
   else
     wp.SetCaption(gettext(Caption_Radius));
@@ -95,7 +77,7 @@ TaskDefaultsConfigPanel::SetFinishLabel()
 {
   WndProperty &wp = GetControl(FinishRadius);
 
-  if (GetValueInteger(FinishType) == (int)TaskPointFactoryType::FINISH_LINE)
+  if ((TaskPointFactoryType)GetValueEnum(FinishType) == TaskPointFactoryType::FINISH_LINE)
     wp.SetCaption(gettext(Caption_GateWidth));
   else
     wp.SetCaption(gettext(Caption_Radius));
@@ -117,7 +99,7 @@ FillPointTypes(DataFieldEnum &df,
                    OrderedTaskPointDescription(type));
   }
 
-  df.Set((unsigned)value);
+  df.SetValue(value);
 }
 
 static void
@@ -130,7 +112,8 @@ FillPointTypes(WndProperty &wp,
 }
 
 void
-TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent,
+                                 const PixelRect &rc) noexcept
 {
   WndProperty *wp;
   const ComputerSettings &settings_computer = CommonInterface::GetComputerSettings();
@@ -147,7 +130,7 @@ TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
                  task_behaviour.sector_defaults.start_type);
 
   AddFloat(Caption_GateWidth, _("Default radius or gate width of the start zone for new tasks."),
-           _T("%.1f %s"), _T("%.1f"), 0.1, 100, 1.0, true, UnitGroup::DISTANCE,
+           "%.1f %s", "%.1f", 0.1, 100, 1.0, true, UnitGroup::DISTANCE,
            task_behaviour.sector_defaults.start_radius);
 
   AddSpacer();
@@ -159,7 +142,7 @@ TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
                  task_behaviour.sector_defaults.finish_type);
 
   AddFloat(Caption_GateWidth, _("Default radius or gate width of the finish zone in new tasks."),
-           _T("%.1f %s"), _T("%.1f"), 0.1, 100, 1.0, true, UnitGroup::DISTANCE,
+           "%.1f %s", "%.1f", 0.1, 100, 1.0, true, UnitGroup::DISTANCE,
            task_behaviour.sector_defaults.finish_radius);
 
   AddSpacer();
@@ -169,7 +152,7 @@ TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
                  task_behaviour.sector_defaults.turnpoint_type);
 
   AddFloat(Caption_Radius, _("Default radius of turnpoint cylinders and sectors in new tasks."),
-           _T("%.1f %s"), _T("%.1f"), 0.1, 100, 1.0, true, UnitGroup::DISTANCE,
+           "%.1f %s", "%.1f", 0.1, 100, 1.0, true, UnitGroup::DISTANCE,
            task_behaviour.sector_defaults.turnpoint_radius);
 
   AddSpacer();
@@ -186,18 +169,20 @@ TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
           (unsigned)factory_types[i], OrderedTaskFactoryDescription(
               factory_types[i]));
       if (factory_types[i] == task_behaviour.task_type_default)
-        dfe->Set((unsigned)factory_types[i]);
+        dfe->SetValue(factory_types[i]);
     }
     wp->RefreshDisplay();
   }
 
-  AddTime(_("AAT min. time"), _("Default AAT min. time for new AAT tasks."),
-          60, 10 * 60 * 60, 60, (unsigned)task_behaviour.ordered_defaults.aat_min_time);
+  AddDuration(_("AAT min. time"), _("Default AAT min. time for new AAT tasks."),
+              minutes{1}, hours{10}, minutes{1},
+              task_behaviour.ordered_defaults.aat_min_time);
 
-  AddTime(_("Optimisation margin"),
-          _("Safety margin for AAT task optimisation.  Optimisation "
-            "seeks to complete the task at the minimum time plus this margin time."),
-          0, 30 * 60, 60, (unsigned)task_behaviour.optimise_targets_margin);
+  AddDuration(_("Optimisation margin"),
+              _("Safety margin for AAT task optimisation. Optimisation "
+                "seeks to complete the task at the minimum time plus this margin time."),
+              {}, minutes{30}, minutes{1},
+              task_behaviour.optimise_targets_margin);
   SetExpertRow(AATTimeMargin);
 
   SetStartLabel();
@@ -205,7 +190,7 @@ TaskDefaultsConfigPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
 }
 
 bool
-TaskDefaultsConfigPanel::Save(bool &_changed)
+TaskDefaultsConfigPanel::Save(bool &_changed) noexcept
 {
   bool changed = false;
 
@@ -231,26 +216,18 @@ TaskDefaultsConfigPanel::Save(bool &_changed)
 
   changed |= SaveValueEnum(TaskType, ProfileKeys::TaskType, task_behaviour.task_type_default);
 
-  unsigned aatminutes = (unsigned)task_behaviour.ordered_defaults.aat_min_time;
-  if (SaveValue(AATMinTime, aatminutes)) {
-    task_behaviour.ordered_defaults.aat_min_time = aatminutes;
-    Profile::Set(ProfileKeys::AATMinTime, aatminutes);
-    changed = true;
-  }
+  changed |= SaveValue(AATMinTime, ProfileKeys::AATMinTime,
+                       task_behaviour.ordered_defaults.aat_min_time);
 
-  unsigned aatmargin = task_behaviour.optimise_targets_margin;
-  if (SaveValue(AATTimeMargin, aatmargin)) {
-    task_behaviour.optimise_targets_margin = aatmargin;
-    Profile::Set(ProfileKeys::AATTimeMargin, aatmargin);
-    changed = true;
-  }
+  changed |= SaveValue(AATTimeMargin, ProfileKeys::AATTimeMargin,
+                       task_behaviour.optimise_targets_margin);
 
   _changed |= changed;
   return true;
 }
 
-Widget *
+std::unique_ptr<Widget>
 CreateTaskDefaultsConfigPanel()
 {
-  return new TaskDefaultsConfigPanel();
+  return std::make_unique<TaskDefaultsConfigPanel>();
 }

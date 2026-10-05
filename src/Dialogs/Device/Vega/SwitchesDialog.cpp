@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "SwitchesDialog.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -32,27 +12,27 @@ Copyright_License {
 #include "Form/DataField/Enum.hpp"
 
 static constexpr StaticEnumChoice flap_position_list[] = {
-  { (unsigned)SwitchState::FlapPosition::UNKNOWN, N_("Unknown") },
-  { (unsigned)SwitchState::FlapPosition::POSITIVE, N_("Positive") },
-  { (unsigned)SwitchState::FlapPosition::NEUTRAL, N_("Neutral") },
-  { (unsigned)SwitchState::FlapPosition::NEGATIVE, N_("Negative") },
-  { (unsigned)SwitchState::FlapPosition::LANDING, N_("Landing") },
-  { 0 }
+  { SwitchState::FlapPosition::UNKNOWN, N_("Unknown") },
+  { SwitchState::FlapPosition::POSITIVE, N_("Positive") },
+  { SwitchState::FlapPosition::NEUTRAL, N_("Neutral") },
+  { SwitchState::FlapPosition::NEGATIVE, N_("Negative") },
+  { SwitchState::FlapPosition::LANDING, N_("Landing") },
+  nullptr
 };
 
 static constexpr StaticEnumChoice user_switch_list[] = {
-  { (unsigned)SwitchState::UserSwitch::UNKNOWN, N_("Unknown") },
-  { (unsigned)SwitchState::UserSwitch::UP, N_("Up") },
-  { (unsigned)SwitchState::UserSwitch::MIDDLE, N_("Middle") },
-  { (unsigned)SwitchState::UserSwitch::DOWN, N_("Down") },
-  { 0 }
+  { SwitchState::UserSwitch::UNKNOWN, N_("Unknown") },
+  { SwitchState::UserSwitch::UP, N_("Up") },
+  { SwitchState::UserSwitch::MIDDLE, N_("Middle") },
+  { SwitchState::UserSwitch::DOWN, N_("Down") },
+  nullptr
 };
 
 static constexpr StaticEnumChoice airbrake_state_list[] = {
-  { (unsigned)SwitchState::AirbrakeState::UNKNOWN, N_("Unknown") },
-  { (unsigned)SwitchState::AirbrakeState::LOCKED, N_("Locked") },
-  { (unsigned)SwitchState::AirbrakeState::NOT_LOCKED, N_("Not locked") },
-  { 0 }
+  { SwitchState::AirbrakeState::UNKNOWN, N_("Unknown") },
+  { SwitchState::AirbrakeState::LOCKED, N_("Locked") },
+  { SwitchState::AirbrakeState::NOT_LOCKED, N_("Not locked") },
+  nullptr
 };
 
 class SwitchesLeft : public RowFormWidget {
@@ -110,7 +90,9 @@ public:
 class SwitchesDialog : public TwoWidgets, private NullBlackboardListener {
 public:
   SwitchesDialog(const DialogLook &look)
-    :TwoWidgets(new SwitchesLeft(look), new SwitchesRight(look), false) {}
+    :TwoWidgets(std::make_unique<SwitchesLeft>(look),
+                std::make_unique<SwitchesRight>(look),
+                false) {}
 
   void Update(const SwitchState &switches) {
     ((SwitchesLeft &)GetFirst()).Update(switches);
@@ -118,21 +100,21 @@ public:
   }
 
   /* virtual methods from Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override {
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override {
     ((SwitchesLeft &)GetFirst()).Create();
     ((SwitchesRight &)GetSecond()).Create();
 
     TwoWidgets::Prepare(parent, rc);
   }
 
-  virtual void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     Update(CommonInterface::Basic().switch_state);
     TwoWidgets::Show(rc);
     CommonInterface::GetLiveBlackboard().AddListener(*this);
   }
 
-  virtual void Hide() override {
+  void Hide() noexcept override {
     CommonInterface::GetLiveBlackboard().RemoveListener(*this);
     TwoWidgets::Hide();
   }
@@ -148,9 +130,9 @@ void
 dlgSwitchesShowModal()
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _("Switches"),
-                    new SwitchesDialog(look));
+  WidgetDialog dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+                      look, _("Switches"),
+                      new SwitchesDialog(look));
   dialog.AddButton(_("Close"), mrCancel);
   dialog.ShowModal();
 }

@@ -1,35 +1,14 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_GRIDVIEW_HPP
-#define XCSOAR_FORM_GRIDVIEW_HPP
+#pragma once
 
 #include "Panel.hpp"
-#include "Util/StaticArray.hxx"
+#include "util/StaticArray.hxx"
 
 class GridView : public PanelControl {
 public:
-  static constexpr unsigned MAX_ITEMS = 32;
+  static constexpr unsigned MAX_ITEMS = 64;
 
   enum class Direction
   {
@@ -48,10 +27,14 @@ private:
   unsigned num_columns;
   unsigned num_rows;
   unsigned current_page;
+  unsigned previous_page;
+  unsigned saved_row_from_previous_page;
+
+  StaticArray<unsigned, 16> saved_row_per_page;
 
 public:
-  void Create(ContainerWindow &parent, const DialogLook &look,
-              const PixelRect &rc, const WindowStyle style,
+  void Create(ContainerWindow &parent, const PixelRect &rc,
+              const WindowStyle style,
               unsigned column_width, unsigned row_height);
 
   void AddItem(Window &w) {
@@ -66,6 +49,10 @@ public:
     return row_height;
   }
 
+  void SetColumnWidth(unsigned _column_width) noexcept {
+    column_width = _column_width;
+  }
+
   unsigned GetCurrentPage() const {
     return current_page;
   }
@@ -78,22 +65,104 @@ public:
     return num_rows;
   }
 
-  gcc_pure
+  [[gnu::pure]]
   signed GetIndexOfItemInFocus() const;
+
+  [[gnu::pure]]
+  unsigned GetPageSize() const noexcept {
+    return num_columns * num_rows;
+  }
 
   void MoveFocus(Direction direction);
   void ShowNextPage(Direction direction = Direction::RIGHT);
   void RefreshLayout();
 
+  [[gnu::const]]
+  static bool IsHorizontal(Direction direction) noexcept {
+    return direction == Direction::LEFT || direction == Direction::RIGHT;
+  }
+  
+  [[gnu::const]]
+  static bool IsVertical(Direction direction) noexcept {
+    return direction == Direction::UP || direction == Direction::DOWN;
+  }
+
 private:
-  gcc_pure
+  [[gnu::pure]]
   signed GetNextItemIndex(unsigned currIndex, Direction direction) const;
 
-  gcc_pure
+  [[gnu::pure]]
   signed GetNextEnabledItemIndex(signed currIndex, Direction direction) const;
 
-  /* virtual methods from class Window */
-  void OnResize(PixelSize new_size) override;
-};
+  signed FindEnabledInRow(unsigned pageStart, unsigned rowNum,
+                          unsigned pageEnd) const noexcept;
+  signed FindEnabledInColumn(unsigned pageStart, unsigned colNum,
+                             unsigned pageEnd) const noexcept;
+  bool HasEnabledInRow(unsigned pageStart, unsigned rowNum,
+                       unsigned pageEnd) const noexcept;
+  bool HasEnabledInDirection(unsigned focusPos, Direction direction) const noexcept;
+  
+  signed FindNextInRow(signed currIndex, Direction direction, bool cycle) const noexcept;
+  signed FindNextInColumn(signed currIndex, Direction direction, bool cycle) const noexcept;
 
-#endif
+  /** True at the first/last cell of the focused item's row. */
+  [[gnu::pure]]
+  bool IsAtRowEdge(signed focus_pos, Direction direction) const noexcept;
+  
+  struct PageBounds {
+    unsigned pageStart;
+    unsigned pageEnd;
+    unsigned currentPageSize;
+    unsigned lastPage;
+  };
+  PageBounds GetPageBounds(unsigned page) const noexcept;
+  PageBounds GetPageBoundsForIndex(signed index) const noexcept;
+  
+  struct PagePosition {
+    unsigned pagePos;
+    unsigned rowNum;
+    unsigned colNum;
+  };
+  PagePosition GetPagePosition(signed index) const noexcept;
+  
+  signed FindFirstEnabledInRange(unsigned start, unsigned end) const noexcept;
+  
+  [[gnu::pure]]
+  bool IsItemValid(unsigned i) const noexcept {
+    return i < items.size() && items[i] != nullptr;
+  }
+  
+  [[gnu::pure]]
+  bool IsItemValidAndEnabled(unsigned i) const noexcept {
+    return IsItemValid(i) && items[i]->IsEnabled();
+  }
+  
+  [[gnu::pure]]
+  bool IsItemValidAndHasFocus(unsigned i) const noexcept {
+    return IsItemValid(i) && items[i]->HasFocus();
+  }
+  
+  [[gnu::pure]]
+  bool IsItemInColumn(unsigned i, unsigned colNum) const noexcept {
+    unsigned pageSize = GetPageSize();
+    unsigned iPagePos = i % pageSize;
+    return iPagePos % num_columns == colNum;
+  }
+  
+  [[gnu::pure]]
+  bool IsItemInRow(unsigned i, unsigned rowNum) const noexcept {
+    unsigned pageSize = GetPageSize();
+    unsigned iPagePos = i % pageSize;
+    return iPagePos / num_columns == rowNum;
+  }
+  
+  void SaveRowPosition(unsigned page) noexcept;
+  unsigned GetSavedRowPosition(unsigned page) const noexcept;
+  signed CalculateTargetPosition(unsigned pageStart, unsigned pageEnd,
+                                 unsigned preferredRow,
+                                 Direction fromDirection) const noexcept;
+  signed FocusPositionOnPage(unsigned preferredRow, Direction fromDirection) noexcept;
+
+  /* virtual methods from class Window */
+  void OnResize(PixelSize new_size) noexcept override;
+};

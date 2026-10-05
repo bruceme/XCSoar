@@ -1,82 +1,79 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "SectorZoneEditWidget.hpp"
 #include "Engine/Task/ObservationZones/SectorZone.hpp"
 #include "Engine/Task/ObservationZones/AnnularSectorZone.hpp"
+#include "Engine/Task/ObservationZones/SymmetricSectorZone.hpp"
 #include "Language/Language.hpp"
 
 enum Controls {
   RADIUS,
   START_RADIAL,
   END_RADIAL,
+  ANGLE,
   INNER_RADIUS,
 };
 
-SectorZoneEditWidget::SectorZoneEditWidget(SectorZone &_oz)
+SectorZoneEditWidget::SectorZoneEditWidget(SectorZone &_oz) noexcept
   :ObservationZoneEditWidget(_oz) {}
 
 void
-SectorZoneEditWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+SectorZoneEditWidget::Prepare(ContainerWindow &parent,
+                              const PixelRect &rc) noexcept
 {
   ObservationZoneEditWidget::Prepare(parent, rc);
 
   const auto shape = GetObject().GetShape();
 
   AddFloat(_("Radius"), _("Radius of the OZ sector."),
-           _T("%.1f %s"), _T("%.1f"),
+           "%.1f %s", "%.1f",
            0.1, 200, 1, true,
            UnitGroup::DISTANCE, GetObject().GetRadius(),
            this);
 
-  if (shape == ObservationZone::Shape::SYMMETRIC_QUADRANT) {
-    AddDummy();
-    AddDummy();
+  if (shape == ObservationZone::Shape::SYMMETRIC_SECTOR) {
+    AddDummy(); // Start radial
+    AddDummy(); // Finish radial
+
+    if (const auto *oz = dynamic_cast<const SymmetricSectorZone *>(&GetObject())) {
+      Angle angle = oz->GetSectorAngle();
+      AddAngle(_("Angle"), _("Angle of the OZ sector"),
+               angle, 10, true,
+               this);
+    } else {
+      assert(false);
+      AddDummy(); // Angle
+    }
   } else {
     AddAngle(_("Start radial"), _("Start radial of the OZ area"),
              GetObject().GetStartRadial(), 10, true,
              this);
 
     AddAngle(_("Finish radial"), _("Finish radial of the OZ area"),
-             GetObject().GetEndRadial(), 10, true,
-             this);
+              GetObject().GetEndRadial(), 10, true,
+              this);
+    AddDummy(); // Angle
   }
 
   if (shape == ObservationZonePoint::Shape::ANNULAR_SECTOR) {
     const AnnularSectorZone &annulus = (const AnnularSectorZone &)GetObject();
 
     AddFloat(_("Inner radius"), _("Inner radius of the OZ sector."),
-             _T("%.1f %s"), _T("%.1f"),
+             "%.1f %s", "%.1f",
              0.1, 100, 1, true,
              UnitGroup::DISTANCE, annulus.GetInnerRadius(),
              this);
+  } else {
+    AddDummy(); // Inner radius
   }
 }
 
 bool
-SectorZoneEditWidget::Save(bool &_changed)
+SectorZoneEditWidget::Save(bool &_changed) noexcept
 {
   const auto shape = GetObject().GetShape();
+
   bool changed = false;
 
   auto radius = GetObject().GetRadius();
@@ -85,7 +82,18 @@ SectorZoneEditWidget::Save(bool &_changed)
     changed = true;
   }
 
-  if (shape == ObservationZone::Shape::SYMMETRIC_QUADRANT) {
+  if (shape == ObservationZone::Shape::SYMMETRIC_SECTOR) {
+    if (auto *oz = dynamic_cast<SymmetricSectorZone *>(&GetObject())) {
+      Angle angle = Angle::Zero();
+      if (SaveValue(ANGLE, angle)) {
+        oz->SetSectorAngle(angle);
+        changed = true;
+      }
+    } else {
+      // Failed to cast to SymmetricSectorZone
+      assert(false);
+    }
+
   } else {
     Angle radial = GetObject().GetStartRadial();
     if (SaveValue(START_RADIAL, radial)) {

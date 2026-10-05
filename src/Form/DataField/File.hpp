@@ -1,46 +1,34 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FILE_DATA_FIELD_HPP
-#define XCSOAR_FILE_DATA_FIELD_HPP
+#pragma once
 
 #include "Base.hpp"
 #include "Repository/FileType.hpp"
-#include "OS/Path.hpp"
-#include "Util/StaticArray.hxx"
-#include "Util/StaticString.hxx"
+#include "system/Path.hpp"
+#include "util/StaticArray.hxx"
+#include "util/StaticString.hxx"
 
+#include <cstdint>
+#include <initializer_list>
 #include <utility>
 
 /**
  * #DataField specialisation that supplies options as a list of
  * files matching a suffix.  First entry is always blank for null entry.
- * 
+ *
  */
 class FileDataField final : public DataField {
   typedef StaticArray<StaticString<32>, 8> PatternList;
+  typedef StaticArray<FileType, 8> FileTypeList;
 
 public:
+  enum class SortOrder : uint8_t {
+    NO_ORDER,
+    ASCENDING,
+    DESCENDING,
+  };
+
   /** FileList item */
   struct Item {
     /** Filename */
@@ -48,22 +36,24 @@ public:
     /** Path including Filename */
     AllocatedPath path;
 
-    Item():filename(nullptr), path(nullptr) {}
+    Item() noexcept:filename(nullptr), path(nullptr) {}
 
-    Item(Item &&src):filename(src.filename), path(std::move(src.path)) {
+    Item(Item &&src) noexcept
+      :filename(src.filename), path(std::move(src.path))
+    {
       src.filename = nullptr;
       src.path = nullptr;
     }
 
     Item(const Item &) = delete;
 
-    Item &operator=(Item &&src) {
+    Item &operator=(Item &&src) noexcept {
       std::swap(filename, src.filename);
       std::swap(path, src.path);
       return *this;
     }
 
-    void Set(Path _path);
+    void Set(Path _path) noexcept;
   };
 
 private:
@@ -74,7 +64,7 @@ private:
   /** FileList item array */
   StaticArray<Item, MAX_FILES> files;
 
-  FileType file_type;
+  FileTypeList file_types;
 
   /**
    * Has the file list already been loaded?  This class tries to
@@ -84,10 +74,16 @@ private:
   bool loaded;
 
   /**
-   * Set to true if Sort() has been called before the file list was
-   * loaded.  It will trigger a call to Sort() after loading.
+   * Stores the requested sort order if Sort() has been called before
+   * the file list was loaded. It will trigger a sort after loading.
    */
-  bool postponed_sort;
+  SortOrder postponed_sort;
+
+  /**
+   * Stores whether the first entry should be skipped during sorting if
+   * Sort() has been called before the file list was loaded.
+   */
+  bool postponed_preserve_first = false;
 
   /**
    * Used to store the value while !loaded.
@@ -104,35 +100,47 @@ public:
    * Constructor of the FileDataField class
    * @param OnDataAccess
    */
-  FileDataField(DataFieldListener *listener=nullptr);
+  explicit FileDataField(DataFieldListener *listener=nullptr) noexcept;
 
-  FileType GetFileType() const {
-    return file_type;
+  [[gnu::pure]]
+  bool HasSingleFileType() const noexcept {
+    return file_types.size() == 1;
   }
 
-  void SetFileType(FileType _file_type) {
-    file_type = _file_type;
+  FileType GetFileType() const noexcept {
+    return HasSingleFileType()
+      ? file_types.front()
+      : FileType::UNKNOWN;
   }
+
+  void SetFileType(FileType _file_type) noexcept {
+    SetFileTypes({_file_type});
+  }
+
+  void SetFileTypes(std::initializer_list<FileType> _file_types) noexcept;
+
+  [[gnu::pure]]
+  bool HasFileType(FileType type) const noexcept;
 
   /**
    * Adds a filename/filepath couple to the filelist
    */
-  void AddFile(Path path);
+  void AddFile(Path path) noexcept;
 
   /**
    * Adds an empty row to the filelist
    */
-  void AddNull();
+  void AddNull() noexcept;
 
   /**
    * Returns the number of files in the list
    * @return The number of files in the list
    */
-  gcc_pure
-  unsigned GetNumFiles() const;
+  [[gnu::pure]]
+  unsigned GetNumFiles() const noexcept;
 
-  gcc_pure
-  int Find(Path path) const;
+  [[gnu::pure]]
+  int Find(Path path) const noexcept;
 
   /**
    * Iterates through the file list and tries to find an item where the path
@@ -140,63 +148,63 @@ public:
    * that item
    * @param text PathFile to search for
    */
-  void Lookup(Path text);
+  void SetValue(Path new_value) noexcept;
+  void ModifyValue(Path new_value) noexcept;
 
   /**
    * Force the value to the given path.  If the path is not in the
    * file list, add it.  This method does not check whether the file
    * really exists.
    */
-  void ForceModify(Path path);
+  void ForceModify(Path path) noexcept;
 
   /**
    * Returns the PathFile of the currently selected item
    * @return The PathFile of the currently selected item
    */
-  gcc_pure
-  Path GetPathFile() const;
+  [[gnu::pure]]
+  Path GetValue() const noexcept;
 
   /**
    * Sets the selection to the given index
    * @param Value The array index to select
    */
-  void Set(unsigned new_value);
+  void SetIndex(unsigned new_value) noexcept;
+  void ModifyIndex(unsigned new_value) noexcept;
 
   /** Sorts the filelist by filenames */
-  void Sort();
-  void ScanDirectoryTop(const TCHAR *filter);
+  void Sort(SortOrder order = SortOrder::ASCENDING,
+            bool preserve_first = false) noexcept;
+  void ScanDirectoryTop(const char *filter) noexcept;
 
   /**
    * Scan multiple shell patterns.  Each pattern is terminated by a
    * null byte, and the list ends with an empty pattern.
    */
-  void ScanMultiplePatterns(const TCHAR *patterns);
+  void ScanMultiplePatterns(const char *patterns) noexcept;
 
   /** For use by other classes */
-  gcc_pure
-  unsigned size() const;
+  [[gnu::pure]]
+  unsigned size() const noexcept;
 
-  gcc_pure
-  Path GetItem(unsigned index) const;
+  [[gnu::pure]]
+  const Item &GetItem(unsigned index) const noexcept;
 
   /* virtual methods from class DataField */
-  void Inc() override;
-  void Dec() override;
-  int GetAsInteger() const override;
-  const TCHAR *GetAsString() const override;
-  const TCHAR *GetAsDisplayString() const override;
-  void SetAsInteger(int value) override;
-  ComboList CreateComboList(const TCHAR *reference) const override;
+  void Inc() noexcept override;
+  void Dec() noexcept override;
+  const char *GetAsString() const noexcept override;
+  const char *GetAsDisplayString() const noexcept override;
+  ComboList CreateComboList(const char *reference) const noexcept override;
+  void SetFromCombo(int i, const char *s) noexcept override;
 
 protected:
-  void EnsureLoaded();
+  void EnsureLoaded() noexcept;
 
   /**
    * Hack for our "const" methods, to allow them to load on demand.
    */
-  void EnsureLoadedDeconst() const {
+  void EnsureLoadedDeconst() const noexcept {
     const_cast<FileDataField *>(this)->EnsureLoaded();
   }
 };
-
-#endif

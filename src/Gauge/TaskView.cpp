@@ -1,28 +1,8 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Gauge/TaskView.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Projection/ChartProjection.hpp"
 #include "Renderer/BackgroundRenderer.hpp"
 #include "Renderer/AirspaceRenderer.hpp"
@@ -39,12 +19,13 @@
 #include "MapSettings.hpp"
 
 #ifndef ENABLE_OPENGL
-#include "Screen/BufferCanvas.hpp"
+#include "ui/canvas/BufferCanvas.hpp"
 #else
-#include "Screen/OpenGL/Scope.hpp"
+#include "ui/canvas/opengl/Scope.hpp"
+#include "ui/canvas/opengl/Scissor.hpp"
 #endif
 
-gcc_pure
+[[gnu::pure]]
 static bool
 IsFAITriangleApplicable(TaskFactoryType factory)
 {
@@ -69,7 +50,7 @@ IsFAITriangleApplicable(TaskFactoryType factory)
   gcc_unreachable();
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
 IsFAITriangleApplicable(const OrderedTask &task)
 {
@@ -142,7 +123,6 @@ PaintTask(Canvas &canvas, const WindowProjection &projection,
 
   if (fai_sectors && IsFAITriangleApplicable(task)) {
     static constexpr Color fill_color = COLOR_YELLOW;
-#if defined(ENABLE_OPENGL) || defined(USE_MEMORY_CANVAS)
 #ifdef ENABLE_OPENGL
     const ScopeAlphaBlend alpha_blend;
 #endif
@@ -150,31 +130,13 @@ PaintTask(Canvas &canvas, const WindowProjection &projection,
     canvas.Select(Brush(fill_color.WithAlpha(40)));
     canvas.Select(Pen(1, COLOR_BLACK.WithAlpha(80)));
     RenderFAISectors(canvas, projection, task);
-#else
-    BufferCanvas buffer_canvas;
-    buffer_canvas.Create(canvas);
-    buffer_canvas.ClearWhite();
-#ifdef HAVE_HATCHED_BRUSH
-    buffer_canvas.Select(airspace_look.brushes[3]);
-    buffer_canvas.SetTextColor(fill_color);
-    buffer_canvas.SetBackgroundColor(COLOR_WHITE);
-#else
-    buffer_canvas.Select(Brush(fill_color));
-#endif
-    buffer_canvas.SelectNullPen();
-    RenderFAISectors(buffer_canvas, projection, task);
-    canvas.CopyAnd(buffer_canvas);
-
-    canvas.SelectHollowBrush();
-    canvas.SelectBlackPen();
-    RenderFAISectors(canvas, projection, task);
-#endif
   }
 
   OZRenderer ozv(task_look, airspace_look, settings_map.airspace);
   TaskPointRenderer tpv(canvas, projection, task_look,
                         task.GetTaskProjection(),
-                        ozv, false, TaskPointRenderer::NONE,
+                        ozv, false,
+                        TaskPointRenderer::TargetVisibility::NONE,
                         location);
   TaskRenderer dv(tpv, projection.GetScreenBounds());
   dv.Draw(task);
@@ -188,8 +150,8 @@ PaintTask(Canvas &canvas, const WindowProjection &projection,
     auto pt = projection.GeoToScreen(task.GetPoint(highlight_index).
                                      GetLocation());
     canvas.Select(task_look.highlight_pen);
-    canvas.DrawLine(pt.x - 7, pt.y - 7, pt.x + 7, pt.y + 7);
-    canvas.DrawLine(pt.x + 7, pt.y - 7, pt.x - 7, pt.y + 7);
+    canvas.DrawLine(pt.At(-7, -7), pt.At(7, 7));
+    canvas.DrawLine(pt.At(7, -7), pt.At(-7, 7));
   }
 }
 
@@ -209,7 +171,12 @@ PaintTask(Canvas &canvas, const PixelRect &rc, const OrderedTask &task,
     return;
   }
 
-  ChartProjection projection(rc, task);
+#ifdef ENABLE_OPENGL
+  /* enable clipping */
+  GLCanvasScissor scissor(rc);
+#endif
+
+  ChartProjection projection(rc, task.GetTaskProjection(), 1);
   PaintTask(canvas, projection, task, location,
             settings_map,
             task_look, airspace_look, terrain, airspaces,
@@ -228,6 +195,11 @@ PaintTaskPoint(Canvas &canvas, const PixelRect &rc,
                const RasterTerrain *terrain, const Airspaces *airspaces,
                int highlight_index)
 {
+#ifdef ENABLE_OPENGL
+  /* enable clipping */
+  GLCanvasScissor scissor(rc);
+#endif
+
   ChartProjection projection(rc, point);
   PaintTask(canvas, projection, task, location,
             settings_map,

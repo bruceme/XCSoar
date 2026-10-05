@@ -1,39 +1,34 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-  }
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "MapScaleRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/canvas/Font.hpp"
 #include "Screen/Layout.hpp"
 #include "Projection/WindowProjection.hpp"
 #include "Look/OverlayLook.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
 #include "Formatter/UserUnits.hpp"
+
+unsigned
+GetMapScaleBandHeight(const Font &font) noexcept
+{
+  return font.GetCapitalHeight() + Layout::GetTextPadding();
+}
+
+unsigned
+GetMapScaleAndTitleClearance(const Font &font) noexcept
+{
+  return GetMapScaleBandHeight(font)
+    + font.GetHeight() + Layout::GetTextPadding();
+}
 
 void
 RenderMapScale(Canvas &canvas,
                const WindowProjection& projection,
                const PixelRect &rc,
-               const OverlayLook &look)
+               const OverlayLook &look,
+               unsigned contour_spacing_m)
 {
   if (!projection.IsValid())
     return;
@@ -48,28 +43,61 @@ RenderMapScale(Canvas &canvas,
   PixelSize text_size = canvas.CalcTextSize(buffer);
 
   // check if window too small to bother drawing
-  if ((unsigned)text_size.cx*3 > rc.GetWidth())
+  if (text_size.width * 3 > rc.GetWidth())
     return;
 
   const int text_padding_x = Layout::GetTextPadding();
-  const unsigned height = font.GetCapitalHeight()
-      + Layout::GetTextPadding();
+  const int height = int(GetMapScaleBandHeight(font));
+
+  const int top = rc.bottom - height - 1;
+
+  /* The icons are scaled to the height of the white boxes so that the
+     whole scale bar is one band, independent of DPI and font metrics.
+     They are flush with the edge of their bitmap where they meet a
+     box; overlap that seam by one pixel, because magnifying a texture
+     can leave its outermost pixel column slightly translucent. */
+  constexpr int overlap = 1;
+
+  /* MaskedIcon::Draw() inverts greyscale icons when the canvas' text
+     colour suggests a dark background.  These icons always sit on a
+     white box, so pin the text colour before drawing them. */
+  canvas.SetTextColor(COLOR_BLACK);
 
   int x = rc.left;
-  look.map_scale_left_icon.Draw(canvas, PixelPoint(x, rc.bottom - height));
+  look.map_scale_left_icon.Draw(canvas, PixelPoint(x, top), height);
 
-  x += look.map_scale_left_icon.GetSize().cx;
-  canvas.DrawFilledRectangle(x, rc.bottom - height,
-                             x + 2 * text_padding_x + text_size.cx,
-                             rc.bottom, COLOR_WHITE);
+  x += look.map_scale_left_icon.GetScaledSize(height).width;
+  canvas.DrawFilledRectangle({{x - overlap, top},
+                              PixelSize{overlap + 2 * text_padding_x + (int)text_size.width, height}}, COLOR_WHITE);
 
   canvas.SetBackgroundTransparent();
-  canvas.SetTextColor(COLOR_BLACK);
   x += text_padding_x;
-  canvas.DrawText(x,
-                  rc.bottom - font.GetAscentHeight() - Layout::Scale(1),
+  canvas.DrawText({x, rc.bottom - (int)(font.GetAscentHeight() + Layout::Scale(1u)) - 1},
                   buffer);
 
-  x += text_padding_x + text_size.cx;
-  look.map_scale_right_icon.Draw(canvas, PixelPoint(x, rc.bottom - height));
+  x += text_padding_x + text_size.width;
+  look.map_scale_right_icon.Draw(canvas, PixelPoint(x - overlap, top), height);
+
+  if (contour_spacing_m > 0) {
+    x += look.map_scale_right_icon.GetScaledSize(height).width;
+    x += text_padding_x * 2;
+
+    const auto contour_buf = FormatUserAltitude((double)contour_spacing_m);
+    PixelSize contour_size = canvas.CalcTextSize(contour_buf.c_str());
+    const int icon_width = look.contour_spacing_icon.GetScaledSize(height).width;
+
+    canvas.DrawFilledRectangle(
+      {{x, top},
+       PixelSize{icon_width + 2 * text_padding_x + (int)contour_size.width, height}},
+      COLOR_WHITE);
+
+    look.contour_spacing_icon.Draw(canvas, PixelPoint(x, top), height);
+
+    canvas.SetBackgroundTransparent();
+    canvas.SetTextColor(COLOR_BLACK);
+    canvas.DrawText(
+      {x + icon_width + text_padding_x,
+       rc.bottom - (int)(font.GetAscentHeight() + Layout::Scale(1u)) - 1},
+      contour_buf.c_str());
+  }
 }

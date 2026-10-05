@@ -1,31 +1,14 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef AIRCRAFT_HPP
-#define AIRCRAFT_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "Geo/GeoPoint.hpp"
 #include "Geo/SpeedVector.hpp"
-#include "Compiler.h"
+#include "time/FloatDuration.hxx"
+#include "time/Stamp.hpp"
 
+#include <chrono>
 #include <type_traits>
 
 /**
@@ -62,7 +45,7 @@ struct SpeedState
    */
   double true_airspeed;
 
-  void Reset() {
+  constexpr void Reset() noexcept {
     ground_speed = true_airspeed = 0;
   }
 };
@@ -85,7 +68,11 @@ struct AltitudeState
   /** Altitude over terrain */
   double altitude_agl;
 
-  void Reset();
+  constexpr void Reset() noexcept {
+    altitude = 0;
+    working_band_fraction = 0;
+    altitude_agl = 0;
+  }
 };
 
 /**
@@ -105,7 +92,7 @@ struct VarioState
    */
   double netto_vario;
 
-  void Reset(){
+  constexpr void Reset() noexcept {
     vario = netto_vario = 0;
   }
 };
@@ -126,7 +113,7 @@ struct AircraftState:
    * Global time (seconds after UTC midnight).  A negative value means
    * "no time available", e.g. if no GPS fix was obtained yet.
    */
-  double time;
+  TimeStamp time;
 
   //################
   //   Navigation
@@ -154,6 +141,14 @@ struct AircraftState:
 
   bool flying;
 
+  constexpr bool HasTime() const noexcept {
+    return time.IsDefined();
+  }
+
+  constexpr void ResetTime() noexcept {
+    time = TimeStamp::Undefined();
+  }
+
   /**
    * Calculate predicted state in future.
    * Assumes aircraft will continue along current TrackBearing and Speed with
@@ -161,12 +156,21 @@ struct AircraftState:
    * @param in_time Time step for extrapolation (s)
    * @return Predicted aircraft state in in_time seconds
    */
-  gcc_pure
-  AircraftState GetPredictedState(double in_time) const;
+  [[gnu::pure]]
+  AircraftState GetPredictedState(FloatDuration in_time) const noexcept;
 
-  void Reset();
+  constexpr void Reset() noexcept {
+    AltitudeState::Reset();
+    SpeedState::Reset();
+    VarioState::Reset();
+
+    ResetTime();
+    location.SetInvalid();
+    track = Angle::Zero();
+    g_load = 1;
+    wind = SpeedVector::Zero();
+    flying = false;
+  }
 };
 
 static_assert(std::is_trivial<AircraftState>::value, "type is not trivial");
-
-#endif

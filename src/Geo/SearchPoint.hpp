@@ -1,32 +1,13 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef SEARCH_POINT_HPP
-#define SEARCH_POINT_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+ 
+#pragma once
 
 #include "GeoPoint.hpp"
 #include "Flat/FlatGeoPoint.hpp"
-#include "Util/TypeTraits.hpp"
+#include "util/TypeTraits.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 class FlatProjection;
 
@@ -48,7 +29,7 @@ public:
    * 
    * @return Null object
    */
-  SearchPoint() = default;
+  SearchPoint() noexcept = default;
 
   /**
    * Constructor.  The flat location is not initialized here; the
@@ -57,11 +38,12 @@ public:
    * @param loc Location of search point
    * @param tp Projection used
    */
-  SearchPoint(const GeoPoint &loc)
+  constexpr SearchPoint(const GeoPoint &loc) noexcept
     :location(loc)
   {}
 
-  SearchPoint(const GeoPoint &_location, const FlatGeoPoint &_flat)
+  constexpr SearchPoint(const GeoPoint &_location,
+                        const FlatGeoPoint &_flat) noexcept
     :location(_location), flat_location(_flat)
 #ifndef NDEBUG
     , projected(true)
@@ -75,7 +57,7 @@ public:
    * @param loc Location of search point
    * @param tp Projection used
    */
-  SearchPoint(const GeoPoint &loc, const FlatProjection &tp);
+  SearchPoint(const GeoPoint &loc, const FlatProjection &tp) noexcept;
 
   /**
    * Constructor
@@ -83,19 +65,17 @@ public:
    * @param floc Location of search point
    * @param tp Projection used
    */
-  SearchPoint(const FlatGeoPoint &floc, const FlatProjection &tp);
+  SearchPoint(const FlatGeoPoint &floc, const FlatProjection &tp) noexcept;
 
-  gcc_const
-  static SearchPoint Invalid() {
+  static constexpr SearchPoint Invalid() noexcept {
     return SearchPoint(GeoPoint::Invalid());
   }
 
-  gcc_pure
-  bool IsValid() const {
+  constexpr bool IsValid() const noexcept {
     return location.IsValid();
   }
 
-  void SetInvalid() {
+  constexpr void SetInvalid() noexcept {
     location.SetInvalid();
 #ifndef NDEBUG
     projected = false;
@@ -107,12 +87,12 @@ public:
    *
    * @param tp Projection used
    */
-  void Project(const FlatProjection &tp);
+  void Project(const FlatProjection &tp) noexcept;
 
   /**
    * The actual location
    */
-  const GeoPoint &GetLocation() const {
+  constexpr const GeoPoint &GetLocation() const noexcept {
     return location;
   }
 
@@ -121,7 +101,7 @@ public:
    *
    * @return Flat projected coordinate
    */
-  const FlatGeoPoint &GetFlatLocation() const {
+  constexpr const FlatGeoPoint &GetFlatLocation() const noexcept {
     assert(projected);
 
     return flat_location;
@@ -134,8 +114,7 @@ public:
    *
    * @return True if points coincident
    */
-  gcc_pure
-  bool Equals(const SearchPoint& sp) const {
+  constexpr bool Equals(const SearchPoint &sp) const noexcept {
     return sp.location == location;
   }
 
@@ -146,8 +125,8 @@ public:
    *
    * @return Distance in projected units
    */
-  gcc_pure
-  unsigned FlatDistanceTo(const SearchPoint &sp) const {
+  [[gnu::pure]]
+  unsigned FlatDistanceTo(const SearchPoint &sp) const noexcept {
     return flat_location.Distance(sp.flat_location);
   }
 
@@ -156,32 +135,17 @@ public:
    * flat_distance(), because it does not need to calculate the square
    * root.
    */
-  gcc_pure
-  unsigned FlatSquareDistanceTo(const SearchPoint& sp) const {
+  [[gnu::pure]]
+  unsigned FlatSquareDistanceTo(const SearchPoint &sp) const noexcept {
     return flat_location.DistanceSquared(sp.flat_location);
-  }
-
-  /**
-   * Rank two points according to longitude, then latitude
-   *
-   * @param other Point to compare to
-   *
-   * @return True if this point is further left (or if equal, lower) than the other
-   */
-  gcc_pure
-  bool Sort(const SearchPoint &other) const {
-    return location.Sort(other.location);
   }
 
   /**
    * distance from this to the reference
    */
-  double DistanceTo(const GeoPoint &ref) const {
+  double DistanceTo(const GeoPoint &ref) const noexcept {
     return location.Distance(ref);
   }
 };
 
 static_assert(is_trivial_ndebug<SearchPoint>::value, "type is not trivial");
-
-
-#endif

@@ -1,37 +1,20 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Logger/GRecord.hpp"
-#include "Logger/MD5.hpp"
+#include "util/MD5.hpp"
 #include "IGC/IGCString.hpp"
-#include "IO/FileLineReader.hpp"
-#include "IO/FileOutputStream.hxx"
-#include "IO/BufferedOutputStream.hxx"
-#include "OS/Path.hpp"
-#include "Util/Macros.hpp"
+#include "io/FileLineReader.hpp"
+#include "io/FileOutputStream.hxx"
+#include "io/BufferedOutputStream.hxx"
+#include "system/Path.hpp"
+#include "util/Macros.hpp"
 
 #include <stdexcept>
 
 #include <string.h>
+
+using std::string_view_literals::operator""sv;
 
 /**
  * Security theater.
@@ -44,7 +27,7 @@ static constexpr MD5::State g_key[GRecord::N_MD5] = {
 };
 
 void
-GRecord::Initialize()
+GRecord::Initialize() noexcept
 {
   ignore_comma = true;
 
@@ -53,13 +36,13 @@ GRecord::Initialize()
 }
 
 bool
-GRecord::AppendRecordToBuffer(const char *in)
+GRecord::AppendRecordToBuffer(std::string_view in) noexcept
 {
   if (!IncludeRecordInGCalc(in))
     return false;
 
-  if (memcmp(in, "HFFTYFRTYPE:XCSOAR,XCSOAR ", 26) == 0 &&
-      strstr(in + 25, " 6.5 ") != nullptr)
+  if (in.starts_with("HFFTYFRTYPE:XCSOAR,XCSOAR "sv) &&
+      in.find(" 6.5 ", 25) != in.npos)
     /* this is XCSoar 6.5: enable the G record workaround */
     ignore_comma = false;
 
@@ -72,64 +55,58 @@ GRecord::AppendRecordToBuffer(const char *in)
  * it's a valid IGC character
  */
 static void
-AppendIGCString(MD5 &md5, const char *s, bool ignore_comma)
+AppendIGCString(MD5 &md5, std::string_view s, bool ignore_comma) noexcept
 {
-  while (*s != '\0') {
-    const char ch = *s++;
+  for (const char ch : s) {
     if (ignore_comma && ch == ',')
       continue;
 
     if (IsValidIGCChar(ch))
-      md5.Append(ch);
+      md5.Append(static_cast<std::byte>(ch));
   }
 }
 
 void
-GRecord::AppendStringToBuffer(const char *in)
+GRecord::AppendStringToBuffer(std::string_view in) noexcept
 {
   for (auto &i : md5)
     AppendIGCString(i, in, ignore_comma);
 }
 
 void
-GRecord::FinalizeBuffer()
+GRecord::FinalizeBuffer() noexcept
 {
   for (auto &i : md5)
     i.Finalize();
 }
 
 void
-GRecord::GetDigest(char *output) const
+GRecord::GetDigest(char *output) const noexcept
 {
   for (auto &i : md5)
     output = i.GetDigest(output);
 }
 
 bool
-GRecord::IncludeRecordInGCalc(const char *in)
+GRecord::IncludeRecordInGCalc(std::string_view in) noexcept
 {
-  bool valid = false;
+  if (in.empty())
+    return false;
 
-  switch (in[0]) {
+  switch (in.front()) {
   case 'L':
-    if (memcmp(in + 1, XCSOAR_IGC_CODE, 3) == 0)
-      // only include L records made by XCS
-      valid = true;
-    break;
+    // only include L records made by XCS
+    return in.substr(1).starts_with(XCSOAR_IGC_CODE);
 
   case 'G':
-    break;
+    return false;
 
   case 'H':
-    if ((in[1] != 'O') && (in[1] != 'P'))
-      valid = true;
-    break;
+    return !in.substr(1).starts_with("OP"sv);
 
   default:
-    valid = true;
+    return true;
   }
-
-  return valid;
 }
 
 void
@@ -154,7 +131,7 @@ GRecord::WriteTo(BufferedOutputStream &writer) const
   for (const char *i = digest, *end = digest + DIGEST_LENGTH;
        i != end; i += chars_per_line) {
     writer.Write('G');
-    writer.Write(i, chars_per_line);
+    writer.Write(std::string_view{i, chars_per_line});
     writer.Write('\n');
   }
 }

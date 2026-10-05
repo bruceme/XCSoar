@@ -13,8 +13,7 @@
  * Copyright: (c) Guido Draheim, use under copyleft (LGPL,MPL)
  */
 
-#ifndef _ZZIP_CONF_H
-#define _ZZIP_CONF_H 1
+#pragma once
 
 #if !defined ZZIP_OMIT_CONFIG_H
 # if defined _MSC_VER || defined __BORLANDC__ || defined __WATCOMC__
@@ -207,7 +206,7 @@
 #     endif
 
 
-#if defined ZZIP_EXPORTS || defined ZZIPLIB_EXPORTS
+#if defined ZZIP_EXPORTS || defined ZZIPLIB_EXPORTS || defined libzzip_EXPORTS // CMake export defines
 # undef ZZIP_DLL
 #define ZZIP_DLL 1
 #endif
@@ -257,7 +256,3 @@
 #  define _zzip_export extern
 #  endif
 #endif
-
-#endif
-
-

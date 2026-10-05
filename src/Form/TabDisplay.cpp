@@ -1,75 +1,96 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "Form/TabDisplay.hpp"
-#include "Widget/TabWidget.hpp"
+#include "TabDisplay.hpp"
+#include "TabHandler.hpp"
+#include "Renderer/TabRenderer.hpp"
 #include "Look/DialogLook.hpp"
-#include "Event/KeyCode.hpp"
-#include "Screen/Icon.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "ui/canvas/Icon.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
+#include "Form/Button.hpp"
+#include "util/StaticString.hxx"
 #include "Asset.hpp"
 
-TabDisplay::TabDisplay(TabWidget &_pager, const DialogLook &_look,
+#include <algorithm>
+
+/**
+ * Holds display and callbacks data for a single tab.
+ */
+class TabDisplay::Button {
+  TabRenderer renderer;
+
+public:
+  StaticString<32> caption;
+  const MaskedIcon *icon;
+  PixelRect rc;
+
+public:
+  Button(const char *_caption, const MaskedIcon *_icon) noexcept
+    :icon(_icon)
+  {
+    caption = _caption;
+  };
+
+  void InvalidateLayout() {
+    renderer.InvalidateLayout();
+  }
+
+  [[gnu::pure]]
+  unsigned GetRecommendedWidth(const DialogLook &look) const noexcept;
+
+  [[gnu::pure]]
+  unsigned GetRecommendedHeight(const DialogLook &look) const noexcept;
+
+  /**
+   * Paints one button
+   */
+  void Draw(Canvas &canvas, const DialogLook &look,
+            bool focused, bool pressed, bool selected) const noexcept {
+    renderer.Draw(canvas, rc, look, caption, icon, focused, pressed, selected);
+  }
+};
+
+TabDisplay::TabDisplay(TabHandler &_handler, const DialogLook &_look,
                        ContainerWindow &parent, PixelRect rc,
                        bool _vertical,
-                       WindowStyle style)
-  :pager(_pager),
+                       WindowStyle style) noexcept
+  :handler(_handler),
    look(_look),
-   vertical(_vertical),
-   dragging(false),
-   tab_line_height(Layout::VptScale(5))
+   tab_line_height(Layout::VptScale(5)),
+   vertical(_vertical)
 {
   style.TabStop();
   Create(parent, rc, style);
 }
 
-TabDisplay::~TabDisplay()
+TabDisplay::~TabDisplay() noexcept
 {
   for (const auto i : buttons)
     delete i;
 }
 
 inline unsigned
-TabButton::GetRecommendedWidth(const DialogLook &look) const
+TabDisplay::Button::GetRecommendedWidth(const DialogLook &look) const noexcept
 {
   if (icon != nullptr)
-    return icon->GetSize().cx + 2 * Layout::GetTextPadding();
+    return icon->GetSize().width + 2 * Layout::GetTextPadding();
 
-  return look.button.font->TextSize(caption).cx + 2 * Layout::GetTextPadding();
+  return look.button.font->TextSize(caption).width + 2 * Layout::GetTextPadding();
 }
 
 inline unsigned
-TabButton::GetRecommendedHeight(const DialogLook &look) const
+TabDisplay::Button::GetRecommendedHeight(const DialogLook &look) const noexcept
 {
   if (icon != nullptr)
-    return icon->GetSize().cy + 2 * Layout::GetTextPadding();
+    return icon->GetSize().height + 2 * Layout::GetTextPadding();
 
   return look.button.font->GetHeight() + 2 * Layout::GetTextPadding();
 }
 
 unsigned
-TabDisplay::GetRecommendedColumnWidth() const
+TabDisplay::GetRecommendedColumnWidth() const noexcept
 {
   unsigned width = Layout::GetMaximumControlHeight();
   for (auto *i : buttons) {
@@ -82,7 +103,7 @@ TabDisplay::GetRecommendedColumnWidth() const
 }
 
 unsigned
-TabDisplay::GetRecommendedRowHeight() const
+TabDisplay::GetRecommendedRowHeight() const noexcept
 {
   unsigned height = Layout::GetMaximumControlHeight();
   for (auto *i : buttons) {
@@ -96,14 +117,14 @@ TabDisplay::GetRecommendedRowHeight() const
 }
 
 void
-TabDisplay::UpdateLayout(const PixelRect &rc, bool _vertical)
+TabDisplay::UpdateLayout(const PixelRect &rc, bool _vertical) noexcept
 {
   vertical = _vertical;
   Move(rc);
 }
 
 void
-TabDisplay::CalculateLayout()
+TabDisplay::CalculateLayout() noexcept
 {
   if (buttons.empty() || !IsDefined())
     return;
@@ -120,10 +141,12 @@ TabDisplay::CalculateLayout()
   // Todo make the final margin display on either beginning or end of tab bar
   // depending on position of tab bar
 
+  const auto window_size = Window::GetSize();
+
   if (vertical) {
     const unsigned n = buttons.size();
     const unsigned but_height =
-       (GetHeight() - finalmargin) / n - margin;
+       (window_size.height - finalmargin) / n - margin;
 
     PixelRect rc = GetClientRect();
     rc.left = 0;
@@ -137,14 +160,14 @@ TabDisplay::CalculateLayout()
   } else {
     const unsigned n = buttons.size();
     const unsigned portraitRows = n > 4 ? 2 : 1;
-    const unsigned rowheight = (GetHeight() - tab_line_height)
+    const unsigned rowheight = (window_size.height - tab_line_height)
       / portraitRows - margin;
 
     const unsigned portraitColumnsRow0 = portraitRows == 1 ? n : n / 2;
     const unsigned portraitColumnsRow1 = portraitRows == 1 ? 0 : n - n / 2;
 
     const unsigned but_width1 =
-        (GetWidth() - finalmargin) / portraitColumnsRow0 - margin;
+        (window_size.width - finalmargin) / portraitColumnsRow0 - margin;
 
     for (unsigned i = 0; i < portraitColumnsRow0; ++i) {
       PixelRect &rc = buttons[i]->rc;
@@ -156,7 +179,7 @@ TabDisplay::CalculateLayout()
 
     if (portraitColumnsRow1 > 0) {
       const unsigned but_width2 =
-        (GetWidth() - finalmargin) / portraitColumnsRow1 - margin;
+        (window_size.width - finalmargin) / portraitColumnsRow1 - margin;
 
       for (unsigned i = portraitColumnsRow0; i < n; ++i) {
         PixelRect &rc = buttons[i]->rc;
@@ -173,17 +196,22 @@ TabDisplay::CalculateLayout()
 }
 
 void
-TabDisplay::Add(const TCHAR *caption, const MaskedIcon *icon)
+TabDisplay::Add(const char *caption, const MaskedIcon *icon) noexcept
 {
-  TabButton *b = new TabButton(caption, icon);
-  buttons.append(b);
+  buttons.append(new Button(caption, icon));
   CalculateLayout();
 }
 
-int
-TabDisplay::GetButtonIndexAt(PixelPoint p) const
+const char *
+TabDisplay::GetCaption(unsigned i) const noexcept
 {
-  for (unsigned i = 0; i < GetSize(); i++) {
+  return buttons[i]->caption.c_str();
+}
+
+inline int
+TabDisplay::GetButtonIndexAt(PixelPoint p) const noexcept
+{
+  for (std::size_t i = 0; i < buttons.size(); i++) {
     if (buttons[i]->rc.Contains(p))
       return i;
   }
@@ -192,7 +220,7 @@ TabDisplay::GetButtonIndexAt(PixelPoint p) const
 }
 
 void
-TabDisplay::OnResize(PixelSize new_size)
+TabDisplay::OnResize(PixelSize new_size) noexcept
 {
   PaintWindow::OnResize(new_size);
 
@@ -200,44 +228,72 @@ TabDisplay::OnResize(PixelSize new_size)
 }
 
 void
-TabDisplay::OnPaint(Canvas &canvas)
+TabDisplay::OnPaint(Canvas &canvas) noexcept
 {
-  canvas.Clear(COLOR_BLACK);
+  canvas.Clear(look.dark_mode
+               ? DarkColor(look.background_color)
+               : COLOR_BLACK);
 
   const bool is_focused = !HasCursorKeys() || HasFocus();
+
   for (unsigned i = 0; i < buttons.size(); i++) {
-    const TabButton &button = *buttons[i];
+    const auto &button = *buttons[i];
 
     const bool is_down = dragging && i == down_index && !drag_off_button;
-    const bool is_selected = i == pager.GetCurrentIndex();
+    const bool is_selected = i == current_index;
 
     button.Draw(canvas, look, is_focused, is_down, is_selected);
+  }
+
+  if (!buttons.empty()) {
+    const PixelRect &selected_rc = buttons[current_index]->rc;
+    const Color indicator_color = look.dark_mode
+      ? look.focused.background_color
+      : look.list.focused.background_color;
+
+    PixelRect indicator_rc = selected_rc;
+    if (vertical) {
+      indicator_rc.left = selected_rc.right;
+      indicator_rc.right = selected_rc.right + (int)tab_line_height;
+    } else {
+      indicator_rc.top = selected_rc.bottom;
+      indicator_rc.bottom = selected_rc.bottom + (int)tab_line_height;
+    }
+
+    // TODO: add PixelRect::ClippedTo() in ui/dim/Rect.hpp and use it here.
+    const PixelRect client_rc = GetClientRect();
+    indicator_rc.left = std::max(indicator_rc.left, client_rc.left);
+    indicator_rc.top = std::max(indicator_rc.top, client_rc.top);
+    indicator_rc.right = std::min(indicator_rc.right, client_rc.right);
+    indicator_rc.bottom = std::min(indicator_rc.bottom, client_rc.bottom);
+    if (!indicator_rc.IsEmpty())
+      canvas.DrawFilledRectangle(indicator_rc, indicator_color);
   }
 }
 
 void
-TabDisplay::OnKillFocus()
+TabDisplay::OnKillFocus() noexcept
 {
   Invalidate();
   PaintWindow::OnKillFocus();
 }
 
 void
-TabDisplay::OnSetFocus()
+TabDisplay::OnSetFocus() noexcept
 {
   Invalidate();
   PaintWindow::OnSetFocus();
 }
 
 void
-TabDisplay::OnCancelMode()
+TabDisplay::OnCancelMode() noexcept
 {
   PaintWindow::OnCancelMode();
   EndDrag();
 }
 
 bool
-TabDisplay::OnKeyCheck(unsigned key_code) const
+TabDisplay::OnKeyCheck(unsigned key_code) const noexcept
 {
   switch (key_code) {
 
@@ -251,10 +307,10 @@ TabDisplay::OnKeyCheck(unsigned key_code) const
     return true;
 
   case KEY_LEFT:
-    return pager.GetCurrentIndex() > 0;
+    return current_index > 0;
 
   case KEY_RIGHT:
-    return pager.GetCurrentIndex() < GetSize() - 1;
+    return current_index < buttons.size() - 1;
 
   case KEY_DOWN:
     return false;
@@ -267,55 +323,54 @@ TabDisplay::OnKeyCheck(unsigned key_code) const
   }
 }
 
-
 bool
-TabDisplay::OnKeyDown(unsigned key_code)
+TabDisplay::OnKeyDown(unsigned key_code) noexcept
 {
   switch (key_code) {
 
   case KEY_APP1:
-    if (GetSize() > 0)
-      pager.ClickPage(0);
+    if (buttons.size() > 0)
+      handler.ClickPage(0);
     return true;
 
   case KEY_APP2:
-    if (GetSize() > 1)
-      pager.ClickPage(1);
+    if (buttons.size() > 1)
+      handler.ClickPage(1);
     return true;
 
   case KEY_APP3:
-    if (GetSize() > 2)
-      pager.ClickPage(2);
+    if (buttons.size() > 2)
+      handler.ClickPage(2);
     return true;
 
   case KEY_APP4:
-    if (GetSize() > 3)
-      pager.ClickPage(3);
+    if (buttons.size() > 3)
+      handler.ClickPage(3);
     return true;
 
   case KEY_RETURN:
-    pager.ClickPage(pager.GetCurrentIndex());
+    handler.ClickPage(current_index);
     return true;
 
   case KEY_DOWN:
     break;
 
   case KEY_RIGHT:
-    pager.NextPage();
+    handler.NextPage();
     return true;
 
   case KEY_UP:
     break;
 
   case KEY_LEFT:
-    pager.PreviousPage();
+    handler.PreviousPage();
     return true;
   }
   return PaintWindow::OnKeyDown(key_code);
 }
 
 bool
-TabDisplay::OnMouseDown(PixelPoint p)
+TabDisplay::OnMouseDown(PixelPoint p) noexcept
 {
   EndDrag();
 
@@ -324,6 +379,10 @@ TabDisplay::OnMouseDown(PixelPoint p)
 
   int i = GetButtonIndexAt(p);
   if (i >= 0) {
+#ifdef HAVE_VIBRATOR
+    PlayHapticFeedback(HapticFeedbackType::PRESS);
+#endif
+
     dragging = true;
     drag_off_button = false;
     down_index = i;
@@ -336,13 +395,13 @@ TabDisplay::OnMouseDown(PixelPoint p)
 }
 
 bool
-TabDisplay::OnMouseUp(PixelPoint p)
+TabDisplay::OnMouseUp(PixelPoint p) noexcept
 {
   if (dragging) {
     EndDrag();
 
     if (!drag_off_button)
-      pager.ClickPage(down_index);
+      handler.ClickPage(down_index);
 
     return true;
   } else {
@@ -351,7 +410,7 @@ TabDisplay::OnMouseUp(PixelPoint p)
 }
 
 bool
-TabDisplay::OnMouseMove(PixelPoint p, unsigned keys)
+TabDisplay::OnMouseMove(PixelPoint p, [[maybe_unused]] unsigned keys) noexcept
 {
   if (!dragging)
     return false;
@@ -367,7 +426,7 @@ TabDisplay::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 void
-TabDisplay::EndDrag()
+TabDisplay::EndDrag() noexcept
 {
   if (dragging) {
     dragging = false;

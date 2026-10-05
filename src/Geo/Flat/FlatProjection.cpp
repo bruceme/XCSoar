@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlatProjection.hpp"
 #include "FlatGeoPoint.hpp"
@@ -41,6 +22,14 @@ FlatProjection::SetCenter(const GeoPoint &_center)
   center = _center;
 
   cos = center.latitude.fastcosine() * fixed_scale;
+
+  if (cos < 0.01)
+    /* when approaching the north/south pole, the cosine of the
+       latitude converges towards zero, which makes the inverse
+       extremely large (converging to infinity as we divide by zero);
+       here we apply a lower limit to avoid this */
+    cos = 0.01;
+
   r_cos = 1. / cos;
   approx_scale = Unproject(FlatGeoPoint(0,-1)).DistanceS(Unproject(FlatGeoPoint(0,1))) / 2;
 }
@@ -88,7 +77,7 @@ FlatProjection::Unproject(const FlatGeoPoint &fp) const
 }
 
 double
-FlatProjection::ProjectRangeFloat(const GeoPoint &tp,
+FlatProjection::ProjectRangeFloat([[maybe_unused]] const GeoPoint &tp,
                                   const double range) const
 {
   assert(IsValid());

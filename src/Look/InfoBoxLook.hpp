@@ -1,43 +1,34 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFO_BOX_LOOK_HPP
-#define XCSOAR_INFO_BOX_LOOK_HPP
-
-#include "Screen/Pen.hpp"
-#include "Screen/Brush.hpp"
-#include "Screen/Font.hpp"
-#include "Util/Macros.hpp"
+#include "ui/canvas/Pen.hpp"
+#include "ui/canvas/Brush.hpp"
+#include "ui/canvas/Font.hpp"
+#include "util/Macros.hpp"
 
 class Font;
 
 struct InfoBoxLook {
-  static constexpr unsigned BORDER_WIDTH = 1;
+  unsigned border_width;
 
   bool inverse;
 
   Pen border_pen;
   Color background_color, focused_background_color, pressed_background_color;
+
+  /**
+   * The simplified InfoBox cards shown while the InfoBoxes are being
+   * arranged (see #InfoBoxArrange).  The backdrop is the dialog
+   * background.  #preview_active_color fills the card which follows
+   * the finger, and #preview_focus_width is the filled selection
+   * halo outside the hairline.  #preview_border_color is the
+   * InfoBox separator gray in inverse, black in light.
+   */
+  Color preview_active_color, preview_border_color;
+  unsigned preview_padding, preview_radius, preview_border_width,
+    preview_focus_width;
 
   /**
    * Used only by #InfoBoxSettings::BorderStyle::SHADED.
@@ -58,13 +49,21 @@ struct InfoBoxLook {
   Pen unit_fraction_pen;
 
   Font title_font;
+  Font title_font_bold;
+
+  /** the small font for the slot number in the arrange preview */
+  Font preview_number_font;
 
   Color colors[6];
 
   void Initialise(bool inverse, bool use_colors,
-                  unsigned width);
+                  unsigned width, unsigned scale_title_font);
 
-  void ReinitialiseLayout(unsigned width);
+  void ReinitialiseLayout(unsigned width, unsigned scale_title_font);
+
+  /** Colour of the long-press fill on an InfoBox or arrange card. */
+  [[gnu::pure]]
+  Color GetPreviewGlowColor() const noexcept;
 
   Color GetColor(int i, Color default_color) const {
     if (i < 0)
@@ -87,5 +86,3 @@ struct InfoBoxLook {
     return GetColor(i, comment.fg_color);
   }
 };
-
-#endif

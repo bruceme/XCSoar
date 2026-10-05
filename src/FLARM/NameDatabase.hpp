@@ -1,37 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "Id.hpp"
+#include "util/StaticString.hxx"
+#include "util/StaticArray.hxx"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_NAME_DATABASE_HPP
-#define XCSOAR_FLARM_NAME_DATABASE_HPP
-
-#include "Util/StaticString.hxx"
-#include "Util/StaticArray.hxx"
-#include "FlarmId.hpp"
-#include "Compiler.h"
-
-#include <assert.h>
-#include <tchar.h>
-
+#include <cassert>
 class FlarmNameDatabase {
 public:
   struct Record {
@@ -39,34 +15,34 @@ public:
     StaticString<21> name;
 
     Record() = default;
-    Record(FlarmId _id, const TCHAR *_name)
+    Record(FlarmId _id, const char *_name) noexcept
       :id(_id), name(_name) {}
   };
 
 private:
-  typedef StaticArray<Record, 200> Array;
-  typedef Array::iterator iterator;
+  using Array = StaticArray<Record, 200>;
+  using iterator = Array::iterator;
 
   Array data;
 
 public:
-  typedef Array::const_iterator const_iterator;
+  using const_iterator = Array::const_iterator;
 
-  gcc_pure
-  const_iterator begin() const {
+  [[gnu::pure]]
+  const_iterator begin() const noexcept {
     return data.begin();
   }
 
-  gcc_pure
-  const_iterator end() const {
+  [[gnu::pure]]
+  const_iterator end() const noexcept {
     return data.end();
   }
 
-  gcc_pure
-  const TCHAR *Get(FlarmId id) const;
+  [[gnu::pure]]
+  const char *Get(FlarmId id) const noexcept;
 
-  gcc_pure
-  FlarmId Get(const TCHAR *name) const;
+  [[gnu::pure]]
+  FlarmId Get(const char *name) const noexcept;
 
   /**
    * Look up all records with the specified name.
@@ -74,16 +50,17 @@ public:
    * @param max the maximum size of the given buffer
    * @return the number of items copied to the given buffer
    */
-  unsigned Get(const TCHAR *name, FlarmId *buffer, unsigned max) const;
+  unsigned Get(const char *name,
+               FlarmId *buffer, unsigned max) const noexcept;
 
-  bool Set(FlarmId id, const TCHAR *name);
+  bool Set(FlarmId id, const char *name) noexcept;
+
+  bool Remove(FlarmId id) noexcept;
 
 protected:
-  gcc_pure
-  int Find(FlarmId id) const;
+  [[gnu::pure]]
+  int Find(FlarmId id) const noexcept;
 
-  gcc_pure
-  int Find(const TCHAR *name) const;
+  [[gnu::pure]]
+  int Find(const char *name) const noexcept;
 };
-
-#endif

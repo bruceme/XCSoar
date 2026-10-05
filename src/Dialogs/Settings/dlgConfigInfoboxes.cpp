@@ -1,342 +1,255 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "dlgConfigInfoboxes.hpp"
+#include "Dialogs/ComboPicker.hpp"
 #include "Dialogs/WidgetDialog.hpp"
 #include "Dialogs/Message.hpp"
-#include "Look/DialogLook.hpp"
-#include "Widget/RowFormWidget.hpp"
-#include "Form/Frame.hpp"
+#include "Dialogs/TextEntry.hpp"
 #include "Form/Button.hpp"
-#include "Screen/Canvas.hpp"
-#include "Screen/Layout.hpp"
 #include "Form/DataField/Enum.hpp"
-#include "Form/DataField/Listener.hpp"
-#include "InfoBoxes/InfoBoxSettings.hpp"
-#include "InfoBoxes/InfoBoxLayout.hpp"
+#include "Look/DialogLook.hpp"
+#include "Widget/Widget.hpp"
 #include "InfoBoxes/Content/Factory.hpp"
-#include "Look/InfoBoxLook.hpp"
+#include "InfoBoxes/InfoBoxArrangeWindow.hpp"
+#include "InfoBoxes/InfoBoxGeometryList.hpp"
+#include "InfoBoxes/InfoBoxLayout.hpp"
+#include "InfoBoxes/InfoBoxSettings.hpp"
+#include "Interface.hpp"
 #include "Language/Language.hpp"
-#include "Util/StringAPI.hxx"
-#include "Util/StaticArray.hxx"
 
-#include <assert.h>
+#ifdef ANDROID
+#include "Android/SystemGesture.hpp"
+#endif
+
+using namespace UI;
 
 static InfoBoxSettings::Panel clipboard;
 static unsigned clipboard_size;
 
-class InfoBoxesConfigWidget;
-
-class InfoBoxPreview : public PaintWindow {
-  InfoBoxesConfigWidget *parent;
-  unsigned i;
-
-public:
-  void SetParent(InfoBoxesConfigWidget &_parent, unsigned _i) {
-    parent = &_parent;
-    i = _i;
-  }
-
-protected:
-  /* virtual methods from class Window */
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseDouble(PixelPoint p) override;
-
-  /* virtual methods from class PaintWindow */
-  virtual void OnPaint(Canvas &canvas) override;
-};
-
-class InfoBoxesConfigWidget final
-  : public RowFormWidget, DataFieldListener, ActionListener {
-
-  enum Controls {
-    NAME, INFOBOX, CONTENT, DESCRIPTION
-  };
-
-  enum Buttons {
-    COPY, PASTE,
-  };
-
+class InfoBoxesConfigWidget final : public NullWidget {
   struct Layout {
     InfoBoxLayout::Layout info_boxes;
 
-    PixelRect form;
-
-    PixelRect copy_button, paste_button, close_button;
-
-    Layout(PixelRect rc, InfoBoxSettings::Geometry geometry);
+    Layout() = default;
+    Layout(PixelRect content, InfoBoxSettings::Geometry geometry,
+           PixelSize orientation_size);
   };
 
-  ActionListener &dialog;
-  const InfoBoxLook &look;
+  /** the InfoBoxes of this set; it reports every change back */
+  class ArrangeWindow final : public InfoBoxArrangeWindow {
+    InfoBoxesConfigWidget &widget;
+
+  public:
+    ArrangeWindow(InfoBoxesConfigWidget &_widget,
+                  const DialogLook &_dialog_look,
+                  const InfoBoxLook &_look) noexcept
+      :InfoBoxArrangeWindow(_look, _dialog_look, Style::DIALOG),
+       widget(_widget) {}
+
+  protected:
+    /* virtual methods from class InfoBoxArrangeWindow */
+    void OnArrangeModified() noexcept override {
+      widget.changed = true;
+    }
+  };
+
+  WndForm &dialog;
 
   InfoBoxSettings::Panel &data;
-  const bool allow_name_change;
-  bool changed;
+  bool changed = false;
 
-  const InfoBoxSettings::Geometry geometry;
+  /** the geometry the cards are laid out with */
+  InfoBoxSettings::Geometry geometry;
 
-  StaticArray<InfoBoxPreview, InfoBoxSettings::Panel::MAX_CONTENTS> previews;
-  unsigned current_preview;
+  /** the dialog area the cards fill, kept for a geometry change */
+  PixelRect client_rc;
 
-  Button copy_button, paste_button, close_button;
+  Layout layout;
+
+  ArrangeWindow arrange;
+
+  Button *paste_button = nullptr;
 
 public:
-  InfoBoxesConfigWidget(ActionListener &_dialog,
+  InfoBoxesConfigWidget(WndForm &_dialog,
                         const DialogLook &dialog_look,
                         const InfoBoxLook &_look,
                         InfoBoxSettings::Panel &_data,
-                        bool _allow_name_change,
                         InfoBoxSettings::Geometry _geometry)
-    :RowFormWidget(dialog_look),
-     dialog(_dialog),
-     look(_look),
+    :dialog(_dialog),
      data(_data),
-     allow_name_change(_allow_name_change),
-     changed(false),
-     geometry(_geometry) {}
+     geometry(_geometry),
+     arrange(*this, dialog_look, _look) {}
 
-  const InfoBoxLook &GetInfoBoxLook() const {
-    return look;
+  void SetPasteButton(Button *_paste_button) noexcept {
+    paste_button = _paste_button;
+    RefreshPasteButton();
   }
 
-  const InfoBoxSettings::Panel &GetData() const {
-    return data;
-  }
-
-  void RefreshPasteButton() {
-    paste_button.SetEnabled(clipboard_size > 0);
-  }
-
-  void RefreshEditContentDescription();
-  void RefreshEditContent();
-
-  void OnCopy();
-  void OnPaste();
-
-  void SetCurrentInfoBox(unsigned _current_preview);
-
-  unsigned GetCurrentInfoBox() const {
-    return current_preview;
-  }
-
-  InfoBoxFactory::Type GetContents(unsigned i) const {
-    return data.contents[i];
-  }
-
-  void BeginEditing() {
-    GetControl(CONTENT).BeginEditing();
-  }
-
-  /* virtual methods from class Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-
-  bool Save(bool &changed) override;
-
-  void Show(const PixelRect &rc) override {
-    const Layout layout(rc, geometry);
-
-    RowFormWidget::Show(layout.form);
-
-    copy_button.MoveAndShow(layout.copy_button);
-    paste_button.MoveAndShow(layout.paste_button);
-    close_button.MoveAndShow(layout.close_button);
-
-    for (unsigned i = 0; i < previews.size(); ++i)
-      previews[i].MoveAndShow(layout.info_boxes.positions[i]);
-  }
-
-  void Hide() override {
-    RowFormWidget::Hide();
-
-    copy_button.Hide();
-    paste_button.Hide();
-    close_button.Hide();
-
-    for (auto &i : previews)
-      i.Hide();
-  }
-
-  void Move(const PixelRect &rc) override {
-    const Layout layout(rc, geometry);
-
-    RowFormWidget::Move(layout.form);
-
-    copy_button.Move(layout.copy_button);
-    paste_button.Move(layout.paste_button);
-    close_button.Move(layout.close_button);
-  }
-
-  bool SetFocus() override {
-    GetGeneric(INFOBOX).SetFocus();
-    return true;
+  void OnRename() noexcept;
+  void OnGeometry() noexcept;
+  void OnCopy() noexcept;
+  void OnPaste() noexcept;
+  void ShowHelp() noexcept {
+    arrange.ShowHelp();
   }
 
 private:
-  /* virtual methods from class DataFieldListener */
-
-  void OnModified(DataField &df) override {
-    if (IsDataField(INFOBOX, df)) {
-      const DataFieldEnum &dfe = (const DataFieldEnum &)df;
-      SetCurrentInfoBox(dfe.GetValue());
-    } else if (IsDataField(CONTENT, df)) {
-      const DataFieldEnum &dfe = (const DataFieldEnum &)df;
-
-      auto new_value = (InfoBoxFactory::Type)dfe.GetValue();
-      if (new_value == data.contents[current_preview])
-        return;
-
-      changed = true;
-      data.contents[current_preview] = new_value;
-      previews[current_preview].Invalidate();
-      RefreshEditContentDescription();
-    }
+  void RefreshPasteButton() noexcept {
+    if (paste_button != nullptr)
+      paste_button->SetEnabled(clipboard_size > 0);
   }
 
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override {
-    switch (id) {
-    case COPY:
-      OnCopy();
-      break;
+#ifdef ANDROID
+  /**
+   * Y of @p local_top in the XCSoar view.  @p origin is the window
+   * @p local_top is relative to.
+   */
+  [[nodiscard]]
+  static int TopOnView(const Window &origin, int local_top) noexcept {
+    int y = local_top;
+    for (const Window *window = &origin;
+         window->GetParent() != nullptr;
+         window = window->GetParent())
+      y += window->GetPosition().top;
+    return y;
+  }
+#endif
 
-    case PASTE:
-      OnPaste();
-      break;
-    }
+  /**
+   * Where the cards and the description are laid out.  On Android
+   * this drops only the part of the swipe-down band that still
+   * covers this dialog.  The dialog is already in the safe area, so
+   * a band that ends at the status bar does not move the cards.
+   */
+  [[nodiscard]]
+  PixelRect GetContentRect(PixelRect rc) noexcept {
+#ifdef ANDROID
+    return Android::ContentRectBelowTopGesture(rc,
+      TopOnView(dialog.GetClientAreaWindow(), rc.top));
+#else
+    return rc;
+#endif
+  }
+
+  /** Recalculate the layout for @p rc and hand it to #arrange. */
+  void UpdateLayout(const PixelRect &rc) noexcept {
+    client_rc = rc;
+    layout = Layout(GetContentRect(rc), geometry, rc.GetSize());
+    arrange.SetLayout(layout.info_boxes, layout.info_boxes.remaining);
+  }
+
+public:
+  /* virtual methods from class Widget */
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+
+  bool Save(bool &changed) noexcept override;
+
+  void Show(const PixelRect &rc) noexcept override {
+    UpdateLayout(rc);
+    arrange.MoveAndShow(rc);
+  }
+
+  void Hide() noexcept override {
+    arrange.Hide();
+  }
+
+  void Move(const PixelRect &rc) noexcept override {
+    UpdateLayout(rc);
+    arrange.Move(rc);
+  }
+
+  bool SetFocus() noexcept override {
+    arrange.SetFocus();
+    return true;
   }
 };
 
-InfoBoxesConfigWidget::Layout::Layout(PixelRect rc,
-                                      InfoBoxSettings::Geometry geometry)
+InfoBoxesConfigWidget::Layout::Layout(PixelRect content,
+                                      InfoBoxSettings::Geometry geometry,
+                                      PixelSize orientation_size)
 {
-  info_boxes = InfoBoxLayout::Calculate(rc, geometry);
-
-  form = info_boxes.remaining;
-  PixelRect buttons = form;
-  buttons.top = form.bottom -= ::Layout::GetMaximumControlHeight();
-
-  copy_button = paste_button = close_button = buttons;
-  copy_button.right = paste_button.left =
-    (2 * buttons.left + buttons.right) / 3;
-  paste_button.right = close_button.left =
-    (buttons.left + 2 * buttons.right) / 3;
+  const unsigned title_scale =
+    CommonInterface::GetUISettings().info_boxes.scale_title_font;
+  info_boxes = InfoBoxLayout::Calculate(content, geometry, title_scale,
+                                        orientation_size);
 }
 
 void
 InfoBoxesConfigWidget::Prepare(ContainerWindow &parent,
-                               const PixelRect &rc)
+                               const PixelRect &rc) noexcept
 {
-  const Layout layout(rc, geometry);
+  UpdateLayout(rc);
 
-  AddText(_("Name"), nullptr,
-          allow_name_change ? (const TCHAR *)data.name : gettext(data.name));
-  SetReadOnly(NAME, !allow_name_change);
+  arrange.SetExtraHelp(_("Copy remembers all InfoBoxes of this set, Paste "
+                         "replaces the InfoBoxes of another set with "
+                         "them."));
 
-  DataFieldEnum *dfe = new DataFieldEnum(this);
-  for (unsigned i = 0; i < layout.info_boxes.count; ++i) {
-    TCHAR label[32];
-    _stprintf(label, _T("%u"), i + 1);
-    dfe->addEnumText(label, i);
-  }
-
-  Add(_("InfoBox"), nullptr, dfe);
-
-  dfe = new DataFieldEnum(this);
-  for (unsigned i = InfoBoxFactory::MIN_TYPE_VAL; i < InfoBoxFactory::NUM_TYPES; i++) {
-    const TCHAR *name = InfoBoxFactory::GetName((InfoBoxFactory::Type) i);
-    const TCHAR *desc = InfoBoxFactory::GetDescription((InfoBoxFactory::Type) i);
-    if (name != NULL)
-      dfe->addEnumText(gettext(name), i, desc != NULL ? gettext(desc) : NULL);
-  }
-
-  dfe->EnableItemHelp(true);
-  dfe->Sort(0);
-
-  Add(_("Content"), nullptr, dfe);
-
-  ContainerWindow &form_parent = (ContainerWindow &)RowFormWidget::GetWindow();
-  AddRemaining(new WndFrame(form_parent, GetLook(), rc));
-
-  WindowStyle button_style;
-  button_style.Hide();
-  button_style.TabStop();
-
-  const auto &button_look = GetLook().button;
-  copy_button.Create(parent, button_look, _("Copy"), layout.copy_button,
-                     button_style, *this, COPY);
-  paste_button.Create(parent, button_look, _("Paste"), layout.paste_button,
-                      button_style, *this, PASTE);
-  close_button.Create(parent, button_look, _("Close"), layout.close_button,
-                      button_style, dialog, mrOK);
-
-  WindowStyle preview_style;
-  preview_style.Hide();
-
-  previews.resize(layout.info_boxes.count);
-  for (unsigned i = 0; i < layout.info_boxes.count; ++i) {
-    previews[i].SetParent(*this, i);
-    previews[i].Create(parent, layout.info_boxes.positions[i],
-                       preview_style);
-  }
-
-  current_preview = 0;
-
-  RefreshEditContent();
-  RefreshPasteButton();
+  arrange.SetPanel(data);
+  arrange.Create(parent, rc);
+  arrange.FocusSlot(0);
 }
 
 bool
-InfoBoxesConfigWidget::Save(bool &changed_r)
+InfoBoxesConfigWidget::Save(bool &changed_r) noexcept
 {
-  if (allow_name_change) {
-    const auto *new_name = GetValueString(InfoBoxesConfigWidget::NAME);
-    if (!StringIsEqual(new_name, data.name)) {
-      data.name = new_name;
-      changed = true;
-    }
-  }
-
   changed_r = changed;
   return true;
 }
 
 void
-InfoBoxesConfigWidget::RefreshEditContentDescription()
+InfoBoxesConfigWidget::OnRename() noexcept
 {
-  DataFieldEnum &df = (DataFieldEnum &)GetDataField(CONTENT);
-  WndFrame &description = (WndFrame &)GetRow(DESCRIPTION);
-  description.SetText(df.GetHelp() != nullptr ? df.GetHelp() : _T(""));
+  if (!TextEntryDialog(data.name, _("Name")))
+    return;
+
+  dialog.SetCaption(data.name);
+  changed = true;
 }
 
 void
-InfoBoxesConfigWidget::RefreshEditContent()
+InfoBoxesConfigWidget::OnGeometry() noexcept
 {
-  LoadValueEnum(CONTENT, data.contents[current_preview]);
+  DataFieldEnum df;
+  df.AddChoice(InfoBoxSettings::Panel::INHERIT_GEOMETRY,
+               _("Inherit from global settings"));
+  df.AddChoices(info_box_geometry_list);
+
+  const unsigned current =
+    data.geometry == InfoBoxSettings::Panel::INHERIT_GEOMETRY
+      ? unsigned(InfoBoxSettings::Panel::INHERIT_GEOMETRY)
+      : data.geometry;
+  df.SetValue(current);
+
+  if (!ComboPicker(_("InfoBox geometry"), df,
+                   _("A list of possible InfoBox layouts. "
+                     "Do some trials to find the best for your screen size.")))
+    return;
+
+  const unsigned id = df.GetValue();
+  const uint8_t stored = id == InfoBoxSettings::Panel::INHERIT_GEOMETRY
+    ? InfoBoxSettings::Panel::INHERIT_GEOMETRY
+    : static_cast<uint8_t>(id);
+  if (stored == data.geometry)
+    return;
+
+  data.geometry = stored;
+  geometry = stored == InfoBoxSettings::Panel::INHERIT_GEOMETRY
+    ? CommonInterface::GetUISettings().info_boxes.geometry
+    : static_cast<InfoBoxSettings::Geometry>(id);
+  changed = true;
+
+  UpdateLayout(client_rc);
+  arrange.Move(client_rc);
+  if (layout.info_boxes.count > 0)
+    arrange.FocusSlot(0);
+  else
+    arrange.Invalidate();
 }
 
 void
-InfoBoxesConfigWidget::OnCopy()
+InfoBoxesConfigWidget::OnCopy() noexcept
 {
   clipboard = data;
   clipboard_size = InfoBoxSettings::Panel::MAX_CONTENTS;
@@ -345,13 +258,14 @@ InfoBoxesConfigWidget::OnCopy()
 }
 
 void
-InfoBoxesConfigWidget::OnPaste()
+InfoBoxesConfigWidget::OnPaste() noexcept
 {
   if (clipboard_size == 0)
     return;
 
-  if(ShowMessageBox(_("Overwrite?"), _("InfoBox paste"),
-                 MB_YESNO | MB_ICONQUESTION) != IDYES)
+  if (ShowMessageBox(_("Overwrite all InfoBoxes in this set?"),
+                     _("InfoBox paste set"),
+                     MB_YESNO | MB_ICONQUESTION) != IDYES)
     return;
 
   for (unsigned item = 0; item < clipboard_size; item++) {
@@ -360,73 +274,11 @@ InfoBoxesConfigWidget::OnPaste()
       continue;
 
     data.contents[item] = content;
-
-    if (item < previews.size())
-      previews[item].Invalidate();
+    data.text[item] = clipboard.text[item];
   }
 
-  RefreshEditContent();
   changed = true;
-}
-
-void
-InfoBoxesConfigWidget::SetCurrentInfoBox(unsigned _current_preview)
-{
-  assert(_current_preview < previews.size());
-
-  if (_current_preview == current_preview)
-    return;
-
-  previews[current_preview].Invalidate();
-  current_preview = _current_preview;
-  previews[current_preview].Invalidate();
-
-  LoadValueEnum(INFOBOX, current_preview);
-
-  RefreshEditContent();
-}
-
-bool
-InfoBoxPreview::OnMouseDown(PixelPoint p)
-{
-  parent->SetCurrentInfoBox(i);
-  return true;
-}
-
-bool
-InfoBoxPreview::OnMouseDouble(PixelPoint p)
-{
-  parent->BeginEditing();
-  return true;
-}
-
-void
-InfoBoxPreview::OnPaint(Canvas &canvas)
-{
-  const bool is_current = i == parent->GetCurrentInfoBox();
-
-  if (is_current)
-    canvas.Clear(COLOR_BLACK);
-  else
-    canvas.ClearWhite();
-
-  canvas.SelectHollowBrush();
-  canvas.SelectBlackPen();
-  canvas.Rectangle(0, 0, canvas.GetWidth() - 1, canvas.GetHeight() - 1);
-
-  InfoBoxFactory::Type type = parent->GetContents(i);
-  const TCHAR *caption = type < InfoBoxFactory::NUM_TYPES
-    ? InfoBoxFactory::GetCaption(type)
-    : NULL;
-  if (caption == NULL)
-    caption = _("Invalid");
-  else
-    caption = gettext(caption);
-
-  canvas.Select(parent->GetInfoBoxLook().title_font);
-  canvas.SetBackgroundTransparent();
-  canvas.SetTextColor(is_current ? COLOR_WHITE : COLOR_BLACK);
-  canvas.DrawText(2, 2, caption);
+  arrange.Invalidate();
 }
 
 bool
@@ -437,13 +289,29 @@ dlgConfigInfoboxesShowModal(SingleWindow &parent,
                             InfoBoxSettings::Panel &data_r,
                             bool allow_name_change)
 {
-  WidgetDialog dialog(dialog_look);
-  InfoBoxesConfigWidget widget(dialog, dialog_look, _look,
-                               data_r, allow_name_change, geometry);
-  dialog.CreateFull(parent, nullptr, &widget);
+  /* the dialogue edits the set in place, so Escape puts it back the
+     way it was */
+  const InfoBoxSettings::Panel saved = data_r;
 
-  dialog.ShowModal();
-  dialog.StealWidget();
+  TWidgetDialog<InfoBoxesConfigWidget> dialog(WidgetDialog::Full{}, parent,
+                                              dialog_look,
+                                              gettext(data_r.name));
+  dialog.SetWidget(dialog, dialog_look, _look, data_r, geometry);
+
+  auto &widget = dialog.GetWidget();
+  if (allow_name_change)
+    dialog.AddButton(_("Rename"), [&widget]{ widget.OnRename(); });
+  dialog.AddButton(_("InfoBox geometry"), [&widget]{ widget.OnGeometry(); });
+  dialog.AddButton(_("Copy Set"), [&widget]{ widget.OnCopy(); });
+  widget.SetPasteButton(dialog.AddButton(_("Paste Set"),
+                                         [&widget]{ widget.OnPaste(); }));
+  dialog.AddButton(_("Help"), [&widget]{ widget.ShowHelp(); });
+  dialog.AddButton(_("Close"), mrOK);
+
+  if (dialog.ShowModal() != mrOK) {
+    data_r = saved;
+    return false;
+  }
 
   return dialog.GetChanged();
 }

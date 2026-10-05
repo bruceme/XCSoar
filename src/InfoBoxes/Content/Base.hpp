@@ -1,30 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFOBOX_CONTENT_HPP
-#define XCSOAR_INFOBOX_CONTENT_HPP
-
-#include "Compiler.h"
+#pragma once
 
 struct PixelRect;
 struct InfoBoxData;
@@ -33,7 +10,19 @@ class Canvas;
 
 class InfoBoxContent
 {
+  /**
+   * The index of the InfoBox this content is displayed in.
+   */
+  unsigned slot = 0;
+
 public:
+  /**
+   * Called by #InfoBoxWindow when the content is installed.
+   */
+  void SetSlot(unsigned _slot) noexcept {
+    slot = _slot;
+  }
+
   enum InfoBoxKeyCodes {
     ibkLeft = -2,
     ibkDown = -1,
@@ -41,15 +30,19 @@ public:
     ibkRight = 2
   };
 
-  virtual ~InfoBoxContent();
+  virtual ~InfoBoxContent() noexcept;
 
-  virtual void Update(InfoBoxData &data) = 0;
-  virtual bool HandleKey(const InfoBoxKeyCodes keycode);
+  virtual void Update(InfoBoxData &data) noexcept = 0;
+  virtual bool HandleKey(const InfoBoxKeyCodes keycode) noexcept;
+  virtual bool HandleClick() noexcept;
 
-  virtual void OnCustomPaint(Canvas &canvas, const PixelRect &rc);
+  virtual void OnCustomPaint(Canvas &canvas, const PixelRect &rc) noexcept;
 
-  gcc_pure
-  virtual const InfoBoxPanel *GetDialogContent();
+  [[gnu::pure]]
+  virtual const InfoBoxPanel *GetDialogContent() noexcept;
+
+protected:
+  unsigned GetSlot() const noexcept {
+    return slot;
+  }
 };
-
-#endif

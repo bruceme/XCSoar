@@ -1,38 +1,28 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ACCURACY 1000000
 
-#include "Time/BrokenDate.hpp"
-#include "Time/BrokenTime.hpp"
-#include "Time/WrapClock.hpp"
+#include "time/BrokenDate.hpp"
+#include "time/BrokenTime.hpp"
+#include "time/WrapClock.hpp"
 #include "TestUtil.hpp"
 
-static double
+static TimeStamp
 Normalise(WrapClock &w, BrokenDate &date,
           unsigned hour, unsigned minute, unsigned second=0)
 {
-  return w.Normalise(hour * 3600 + minute * 60 + second, date,
+  return w.Normalise(TimeStamp(FloatDuration{std::chrono::hours{hour}} +
+                               FloatDuration{std::chrono::minutes{minute}} +
+                               FloatDuration{std::chrono::seconds{second}}),
+                     date,
                      BrokenTime(hour, minute, second));
+}
+
+static constexpr bool
+equals(TimeStamp t, unsigned seconds) noexcept
+{
+  return t.ToDuration() == FloatDuration{seconds};
 }
 
 static void
@@ -195,7 +185,7 @@ TestCopy()
   ok1(out_date == expected_date);
 }
 
-int main(int argc, char **argv)
+int main()
 {
   plan_tests(60);
 

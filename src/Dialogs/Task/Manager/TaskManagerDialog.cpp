@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "TaskMapButtonRenderer.hpp"
@@ -36,8 +16,8 @@ Copyright_License {
 #include "Dialogs/Message.hpp"
 #include "Dialogs/Error.hpp"
 #include "Screen/Layout.hpp"
-#include "Event/KeyCode.hpp"
-#include "Screen/SingleWindow.hpp"
+#include "ui/event/KeyCode.hpp"
+#include "ui/window/SingleWindow.hpp"
 #include "Components.hpp"
 #include "Task/ProtectedTaskManager.hpp"
 #include "Task/ValidationErrorStrings.hpp"
@@ -47,20 +27,23 @@ Copyright_License {
 #include "Protection.hpp"
 #include "Widget/ButtonWidget.hpp"
 #include "Widget/TabWidget.hpp"
+#include "Widget/VScrollWidget.hpp"
 #include "Interface.hpp"
 #include "Language/Language.hpp"
+#include "BackendComponents.hpp"
+#include "DataComponents.hpp"
 
-enum Buttons {
-  MAP = 100,
-};
+inline
+TaskManagerDialog::TaskManagerDialog(WndForm &_dialog,
+                                     std::unique_ptr<OrderedTask> &&_task) noexcept
+    :TabWidget(Orientation::AUTO),
+     dialog(_dialog),
+     task(std::move(_task)) {}
 
-TaskManagerDialog::~TaskManagerDialog()
-{
-  delete task;
-}
+TaskManagerDialog::~TaskManagerDialog() noexcept = default;
 
 bool
-TaskManagerDialog::KeyPress(unsigned key_code)
+TaskManagerDialog::KeyPress(unsigned key_code) noexcept
 {
   if (TabWidget::KeyPress(key_code))
     return true;
@@ -73,7 +56,7 @@ TaskManagerDialog::KeyPress(unsigned key_code)
 
     if (GetCurrentIndex() != 3) {
       /* switch to "close" page instead of closing the dialog */
-      SetCurrent(3);
+      SetCurrent(CloseTab);
       SetFocus();
       return true;
     }
@@ -86,7 +69,7 @@ TaskManagerDialog::KeyPress(unsigned key_code)
 }
 
 void
-TaskManagerDialog::OnPageFlipped()
+TaskManagerDialog::OnPageFlipped() noexcept
 {
   RestoreTaskView();
   UpdateCaption();
@@ -94,40 +77,24 @@ TaskManagerDialog::OnPageFlipped()
 }
 
 void
-TaskManagerDialog::OnAction(int id)
+TaskManagerDialog::Initialise(ContainerWindow &parent,
+                              const PixelRect &rc) noexcept
 {
-  switch (id) {
-  case MAP:
-    TaskViewClicked();
-    break;
+  if (!task) {
+    task = backend_components->protected_task_manager->TaskClone();
+    modified = false;
   }
-}
-
-void
-TaskManagerDialog::Initialise(ContainerWindow &parent, const PixelRect &rc)
-{
-  task = protected_task_manager->TaskClone();
 
   /* create the controls */
 
-  SetExtra(new ButtonWidget(new TaskMapButtonRenderer(UIGlobals::GetMapLook()),
-                            *this, MAP));
+  SetExtra(std::make_unique<ButtonWidget>(std::make_unique<TaskMapButtonRenderer>(UIGlobals::GetMapLook()),
+                                          [this](){ TaskViewClicked(); }));
 
   TabWidget::Initialise(parent, rc);
 
   /* create pages */
 
-  TaskPropertiesPanel *wProps =
-    new TaskPropertiesPanel(*this, &task, &modified);
-
-  TaskClosePanel *wClose = new TaskClosePanel(*this, &modified,
-                                              UIGlobals::GetDialogLook());
-
   const MapLook &look = UIGlobals::GetMapLook();
-  Widget *wEdit = CreateTaskEditPanel(*this, look.task, look.airspace,
-                                      &task, &modified);
-
-  TaskMiscPanel *list_tab = new TaskMiscPanel(*this, &task, &modified);
 
   const bool enable_icons =
     CommonInterface::GetUISettings().dialog.tab_style
@@ -137,16 +104,23 @@ TaskManagerDialog::Initialise(ContainerWindow &parent, const PixelRect &rc)
   const auto *BrowseIcon = enable_icons ? &icons.hBmpTabWrench : nullptr;
   const auto *PropertiesIcon = enable_icons ? &icons.hBmpTabSettings : nullptr;
 
-  AddTab(wEdit, _("Turn Points"), TurnPointIcon);
-  AddTab(list_tab, _("Manage"), BrowseIcon);
-  AddTab(wProps, _("Rules"), PropertiesIcon);
-  AddTab(wClose, _("Close"));
+  AddTab(CreateTaskEditPanel(*this, look.task, look.airspace,
+                             task, &modified),
+         _("Turn Points"), TurnPointIcon);
+  AddTab(std::make_unique<TaskMiscPanel>(*this, task, &modified),
+         _("Manage"), BrowseIcon);
+  AddTab(std::make_unique<VScrollWidget>(std::make_unique<TaskPropertiesPanel>(*this, task, &modified),
+                                         GetLook()),
+         _("Rules"), PropertiesIcon);
+  AddTab(std::make_unique<TaskClosePanel>(*this, &modified,
+                                          UIGlobals::GetDialogLook()),
+         _("Close"));
 
   UpdateCaption();
 }
 
 void
-TaskManagerDialog::Show(const PixelRect &rc)
+TaskManagerDialog::Show(const PixelRect &rc) noexcept
 {
   ResetTaskView();
   TabWidget::Show(rc);
@@ -157,10 +131,10 @@ TaskManagerDialog::UpdateCaption()
 {
   StaticString<128> title;
   if (task->GetName().empty())
-    title.Format(_T("%s: %s"), _("Task Manager"),
+    title.Format("%s: %s", _("Task Manager"),
                  GetButtonCaption(GetCurrentIndex()));
   else
-    title.Format(_T("%s: %s - %s"), _("Task Manager"),
+    title.Format("%s: %s - %s", _("Task Manager"),
                  task->GetName().c_str(),
                  GetButtonCaption(GetCurrentIndex()));
   dialog.SetCaption(title);
@@ -209,21 +183,22 @@ TaskManagerDialog::Commit()
   modified |= task->GetFactory().CheckAddFinish();
   task->UpdateStatsGeometry();
 
-  if (!task->TaskSize() || task->CheckTask()) {
+  const auto errors = task->CheckTask();
+  if (!task->TaskSize() || !IsError(errors)) {
 
     { // this must be done in thread lock because it potentially changes the
       // waypoints database
       ScopeSuspendAllThreads suspend;
-      task->CheckDuplicateWaypoints(way_points);
-      way_points.Optimise();
+      task->CheckDuplicateWaypoints(*data_components->waypoints);
+      data_components->waypoints->Optimise();
     }
 
-    protected_task_manager->TaskCommit(*task);
+    backend_components->protected_task_manager->TaskCommit(*task);
 
     try {
-      protected_task_manager->TaskSaveDefault();
-    } catch (const std::runtime_error &e) {
-      ShowError(e, _("Failed to save file."));
+      backend_components->protected_task_manager->TaskSaveDefault();
+    } catch (...) {
+      ShowError(std::current_exception(), _("Failed to save file."));
       return false;
     }
 
@@ -231,7 +206,7 @@ TaskManagerDialog::Commit()
     return true;
   }
 
-  ShowMessageBox(getTaskValidationErrors(task->GetFactory().GetValidationErrors()),
+  ShowMessageBox(getTaskValidationErrors(errors),
     _("Validation Errors"), MB_OK | MB_ICONEXCLAMATION);
 
   return (ShowMessageBox(_("Task not valid. Changes will be lost.\nContinue?"),
@@ -242,9 +217,7 @@ void
 TaskManagerDialog::Revert()
 {
   // create new task first to guarantee pointers are different
-  OrderedTask *temp = protected_task_manager->TaskClone();
-  delete task;
-  task = temp;
+  task = backend_components->protected_task_manager->TaskClone();
   /**
    * \todo Having local pointers scattered about is an accident waiting to
    *       happen. Need a semantic that provides the authoritative pointer to
@@ -255,21 +228,26 @@ TaskManagerDialog::Revert()
    */
   auto &task_view = (ButtonWidget &)GetExtra();
   auto &renderer = (TaskMapButtonRenderer &)task_view.GetRenderer();
-  renderer.SetTask(task);
+  renderer.SetTask(task.get());
   modified = false;
+}
+
+void
+dlgTaskManagerShowModal(std::unique_ptr<OrderedTask> task)
+{
+  if (!backend_components->protected_task_manager)
+    return;
+
+  const DialogLook &look = UIGlobals::GetDialogLook();
+  TWidgetDialog<TaskManagerDialog>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           look, _("Task Manager"));
+  dialog.SetWidget(dialog, std::move(task));
+  dialog.ShowModal();
 }
 
 void
 dlgTaskManagerShowModal()
 {
-  if (protected_task_manager == nullptr)
-    return;
-
-  const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
-  TaskManagerDialog tm(dialog);
-
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Task Manager"), &tm);
-  dialog.ShowModal();
-  dialog.StealWidget();
+  dlgTaskManagerShowModal({});
 }

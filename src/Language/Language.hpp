@@ -1,31 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "Features.hpp"
+#include <cstring>
+#include <string>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_LANGUAGE_HPP
-#define XCSOAR_LANGUAGE_HPP
-
-#if defined(HAVE_POSIX) && !defined(ANDROID) && !defined(KOBO) && !defined(__APPLE__)
-#define USE_LIBINTL
+#ifdef USE_LIBINTL
 
 #include <libintl.h> // IWYU pragma: export
 
@@ -37,14 +19,26 @@ Copyright_License {
 #define N_(x) (x)
 #endif
 
+static inline const char *
+gettext_context(const char *context, const char *text)
+{
+  std::string key;
+  key.reserve(strlen(context) + 1 + strlen(text));
+  key.append(context);
+  key.push_back('\004');
+  key.append(text);
+
+  const char *translation = gettext(key.c_str());
+  return strcmp(translation, key.c_str()) == 0 ? text : translation;
+}
+
+#define C_(c, x) gettext_context((c), (x))
+#define NC_(c, x) (x)
+
 static inline void AllowLanguage() {}
 static inline void DisallowLanguage() {}
 
-#else // !HAVE_POSIX
-
-#include "Compiler.h"
-
-#include <tchar.h>
+#else // !USE_LIBINTL
 
 class MOFile;
 extern const MOFile *mo_file;
@@ -57,17 +51,29 @@ void AllowLanguage();
 void DisallowLanguage();
 #endif
 
-gcc_const
-const TCHAR* gettext(const TCHAR* text);
+[[gnu::const]]
+const char* gettext(const char* text);
+static inline const char *
+gettext_context(const char *context, const char *text)
+{
+  std::string key;
+  key.reserve(strlen(context) + 1 + strlen(text));
+  key.append(context);
+  key.push_back('\004');
+  key.append(text);
+
+  const char *translation = gettext(key.c_str());
+  return strcmp(translation, key.c_str()) == 0 ? text : translation;
+}
 
 /**
  * For source compatibility with GNU gettext.
  */
-#define _(x) gettext(_T(x))
-#define N_(x) _T(x)
+#define _(x) gettext(x)
+#define N_(x) x
+#define C_(c, x) gettext_context((c), (x))
+#define NC_(c, x) (x)
 
 void reset_gettext_cache();
 
 #endif // !HAVE_POSIX
-
-#endif

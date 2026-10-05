@@ -1,39 +1,16 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_DEVICE_HPP
-#define XCSOAR_FLARM_DEVICE_HPP
+#pragma once
 
 #include "BinaryProtocol.hpp"
-#include "Util/AllocatedArray.hxx"
-#include "Compiler.h"
-#include "tchar.h"
+#include "util/AllocatedArray.hxx"
 #include "Device/Driver.hpp"
 #include "Device/SettingsMap.hpp"
 
+#include <cstdint>
+#include <optional>
 #include <string>
-
-#include <stdint.h>
 
 class Port;
 struct Declaration;
@@ -53,27 +30,47 @@ class FlarmDevice: public AbstractDevice
 
   Port &port;
 
-  Mode mode;
+  Mode mode = Mode::UNKNOWN;
+  bool was_binary = false;
 
-  uint16_t sequence_number;
+  uint16_t sequence_number = 0;
 
   /**
    * Settings that were received in PDVSC sentences.
    */
   DeviceSettingsMap<std::string> settings;
 
+private:
+  bool is_power_flarm = false;
+
 public:
   FlarmDevice(Port &_port)
-    :port(_port), mode(Mode::UNKNOWN), sequence_number(0) {}
+    :port(_port) {}
+
+  /**
+   * Sets the PowerFLARM device capabilities status.
+   */
+  void SetPowerFlarm(bool state) { is_power_flarm = state; }
+
+  /**
+   * Checks if the connected hardware features PowerFLARM capabilities.
+   *
+   * @return True if task declaration limits can safely be bypassed.
+   */
+  bool IsPowerFlarm() const { return is_power_flarm; }
 
   /**
    * Write a setting to the FLARM.
-   *
-   * @return true if sending the command has succeeded (it does not
-   * indicate whether the FLARM has understood and processed it)
    */
-  bool SendSetting(const char *name, const char *value,
+  void SendSetting(const char *name, const char *value,
                    OperationEnvironment &env);
+
+  /**
+   * Request an array of settings from FLARM.
+   * 
+   * @return true if successful.
+   */
+  bool RequestAllSettings(const char* const* settings, OperationEnvironment &env);
 
   /**
    * Request a setting from the FLARM.  The FLARM will send the value,
@@ -82,21 +79,41 @@ public:
    * @return true if sending the command has succeeded (it does not
    * indicate whether the FLARM has understood and processed it)
    */
-  bool RequestSetting(const char *name, OperationEnvironment &env);
+  void RequestSetting(const char *name, OperationEnvironment &env);
+
+  /**
+   * Wait for FLARM to send a setting.
+   * @timeout the timeout in milliseconds.
+   *
+   * @return true if the settings were received, false if a timeout occured.
+   */
+  bool WaitForSetting(const char *name, unsigned int timeout_ms);
+
+  /**
+   * Check if setting exists
+   * 
+   * @return true if setting exists
+   */
+  bool SettingExists(const char *name) noexcept;
 
   /**
    * Look up the given setting in the table of received values.  The
    * first element is a "found" flag, and if that is true, the second
    * element is the value.
    */
-  gcc_pure
-  std::pair<bool, std::string> GetSetting(const char *name) const;
+  [[gnu::pure]]
+  std::optional<std::string> GetSetting(const char *name) const noexcept;
+
+  /**
+   * Get unsigned value from setting string.
+   */
+  unsigned GetUnsignedValue(const char *name, unsigned default_value);
 
 protected:
   bool TextMode(OperationEnvironment &env);
   bool BinaryMode(OperationEnvironment &env);
 
-  bool ParsePFLAC(NMEAInputLine &line);
+  bool ParsePFLAC(NMEAInputLine &line, NMEAInfo &info);
 
 public:
   /* virtual methods from class Device */
@@ -106,25 +123,33 @@ public:
 
   bool Declare(const Declaration &declaration, const Waypoint *home,
                OperationEnvironment &env) override;
+  bool PutPilotEvent(OperationEnvironment &env) override;
 
-  bool GetPilot(TCHAR *buffer, size_t length, OperationEnvironment &env);
-  bool SetPilot(const TCHAR *pilot_name, OperationEnvironment &env);
-  bool GetCoPilot(TCHAR *buffer, size_t length, OperationEnvironment &env);
-  bool SetCoPilot(const TCHAR *copilot_name, OperationEnvironment &env);
-  bool GetPlaneType(TCHAR *buffer, size_t length, OperationEnvironment &env);
-  bool SetPlaneType(const TCHAR *plane_type, OperationEnvironment &env);
-  bool GetPlaneRegistration(TCHAR *buffer, size_t length,
+  bool GetPilot(char *buffer, size_t length, OperationEnvironment &env);
+  bool SetPilot(const char *pilot_name, OperationEnvironment &env);
+  bool GetCoPilot(char *buffer, size_t length, OperationEnvironment &env);
+  bool SetCoPilot(const char *copilot_name, OperationEnvironment &env);
+  bool GetPlaneType(char *buffer, size_t length, OperationEnvironment &env);
+  bool SetPlaneType(const char *plane_type, OperationEnvironment &env);
+  bool GetPlaneRegistration(char *buffer, size_t length,
                             OperationEnvironment &env);
-  bool SetPlaneRegistration(const TCHAR *registration,
+  bool SetPlaneRegistration(const char *registration,
                             OperationEnvironment &env);
-  bool GetCompetitionId(TCHAR *buffer, size_t length,
+  bool GetCompetitionId(char *buffer, size_t length,
                         OperationEnvironment &env);
-  bool SetCompetitionId(const TCHAR *competition_id,
+  bool SetCompetitionId(const char *competition_id,
                         OperationEnvironment &env);
-  bool GetCompetitionClass(TCHAR *buffer, size_t length,
+  bool GetCompetitionClass(char *buffer, size_t length,
                            OperationEnvironment &env);
-  bool SetCompetitionClass(const TCHAR *competition_class,
+  bool SetCompetitionClass(const char *competition_class,
                            OperationEnvironment &env);
+
+  /**
+   * Read PFLAC DEVTYPE.  Stops the port thread first, so the answer
+   * is not consumed by the NMEA parser.
+   */
+  bool ReadDeviceType(char *buffer, size_t length,
+                      OperationEnvironment &env);
 
   bool GetStealthMode(bool &enabled, OperationEnvironment &env);
   bool SetStealthMode(bool enabled, OperationEnvironment &env);
@@ -135,52 +160,56 @@ public:
 
   void Restart(OperationEnvironment &env);
 
+  /**
+   * Start a FLARM simulation scenario (PFLAF).
+   * Not available on Classic FLARM or while in flight.
+   *
+   * @param scenario 1-6, see FTD-012 for descriptions
+   */
+  void RunSimulation(unsigned scenario, OperationEnvironment &env);
+
 private:
   /**
    * Sends the supplied sentence with a $ prepended and a line break appended
    */
-  bool Send(const char *sentence, OperationEnvironment &env);
+  void Send(const char *sentence, OperationEnvironment &env);
   bool Receive(const char *prefix, char *buffer, size_t length,
-               OperationEnvironment &env, unsigned timeout_ms);
+               OperationEnvironment &env,
+               std::chrono::steady_clock::duration timeout);
 
   bool GetConfig(const char *setting, char *buffer, size_t length,
                  OperationEnvironment &env);
   bool SetConfig(const char *setting, const char *value,
                  OperationEnvironment &env);
 
-#ifdef _UNICODE
-  bool GetConfig(const char *setting, TCHAR *buffer, size_t length,
-                 OperationEnvironment &env);
-  bool SetConfig(const char *setting, const TCHAR *value,
-                 OperationEnvironment &env);
-#endif
-
   bool DeclareInternal(const Declaration &declaration,
                        OperationEnvironment &env);
 
-  bool SendEscaped(const void *data, size_t length,
-                   OperationEnvironment &env, unsigned timeout_ms) {
-    return FLARM::SendEscaped(port, data, length, env, timeout_ms);
+  void SendEscaped(std::span<const std::byte> src,
+                   OperationEnvironment &env,
+                   std::chrono::steady_clock::duration timeout) {
+    FLARM::SendEscaped(port, src, env, timeout);
   }
 
-  bool ReceiveEscaped(void *data, size_t length,
-                      OperationEnvironment &env, unsigned timeout_ms) {
-    return FLARM::ReceiveEscaped(port, data, length, env, timeout_ms);
+  bool ReceiveEscaped(std::span<std::byte> dest,
+                      OperationEnvironment &env,
+                      std::chrono::steady_clock::duration timeout) {
+    return FLARM::ReceiveEscaped(port, dest, env, timeout);
   }
 
   /**
    * Send the byte that is used to signal that start of a new frame
-   * @return True if the byte was sent successfully
    */
-  bool SendStartByte();
+  void SendStartByte();
 
   /**
    * Waits for a certain amount of time until the next frame start signal byte
    * is received
-   * @param timeout_ms Timeout in milliseconds
-   * @return True if the start byte was received, False if a timeout occurred
+   *
+   * Throws on error.
    */
-  bool WaitForStartByte(OperationEnvironment &env, unsigned timeout_ms);
+  void WaitForStartByte(OperationEnvironment &env,
+                        std::chrono::steady_clock::duration timeout);
 
   /**
    * Convenience function. Returns a pre-populated FrameHeader instance that is
@@ -192,30 +221,27 @@ private:
    * @return An initialized FrameHeader instance
    */
   FLARM::FrameHeader PrepareFrameHeader(FLARM::MessageType message_type,
-                                        const void *data = nullptr,
-                                        size_t length = 0);
+                                        std::span<const std::byte> payload={}) noexcept;
 
   /**
    * Sends a FrameHeader to the port. Remember that a StartByte should be
    * sent first!
    * @param header FrameHeader that should be sent.
-   * @param timeout_ms Timeout in milliseconds
-   * @return True if the header was sent successfully, False if a timeout
-   * or any transfer problems occurred
    */
-  bool SendFrameHeader(const FLARM::FrameHeader &header,
-                       OperationEnvironment &env, unsigned timeout_ms);
+  void SendFrameHeader(const FLARM::FrameHeader &header,
+                       OperationEnvironment &env,
+                       std::chrono::steady_clock::duration timeout);
 
   /**
    * Reads a FrameHeader from the port. This should only be done directly
    * after receiving a StartByte!
    * @param header FrameHeader instance that should be filled
-   * @param timeout_ms Timeout in milliseconds
    * @return True if the header was received successfully, False if a timeout
    * or any transfer problems occurred
    */
   bool ReceiveFrameHeader(FLARM::FrameHeader &header,
-                          OperationEnvironment &env, unsigned timeout_ms);
+                          OperationEnvironment &env,
+                          std::chrono::steady_clock::duration timeout);
 
   /**
    * Waits for an ACK or NACK message from the FLARM with the right
@@ -223,48 +249,62 @@ private:
    * @param sequence_number Sequence Number that is supposed to be received
    * @param data An AllocatedArray where the received payload will be stored in
    * @param length The length of the received payload
-   * @param timeout_ms Timeout in milliseconds
    * @return Message type if N(ACK) was received properly, otherwise 0x00
    */
   FLARM::MessageType
-  WaitForACKOrNACK(uint16_t sequence_number, AllocatedArray<uint8_t> &data,
+  WaitForACKOrNACK(uint16_t sequence_number, AllocatedArray<std::byte> &data,
                    uint16_t &length,
-                   OperationEnvironment &env, unsigned timeout_ms);
+                   OperationEnvironment &env,
+                   std::chrono::steady_clock::duration timeout);
 
   /**
    * Waits for an ACK or NACK message from the FLARM with the right
    * sequence number
    * @param sequence_number Sequence Number that is supposed to be received
-   * @param timeout_ms Timeout in milliseconds
    * @return Message type if N(ACK) was received properly, otherwise 0x00
    */
   FLARM::MessageType WaitForACKOrNACK(uint16_t sequence_number,
                                       OperationEnvironment &env,
-                                      unsigned timeout_ms);
+                                      std::chrono::steady_clock::duration timeout);
 
   /**
    * Waits for an ACK message from the FLARM with the right sequence number
    * @param sequence_number Sequence Number that is supposed to be received
-   * @param timeout_ms Timeout in milliseconds
    * @return True if the ACK message was properly received, False otherwise
    */
   bool WaitForACK(uint16_t sequence_number,
-                  OperationEnvironment &env, unsigned timeout_ms);
+                  OperationEnvironment &env,
+                  std::chrono::steady_clock::duration timeout);
 
   /**
    * "Pings" the connected FLARM device in binary mode to see if the transfer
    * mode switched worked.
-   * @param timeout_ms Timeout in milliseconds
    * @return True if the FLARM responded properly to the ping, False otherwise
    */
-  bool BinaryPing(OperationEnvironment &env, unsigned timeout_ms);
+  bool BinaryPing(OperationEnvironment &env,
+                  std::chrono::steady_clock::duration timeout);
+
+  enum class BinaryPingResult : uint8_t {
+    ACK,
+    REFUSED,
+    TIMEOUT,
+  };
+
+  /**
+   * Binary ping that also watches @p matcher.  A completed
+   * "$PFLAX,A,ERROR,NOTSUPPORTED" sentence is REFUSED; the device
+   * stayed in NMEA and further binary frames will not be answered.
+   */
+  BinaryPingResult
+  BinaryPingWatch(OperationEnvironment &env,
+                  std::chrono::steady_clock::duration timeout,
+                  FLARM::PFLAXNotSupportedMatcher &matcher);
 
   /**
    * "Resets the device. The only way to resume normal operation."
-   * @param timeout_ms Timeout in milliseconds
-   * @return True if the message was sent properly, False otherwise
    */
-  bool BinaryReset(OperationEnvironment &env, unsigned timeout_ms);
+  void BinaryReset(OperationEnvironment &env,
+                   std::chrono::steady_clock::duration timeout);
 
   /**
    * Sends a SelectRecord message to the Flarm
@@ -308,5 +348,3 @@ public:
   bool DownloadFlight(const RecordedFlightInfo &flight, Path path,
                       OperationEnvironment &env) override;
 };
-
-#endif

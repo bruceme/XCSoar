@@ -1,34 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_SCREEN
 #define ENABLE_BUTTON_LOOK
 
 #include "Main.hpp"
-#include "Screen/SingleWindow.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/window/SingleWindow.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
 
 #include <algorithm>
 
@@ -67,32 +46,32 @@ protected:
   }
 
 protected:
-  bool OnMouseDown(PixelPoint p) override {
+  bool OnMouseDown([[maybe_unused]] PixelPoint p) noexcept override {
     SetFocus();
     return true;
   }
 
-  virtual bool OnKeyDown(unsigned key_code) override {
+  bool OnKeyDown(unsigned key_code) noexcept override {
     add_event(key_code, true);
     return true;
   }
 
-  virtual bool OnKeyUp(unsigned key_code) override {
+  bool OnKeyUp(unsigned key_code) noexcept override {
     add_event(key_code, false);
     return true;
   }
 
-  virtual void OnSetFocus() override {
+  void OnSetFocus() noexcept override {
     PaintWindow::OnSetFocus();
     Invalidate();
   }
 
-  virtual void OnKillFocus() override {
+  void OnKillFocus() noexcept override {
     PaintWindow::OnKillFocus();
     Invalidate();
   }
 
-  virtual void OnPaint(Canvas &canvas) override {
+  void OnPaint(Canvas &canvas) noexcept override {
     canvas.SelectWhiteBrush();
     if (HasFocus())
       canvas.SelectBlackPen();
@@ -104,28 +83,26 @@ protected:
     canvas.SetBackgroundTransparent();
     canvas.Select(normal_font);
 
-    unsigned text_height = canvas.CalcTextSize(_T("W")).cy;
+    unsigned text_height = canvas.CalcTextSize("W").height;
     for (int i = num_events - 1, y = 4; i >= 0; --i, y += text_height) {
       const struct key_event &event = events[i];
-      TCHAR buffer[64];
-      _stprintf(buffer, _T("key %s = 0x%x"),
-                event.down ? _T("down") : _T("up"), event.code);
-      canvas.DrawText(4, y, buffer);
+      char buffer[64];
+      sprintf(buffer, "key %s = 0x%x",
+                event.down ? "down" : "up", event.code);
+      canvas.DrawText({4, y}, buffer);
     }
   }
 };
 
-class TestWindow final : public SingleWindow, ActionListener {
+class TestWindow final : public UI::SingleWindow {
   KeyCodeDumper key_code_dumper;
   Button close_button;
 
-  enum Buttons {
-    CLOSE,
-  };
-
 public:
+  using UI::SingleWindow::SingleWindow;
+
   void Create(PixelSize size) {
-    SingleWindow::Create(_T("KeyCodeDumper"), size);
+    SingleWindow::Create("KeyCodeDumper", size);
 
     PixelRect rc = GetClientRect();
 
@@ -137,38 +114,29 @@ public:
     button_rc.top = (rc.top + rc.bottom + 1) / 2;
 
     close_button.Create(*this, *button_look,
-                        _T("Close"), button_rc,
+                        "Close", button_rc,
                         WindowStyle(),
-                        *this, CLOSE);
+                        [this](){ Close(); });
 
     key_code_dumper.SetFocus();
   }
 
 protected:
-  virtual void OnResize(PixelSize new_size) override {
+  void OnResize(PixelSize new_size) noexcept override {
     SingleWindow::OnResize(new_size);
 
     if (key_code_dumper.IsDefined())
-      key_code_dumper.Move(0, 0, new_size.cx, (new_size.cy + 1) / 2);
+      key_code_dumper.Move(PixelRect{PixelSize{new_size.width, (new_size.height + 1) / 2}});
 
     if (close_button.IsDefined())
-      close_button.Move(0, (new_size.cy + 1) / 2, new_size.cx, new_size.cy / 2);
-  }
-
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override {
-    switch (id) {
-    case CLOSE:
-      Close();
-      break;
-    }
+      close_button.Move({0, int(new_size.height + 1) / 2, int(new_size.width), int(new_size.height / 2)});
   }
 };
 
 static void
-Main()
+Main(UI::Display &display)
 {
-  TestWindow window;
+  TestWindow window{display};
   window.Create({240, 100});
   window.Show();
 

@@ -1,57 +1,51 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ActionInterface.hpp"
 #include "Interface.hpp"
-#include "Thread/Mutex.hpp"
+#include "thread/Mutex.hxx"
 #include "MainWindow.hpp"
 #include "Projection/MapWindowProjection.hpp"
 #include "Language/Language.hpp"
 #include "InfoBoxes/InfoBoxManager.hpp"
-#include "Components.hpp"
 #include "FLARM/Glue.hpp"
+#include "Device/MultipleDevices.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
 #include "CalculationThread.hpp"
 #include "Task/ProtectedTaskManager.hpp"
 #include "Profile/Profile.hpp"
 #include "UIState.hpp"
 #include "Operation/MessageOperationEnvironment.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
+#include "DataGlobals.hpp"
+#include "PageActions.hpp"
+#include "PageSettings.hpp"
+#include "Weather/Features.hpp"
+#include "DataComponents.hpp"
+#include "LogFile.hpp"
+#include "Terrain/RasterTerrain.hpp"
 
 using namespace CommonInterface;
 
 namespace ActionInterface {
-  static void SendGetComputerSettings();
+static void
+SendGetComputerSettings() noexcept;
 }
 
+static void
+UpdateMapScalePageInfo(UIState &state) noexcept;
+
 void
-XCSoarInterface::ReceiveGPS()
+XCSoarInterface::ReceiveGPS() noexcept
 {
   {
-    ScopeLock protect(device_blackboard->mutex);
+    auto &device_blackboard = *backend_components->device_blackboard;
+    const std::lock_guard lock{device_blackboard.mutex};
 
-    ReadBlackboardBasic(device_blackboard->Basic());
+    ReadBlackboardBasic(device_blackboard.Basic());
 
-    const NMEAInfo &real = device_blackboard->RealState();
+    const NMEAInfo &real = device_blackboard.RealState();
     Private::movement_detected = real.alive && real.gps.real &&
       real.MovementDetected();
   }
@@ -64,20 +58,21 @@ XCSoarInterface::ReceiveGPS()
 }
 
 void
-XCSoarInterface::ReceiveCalculated()
+XCSoarInterface::ReceiveCalculated() noexcept
 {
   {
-    ScopeLock protect(device_blackboard->mutex);
+    auto &device_blackboard = *backend_components->device_blackboard;
+    const std::lock_guard lock{device_blackboard.mutex};
 
-    ReadBlackboardCalculated(device_blackboard->Calculated());
-    device_blackboard->ReadComputerSettings(GetComputerSettings());
+    ReadBlackboardCalculated(device_blackboard.Calculated());
+    device_blackboard.ReadComputerSettings(GetComputerSettings());
   }
 
   BroadcastCalculatedUpdate();
 }
 
 void
-XCSoarInterface::ExchangeBlackboard()
+XCSoarInterface::ExchangeBlackboard() noexcept
 {
   ExchangeDeviceBlackboard();
   ActionInterface::SendGetComputerSettings();
@@ -85,78 +80,110 @@ XCSoarInterface::ExchangeBlackboard()
 }
 
 void
-XCSoarInterface::ExchangeDeviceBlackboard()
+XCSoarInterface::ExchangeDeviceBlackboard() noexcept
 {
-  ScopeLock protect(device_blackboard->mutex);
-
-  device_blackboard->ReadComputerSettings(GetComputerSettings());
+  auto &device_blackboard = *backend_components->device_blackboard;
+  const std::lock_guard lock{device_blackboard.mutex};
+  device_blackboard.ReadComputerSettings(GetComputerSettings());
 }
 
 void
-ActionInterface::SendGetComputerSettings()
+ActionInterface::SendGetComputerSettings() noexcept
 {
-  assert(calculation_thread != nullptr);
+  assert(backend_components->calculation_thread != nullptr);
 
   main_window->SetComputerSettings(GetComputerSettings());
 
-  calculation_thread->SetComputerSettings(GetComputerSettings());
-  calculation_thread->SetScreenDistanceMeters(main_window->GetProjection().GetScreenDistanceMeters());
+  backend_components->calculation_thread->SetComputerSettings(GetComputerSettings());
+  backend_components->calculation_thread->SetScreenDistanceMeters(main_window->GetProjection().GetScreenDistanceMeters());
 }
 
 void
-ActionInterface::SetBallast(double ballast, bool to_devices)
+ActionInterface::SetBallastLitres(double ballast_litres, bool to_devices) noexcept
 {
-  // write ballast into settings
   GlidePolar &polar = SetComputerSettings().polar.glide_polar_task;
-  polar.SetBallast(ballast);
+  polar.SetBallastLitres(ballast_litres);
 
-  // send to calculation thread and trigger recalculation
-  if (protected_task_manager != nullptr)
-    protected_task_manager->SetGlidePolar(polar);
+  if (backend_components)
+    backend_components->SetTaskPolar(GetComputerSettings().polar);
 
-  if (calculation_thread != nullptr) {
-    calculation_thread->SetComputerSettings(GetComputerSettings());
-    calculation_thread->ForceTrigger();
-  }
-
-  // send to external devices
-  if (to_devices) {
-    const Plane &plane = GetComputerSettings().plane;
-    if (plane.dry_mass > 0) {
-      auto overload = (plane.dry_mass + ballast * plane.max_ballast) /
-        plane.dry_mass;
-
+  if (to_devices && backend_components && backend_components->devices) {
+    const double ref_mass = polar.GetReferenceMass();
+    if (ref_mass > 0) {
       MessageOperationEnvironment env;
-      device_blackboard->SetBallast(ballast, overload, env);
+      backend_components->devices->PutBallast(polar.GetBallastFraction(),
+                                              polar.GetBallastOverload(),
+                                              env);
     }
   }
 }
 
 void
-ActionInterface::SetBugs(double bugs, bool to_devices)
+ActionInterface::SetBallastFraction(double fraction, bool to_devices) noexcept
 {
-  // Write Bugs into settings
-  CommonInterface::SetComputerSettings().polar.SetBugs(bugs);
   GlidePolar &polar = SetComputerSettings().polar.glide_polar_task;
+  polar.SetBallastFraction(fraction);
 
-  // send to calculation thread and trigger recalculation
-  if (protected_task_manager != nullptr)
-    protected_task_manager->SetGlidePolar(polar);
+  if (backend_components)
+    backend_components->SetTaskPolar(GetComputerSettings().polar);
 
-  if (calculation_thread != nullptr) {
-    calculation_thread->SetComputerSettings(GetComputerSettings());
-    calculation_thread->ForceTrigger();
-  }
-
-  // send to external devices
-  if (to_devices) {
-    MessageOperationEnvironment env;
-    device_blackboard->SetBugs(bugs, env);
+  if (to_devices && backend_components && backend_components->devices) {
+    const double ref_mass = polar.GetReferenceMass();
+    if (ref_mass > 0) {
+      MessageOperationEnvironment env;
+      backend_components->devices->PutBallast(polar.GetBallastFraction(),
+                                              polar.GetBallastOverload(),
+                                              env);
+    }
   }
 }
 
 void
-ActionInterface::SetMacCready(double mc, bool to_devices)
+ActionInterface::SetBugs(double bugs, bool to_devices) noexcept
+{
+  CommonInterface::SetComputerSettings().polar.SetBugs(bugs);
+
+  if (backend_components)
+    backend_components->SetTaskPolar(GetComputerSettings().polar);
+
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutBugs(bugs, env);
+  }
+}
+
+void
+ActionInterface::SetCrewMass(double crew_mass, bool to_devices) noexcept
+{
+  GlidePolar &polar = SetComputerSettings().polar.glide_polar_task;
+  polar.SetCrewMass(crew_mass);
+
+  if (backend_components)
+    backend_components->SetTaskPolar(GetComputerSettings().polar);
+
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutCrewMass(crew_mass, env);
+  }
+}
+
+void
+ActionInterface::SetEmptyMass(double empty_mass, bool to_devices) noexcept
+{
+  GlidePolar &polar = SetComputerSettings().polar.glide_polar_task;
+  polar.SetEmptyMass(empty_mass);
+
+  if (backend_components)
+    backend_components->SetTaskPolar(GetComputerSettings().polar);
+
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutEmptyMass(empty_mass, env);
+  }
+}
+
+void
+ActionInterface::SetMacCready(double mc, bool to_devices) noexcept
 {
   // Repeated adjustment of MC with the +/- UI elements could result in
   // an MC which is slightly larger than 0. Since the calculations
@@ -175,24 +202,18 @@ ActionInterface::SetMacCready(double mc, bool to_devices)
   InfoBoxManager::SetDirty();
 
   /* send to calculation thread and trigger recalculation */
-
-  if (protected_task_manager != nullptr)
-    protected_task_manager->SetGlidePolar(polar);
-
-  if (calculation_thread != nullptr) {
-    calculation_thread->SetComputerSettings(GetComputerSettings());
-    calculation_thread->ForceTrigger();
-  }
+  if (backend_components)
+    backend_components->SetTaskPolar(GetComputerSettings().polar);
 
   /* send to external devices */
 
-  if (to_devices) {
+  if (to_devices && backend_components && backend_components->devices) {
     MessageOperationEnvironment env;
-    device_blackboard->SetMC(mc, env);
+    backend_components->devices->PutMacCready(mc, env);
   }
 }
 
-void ActionInterface::SetManualMacCready(double mc, bool to_devices)
+void ActionInterface::SetManualMacCready(double mc, bool to_devices) noexcept
 {
   TaskBehaviour &task_behaviour = CommonInterface::SetComputerSettings().task;
   if (task_behaviour.auto_mc) {
@@ -204,7 +225,7 @@ void ActionInterface::SetManualMacCready(double mc, bool to_devices)
 }
 
 void
-ActionInterface::OffsetManualMacCready(double offset, bool to_devices)
+ActionInterface::OffsetManualMacCready(double offset, bool to_devices) noexcept
 {
   const GlidePolar &polar = GetComputerSettings().polar.glide_polar_task;
   const auto old_mc = polar.GetMC();
@@ -219,7 +240,7 @@ ActionInterface::OffsetManualMacCready(double offset, bool to_devices)
 }
 
 void
-ActionInterface::SendMapSettings(const bool trigger_draw)
+ActionInterface::SendMapSettings(const bool trigger_draw) noexcept
 {
   if (trigger_draw) {
     main_window->UpdateGaugeVisibility();
@@ -241,15 +262,17 @@ ActionInterface::SendMapSettings(const bool trigger_draw)
 }
 
 void
-ActionInterface::SendUIState(const bool trigger_draw)
+ActionInterface::SendUIState(const bool trigger_draw) noexcept
 {
+  UpdateMapScalePageInfo(SetUIState());
+
   main_window->SetUIState(GetUIState());
 
   if (trigger_draw)
     main_window->FullRedraw();
 }
 
-gcc_pure
+[[gnu::pure]]
 static unsigned
 GetPanelIndex(const UIState &ui_state)
 {
@@ -267,8 +290,44 @@ GetPanelIndex(const UIState &ui_state)
     return InfoBoxSettings::PANEL_CRUISE;
 }
 
+static void
+UpdateMapScalePageInfo(UIState &state) noexcept
+{
+  const PagesState &pages = state.pages;
+  const PageLayout &configured = PageActions::GetConfiguredLayout();
+  const PageLayout &layout = PageActions::GetCurrentLayout();
+
+  /* Pan fullscreen keeps the configured map overlay visible — retain its
+     type for RASP HUD logic and show the active layer in the PAN string. */
+  const PageLayout &overlay_layout =
+    (pages.special_page.IsDefined() &&
+     pages.special_page == PageLayout::FullScreen() &&
+     configured.IsMapMain() &&
+     configured.overlay != PageLayout::Overlay::NONE)
+    ? configured
+    : layout;
+
+  state.page_overlay = overlay_layout.IsMapMain()
+    ? overlay_layout.overlay
+    : PageLayout::Overlay::NONE;
+
+  state.map_scale_page_title.clear();
+
+  if (overlay_layout.IsMapMain() &&
+      overlay_layout.overlay != PageLayout::Overlay::NONE) {
+    const auto &settings = CommonInterface::GetUISettings();
+    const char *title = overlay_layout.MakeTitle(
+      settings.info_boxes,
+      std::span{state.map_scale_page_title.data(),
+                state.map_scale_page_title.capacity()},
+      DataGlobals::GetRasp().get(), true);
+    if (title != nullptr)
+      state.map_scale_page_title = title;
+  }
+}
+
 void
-ActionInterface::UpdateDisplayMode()
+ActionInterface::UpdateDisplayMode() noexcept
 {
   UIState &state = SetUIState();
   const UISettings &settings = GetUISettings();
@@ -279,15 +338,201 @@ ActionInterface::UpdateDisplayMode()
 
   const auto &panel = settings.info_boxes.panels[state.panel_index];
   state.panel_name = gettext(panel.name);
+
+  UpdateMapScalePageInfo(state);
+
+  /* the active panel may have changed, and a panel may override the
+     global InfoBox geometry */
+  if (main_window != nullptr)
+    main_window->CheckInfoBoxGeometry();
 }
 
 void
-ActionInterface::SendUIState()
+ActionInterface::SendUIState() noexcept
 {
+  UpdateMapScalePageInfo(SetUIState());
+
   /* force-update all InfoBoxes just in case the display mode has
      changed */
   InfoBoxManager::SetDirty();
   InfoBoxManager::ProcessTimer();
 
   main_window->SetUIState(GetUIState());
+}
+
+void
+ActionInterface::ScheduleSendUIState() noexcept
+{
+  if (main_window != nullptr)
+    main_window->ScheduleRefreshInfoBoxes();
+}
+
+void
+ActionInterface::SetActiveFrequency(const RadioFrequency freq,
+                                    const char *freq_name,
+                                    bool to_devices) noexcept
+{
+  assert(freq.IsDefined());
+
+  /* update interface settings */
+
+  SetComputerSettings().radio.active_frequency = freq;
+  if(freq_name != nullptr) {
+    SetComputerSettings().radio.active_name = freq_name;
+  }
+  else {
+    SetComputerSettings().radio.active_name.clear();
+  }
+
+  /* update InfoBoxes (that might show the ActiveFrequency setting) */
+
+  InfoBoxManager::SetDirty();
+
+  /* send to external devices */
+
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutActiveFrequency(freq, freq_name, env);
+  }
+}
+
+void
+ActionInterface::SetStandbyFrequency(const RadioFrequency freq,
+                                     const char *freq_name,
+                                     bool to_devices) noexcept
+{
+  assert(freq.IsDefined());
+
+  /* update interface settings */
+
+  SetComputerSettings().radio.standby_frequency = freq;
+  if(freq_name != nullptr) {
+    SetComputerSettings().radio.standby_name = freq_name;
+  }
+  else {
+    SetComputerSettings().radio.standby_name.clear();
+  }
+
+  /* update InfoBoxes (that might show the ActiveFrequency setting) */
+
+  InfoBoxManager::SetDirty();
+
+  /* send to external devices */
+
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutStandbyFrequency(freq, freq_name, env);
+  }
+}
+
+void
+ActionInterface::OffsetActiveFrequency(double offset_khz,
+                                       bool to_devices) noexcept
+{
+  RadioFrequency new_active_freq = SetComputerSettings().radio.active_frequency;
+  if(new_active_freq.IsDefined()) {
+    new_active_freq.OffsetKiloHertz(offset_khz);
+    if(new_active_freq.IsDefined()) {
+      ActionInterface::SetActiveFrequency(new_active_freq, nullptr, to_devices);
+    }
+  }
+}
+
+void
+ActionInterface::OffsetStandbyFrequency(double offset_khz,
+                                        bool to_devices) noexcept
+{
+  RadioFrequency new_standby_freq = SetComputerSettings().radio.standby_frequency;
+  if(new_standby_freq.IsDefined()) {
+    new_standby_freq.OffsetKiloHertz(offset_khz);
+    if(new_standby_freq.IsDefined()) {
+      ActionInterface::SetStandbyFrequency(new_standby_freq, nullptr, to_devices);
+    }
+  }
+}
+
+void
+ActionInterface::ExchangeRadioFrequencies(bool to_devices) noexcept
+{
+  /* send to external devices */
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->ExchangeRadioFrequencies(env);
+  }
+}
+
+void
+ActionInterface::SetTransponderCode(TransponderCode code,
+                                    bool to_devices) noexcept
+{
+  assert(code.IsDefined());
+
+  /* update interface settings */
+  SetComputerSettings().transponder.transponder_code = code;
+
+  /* update InfoBoxes (that might show the code setting) */
+  InfoBoxManager::SetDirty();
+
+  /* send to external devices */
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutTransponderCode(code, env);
+  }
+}
+
+void
+ActionInterface::SetTransponderMode(TransponderMode mode) noexcept
+{
+  /* update interface settings */
+  SetComputerSettings().transponder.transponder_mode = mode;
+
+  /* update InfoBoxes (that might show the mode setting) */
+  InfoBoxManager::SetDirty();
+
+  /* Note: no device API currently exists to send only the mode. */
+}
+
+void
+ActionInterface::SetQNH(AtmosphericPressure qnh, bool to_devices) noexcept
+{
+  const NMEAInfo &basic = Basic();
+  ComputerSettings &settings_computer = SetComputerSettings();
+
+  settings_computer.pressure = qnh;
+  settings_computer.pressure_available.Update(basic.clock);
+
+  SendGetComputerSettings();
+
+  InfoBoxManager::SetDirty();
+  InfoBoxManager::ProcessTimer();
+
+  if (to_devices && backend_components && backend_components->devices) {
+    MessageOperationEnvironment env;
+    backend_components->devices->PutQNH(qnh, env);
+  }
+}
+
+void
+ActionInterface::SetStartupLocation() noexcept
+{
+  if (backend_components == nullptr ||
+      backend_components->device_blackboard == nullptr)
+    return;
+
+  const auto &poi = GetComputerSettings().poi;
+  if (poi.home_location_available) {
+    LogString("Start at home waypoint");
+    const double alt = poi.home_elevation_available
+      ? poi.home_elevation
+      : 0;
+    backend_components->device_blackboard->SetStartupLocation(poi.home_location,
+                                                              alt);
+  } else if (data_components != nullptr &&
+             data_components->terrain != nullptr) {
+    const auto &terrain = *data_components->terrain;
+    const GeoPoint loc = terrain.GetTerrainCenter();
+    LogString("Start at terrain center");
+    backend_components->device_blackboard->SetStartupLocation(
+        loc, terrain.GetTerrainHeight(loc).GetValueOr0());
+  }
 }

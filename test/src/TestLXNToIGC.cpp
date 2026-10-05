@@ -1,27 +1,19 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/LX/Convert.hpp"
+#include "Device/Driver/LX/LXN.hpp"
+#include "system/ConvertPathName.hpp"
+#include "io/BufferedOutputStream.hxx"
+#include "io/FileOutputStream.hxx"
+#include "io/StringOutputStream.hxx"
+#include "util/ByteOrder.hxx"
+#include "util/PrintException.hxx"
 #include "TestUtil.hpp"
+
+#include <memory>
+#include <string>
+#include <vector>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,18 +34,15 @@ RunConversion()
     return false;
   }
 
-  FILE *igc_file = fopen(igc_out_path, "wb");
-  if (igc_file == NULL) {
-    fprintf(stderr, "Failed to open file %s\n", igc_out_path);
-    return false;
-  }
+  const PathName igc_out_path_(igc_out_path);
+  FileOutputStream igc_fos(igc_out_path_);
+  BufferedOutputStream igc_bos(igc_fos);
 
   long size;
   if (fseek(lxn_file, 0, SEEK_END) != 0 || (size = ftell(lxn_file)) <= 0 ||
       fseek(lxn_file, 0, SEEK_SET) != 0 || size > MAX_LXN_SIZE)  {
     fprintf(stderr, "Failed to seek file %s\n", lxn_path);
     fclose(lxn_file);
-    fclose(igc_file);
     return false;
   }
 
@@ -63,14 +52,14 @@ RunConversion()
   if (n != (size_t)size) {
     free(data);
     fprintf(stderr, "Failed to read from file %s\n", lxn_path);
-    fclose(igc_file);
     return false;
   }
 
-  bool success = ok1(LX::ConvertLXNToIGC(data, n, igc_file));
-  fclose(igc_file);
+  bool success = ok1(LX::ConvertLXNToIGC(data, n, igc_bos));
   free(data);
 
+  igc_bos.Flush();
+  igc_fos.Commit();
   return success;
 }
 
@@ -115,31 +104,82 @@ CompareFiles()
     return false;
   }
 
-  void *in_data = malloc(in_size);
-  size_t in_n = fread(in_data, 1, in_size, igc_in_file);
+  const auto in_data = std::make_unique<std::byte[]>(in_size);
+  size_t in_n = fread(in_data.get(), 1, in_size, igc_in_file);
   fclose(igc_in_file);
   if (in_n != (size_t)in_size) {
-    free(in_data);
     fprintf(stderr, "Failed to read from file %s\n", igc_in_path);
     fclose(igc_out_file);
     return false;
   }
 
-  void *out_data = malloc(out_size);
-  size_t out_n = fread(out_data, 1, out_size, igc_out_file);
+  const auto out_data = std::make_unique<std::byte[]>(out_size);
+  size_t out_n = fread(out_data.get(), 1, out_size, igc_out_file);
   fclose(igc_out_file);
   if (out_n != (size_t)in_size) {
-    free(out_data);
     fprintf(stderr, "Failed to read from file %s\n", igc_out_path);
     return false;
   }
 
-  return memcmp(in_data, out_data, in_size) == 0;
+  return memcmp(in_data.get(), out_data.get(), in_size) == 0;
 }
 
-int main(int argc, char **argv)
+static std::string
+ConvertLXN(const std::vector<std::byte> &data)
 {
-  plan_tests(2);
+  StringOutputStream sos;
+  BufferedOutputStream bos(sos);
+  if (!LX::ConvertLXNToIGC(data.data(), data.size(), bos))
+    return {};
+
+  bos.Flush();
+  return std::move(sos).GetValue();
+}
+
+/**
+ * Negative LXN altitudes must become signed IGC fields, not uint16
+ * wrap (65479 m for -57 m).  Regression for #3075.
+ */
+static void
+TestSignedAltitude()
+{
+  std::vector<std::byte> lxn;
+
+  LXN::Origin origin{};
+  origin.cmd = LXN::ORIGIN;
+  origin.time = ToBE32(0);
+  origin.latitude = ToBE32(0);
+  origin.longitude = ToBE32(0);
+  const auto *origin_bytes =
+    reinterpret_cast<const std::byte *>(&origin);
+  lxn.insert(lxn.end(), origin_bytes, origin_bytes + sizeof(origin));
+
+  LXN::Position position{};
+  position.cmd = LXN::POSITION_OK;
+  position.time = ToBE16(0);
+  position.latitude = ToBE16(0);
+  position.longitude = ToBE16(0);
+  position.aalt = ToBE16((uint16_t)(int16_t)-57);
+  position.galt = ToBE16((uint16_t)(int16_t)-1);
+  const auto *position_bytes =
+    reinterpret_cast<const std::byte *>(&position);
+  lxn.insert(lxn.end(), position_bytes,
+             position_bytes + sizeof(position));
+
+  lxn.push_back(std::byte{LXN::END});
+
+  const std::string igc = ConvertLXN(lxn);
+  ok1(!igc.empty());
+  ok1(igc.find("EA-0057-0001") != std::string::npos);
+  ok1(igc.find("65479") == std::string::npos);
+  ok1(igc.find("65535") == std::string::npos);
+}
+
+int main()
+try {
+  plan_tests(2 + 4);
+
+  TestSignedAltitude();
 
   if (!RunConversion())
     skip(1, 0, "conversion failed");
@@ -147,4 +187,7 @@ int main(int argc, char **argv)
   ok1(CompareFiles());
 
   return exit_status();
+} catch (...) {
+  PrintException(std::current_exception());
+  return EXIT_FAILURE;
 }

@@ -1,31 +1,10 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef XCSOAR_CONTEST_SETTINGS_HPP
-#define XCSOAR_CONTEST_SETTINGS_HPP
+#pragma once
 
 #include <type_traits>
-
-#include <stdint.h>
+#include <cstdint>
 
 enum class Contest : uint8_t {
   /**
@@ -40,18 +19,30 @@ enum class Contest : uint8_t {
   XCONTEST,
   DHV_XC,
   SIS_AT,
-  NET_COUPE,
 
   /**
    * Deutsche Meisterschaft im Streckensegelflug (Germany).
    */
   DMST,
 
+  WEGLIDE_FREE,
+  WEGLIDE_DISTANCE,
+  WEGLIDE_FAI,
+  WEGLIDE_OR,
+
+  CHARRON,
+
+  /**
+   * FFVP Federal Cup (NetCoupe); placed before #NONE so profile values
+   * 0..13 stay aligned with v7.44 after NET_COUPE was removed from the enum.
+   */
+  NET_COUPE,
+
   NONE,
 };
 
 struct ContestSettings {
-  /** Whether to do online OLC optimisation */
+  /** Whether to do online contest optimisation */
   bool enable;
 
   /**
@@ -60,15 +51,13 @@ struct ContestSettings {
    */
   bool predict;
 
-  /** Rule set to scan for in OLC */
+  /** Rule set to scan for in contest */
   Contest contest;
 
   /** Handicap factor */
   unsigned handicap;
 
-  void SetDefaults();
+  void SetDefaults() noexcept;
 };
 
 static_assert(std::is_trivial<ContestSettings>::value, "type is not trivial");
-
-#endif

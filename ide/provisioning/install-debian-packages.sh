@@ -1,59 +1,215 @@
-#!/bin/sh
+#!/bin/bash
 
 set -e
 
-echo Installing base dependencies...
-apt-get --assume-yes install make \
-  librsvg2-bin xsltproc \
-  imagemagick gettext ffmpeg \
-  git quilt zip \
-  m4 automake wget \
-  ttf-bitstream-vera fakeroot
-echo
+export DEBIAN_FRONTEND=noninteractive
+# Indexed array keeps a stable flag order (associative [*] order is not guaranteed).
+APTOPTS=(--assume-yes --no-install-recommends)
 
-echo Installing Manual dependencies...
-apt-get --assume-yes install texlive \
-  texlive-latex-extra \
-  texlive-luatex \
-  texlive-lang-french \
-  texlive-lang-polish \
-  texlive-lang-portuguese \
-  texlive-lang-german \
-  liblocale-po-perl
-echo
+sections_to_install=()
 
-echo Installing dependencies for the Linux target...
-apt-get --assume-yes install make g++ \
-  zlib1g-dev \
-  libfreetype6-dev \
-  libpng-dev libjpeg-dev \
-  libtiff5-dev libgeotiff-dev \
-  libcurl4-openssl-dev \
-  liblua5.2-dev lua5.2-dev \
-  libxml-parser-perl \
-  libasound2-dev \
-  librsvg2-bin xsltproc \
-  imagemagick gettext \
-  mesa-common-dev libgl1-mesa-dev libegl1-mesa-dev \
-  fonts-dejavu
-echo
+# Parse arguments
+if [ "$#" -eq 0 ]; then
+  sections_to_install=("UPDATE" "BASE" "MANUAL" "LINUX" "WAYLAND" "DEBIAN" "LLVM" "LIBINPUT_GBM" "ARM" "WIN" "KOBO" "ANDROID")
+else
+  for arg in "$@"
+  do
+    sections_to_install+=("$arg")
+  done
+fi
 
-echo Installing dependencies for compiling with LLVM / Clang...
-apt-get --assume-yes install llvm clang libc++-dev
-echo
+update_pkg() {
+  echo Updating Repositories
+  apt-get update
+}
 
-echo Installing dependencies for compiling targets which need libinput or GBM...
-apt-get --assume-yes install libinput-dev libgbm-dev
-echo
+install_base() {
+  echo Installing base dependencies...
+  apt-get install "${APTOPTS[@]}" make \
+    librsvg2-bin xsltproc \
+    imagemagick gettext sox \
+    python3-polib \
+    git quilt zip \
+    m4 automake wget \
+    pkg-config cmake ninja-build ccache \
+    ca-certificates sqlite3
+  echo
+}
 
-echo Installing dependencies for ARM Linux targets...
-apt-get --assume-yes install g++-arm-linux-gnueabihf
-echo
+install_manual() {
+  echo Installing Manual dependencies...
+  apt-get install "${APTOPTS[@]}" texlive \
+    texlive-latex-extra \
+    texlive-luatex \
+    texlive-lang-french \
+    texlive-lang-polish \
+    texlive-lang-portuguese \
+    texlive-lang-german \
+    liblocale-po-perl \
+    graphviz
+  echo
+}
 
-echo Installing PC/WIN64 dependencies...
-apt-get --assume-yes install g++-mingw-w64
-echo
+install_linux() {
+  echo Installing dependencies for the Linux target...
+  apt-get install "${APTOPTS[@]}" make g++ \
+    binutils-gold \
+    zlib1g-dev \
+    libbz2-dev \
+    libfmt-dev \
+    libdbus-1-dev \
+    libsodium-dev \
+    libfreetype-dev \
+    libpng-dev libjpeg-dev \
+    libtiff5-dev libgeotiff-dev libnetcdf-dev \
+    libssl-dev \
+    libcurl4-openssl-dev \
+    libc-ares-dev \
+    liblua5.4-dev \
+    libxml-parser-perl \
+    libasound2-dev \
+    libsdl2-dev \
+    librsvg2-bin xsltproc \
+    imagemagick gettext \
+    mesa-common-dev libegl1-mesa-dev libgles2-mesa-dev \
+    fonts-dejavu \
+    ttf-bitstream-vera \
+    fonts-roboto-unhinted \
+    xz-utils
+  echo
+}
 
-echo Installing dependencies for the Android target, not including SDK / NDK...
-apt-get --assume-yes install default-jdk-headless vorbis-tools adb
-echo
+install_wayland() {
+  echo Installing dependencies for the Wayland target...
+  apt-get install "${APTOPTS[@]}" wayland-protocols \
+    libwayland-bin
+  echo
+}
+
+install_debian() {
+  echo Installing dependencies for creating Debian package
+  apt-get install "${APTOPTS[@]}" dpkg-dev \
+    debhelper \
+    texlive-lang-english \
+    libio-captureoutput-perl \
+    build-essential \
+    xvfb \
+    xauth
+  echo
+}
+
+install_llvm() {
+  echo Installing dependencies for compiling with LLVM / Clang...
+  apt-get install "${APTOPTS[@]}" llvm clang libc++-dev libc++abi-dev lld
+  echo
+}
+
+install_libinput_gbm() {
+  echo Installing dependencies for compiling targets which need libinput or GBM...
+  apt-get install "${APTOPTS[@]}" libinput-dev libgbm-dev libdrm-dev \
+    libgles2-mesa-dev
+  echo
+}
+
+install_arm() {
+  echo Installing dependencies for ARM Linux targets...
+  apt-get install "${APTOPTS[@]}" g++-arm-linux-gnueabihf \
+    libmpc-dev \
+    meson
+  echo
+}
+
+install_pi_host() {
+  echo Installing host tools for Raspberry Pi cross-compilation and sysroot...
+  apt-get install "${APTOPTS[@]}" debootstrap qemu-user-static binfmt-support \
+    g++-arm-linux-gnueabihf libmpc-dev ca-certificates pkg-config
+  echo
+}
+
+install_win() {
+  echo Installing PC/WIN64 dependencies...
+  apt-get install "${APTOPTS[@]}" g++-mingw-w64 \
+      mingw-w64-tools \
+      libtool \
+      curl \
+      unzip \
+      zip \
+      meson \
+      nsis \
+      fonts-dejavu
+  echo
+}
+
+install_kobo() {
+  echo Installing Kobo dependencies...
+  apt-get install "${APTOPTS[@]}" \
+      texinfo \
+      fakeroot \
+      python3-setuptools \
+      ttf-bitstream-vera \
+      fonts-roboto-unhinted
+  echo
+}
+
+install_android() {
+  echo Installing dependencies for the Android target, not including SDK / NDK...
+  apt-get install "${APTOPTS[@]}" default-jdk-headless vorbis-tools adb libtool \
+      unzip
+  echo
+}
+
+clean_pkg() {
+  echo Clean up downloaded resources in order to free space
+  apt-get clean
+  echo
+}
+
+for section in "${sections_to_install[@]}"; do
+  case $section in
+    BASE)
+      install_base
+      ;;
+    MANUAL)
+      install_manual
+      ;;
+    LINUX)
+      install_linux
+      ;;
+    WAYLAND)
+      install_wayland
+      ;;
+    DEBIAN)
+      install_debian
+      ;;
+    LLVM)
+      install_llvm
+      ;;
+    LIBINPUT_GBM)
+      install_libinput_gbm
+      ;;
+    ARM)
+      install_arm
+      ;;
+    PI_HOST)
+      install_pi_host
+      ;;
+    WIN)
+      install_win
+      ;;
+    KOBO)
+      install_kobo
+      ;;
+    ANDROID)
+      install_android
+      ;;
+    UPDATE)
+      update_pkg
+      ;;
+    clean)
+      clean_pkg
+      ;;
+    *)
+      echo "Unknown section: $section"
+      ;;
+  esac
+done

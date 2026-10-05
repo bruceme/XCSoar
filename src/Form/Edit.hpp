@@ -1,32 +1,12 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_EDIT_HPP
-#define XCSOAR_FORM_EDIT_HPP
+#pragma once
 
 #include "Form/Control.hpp"
-#include "Screen/Point.hpp"
-#include "Util/tstring.hpp"
+#include "ui/dim/Rect.hpp"
+
+#include <string>
 
 struct DialogLook;
 class DataField;
@@ -37,8 +17,16 @@ class ContainerWindow;
  * an editable field (the Editor).
  */
 class WndProperty : public WindowControl {
-  typedef bool (*EditCallback)(const TCHAR *caption, DataField &df,
-                               const TCHAR *help_text);
+public:
+  // Alignment of the text: left, right or auto = left align with autoscroll
+  enum class Alignment {
+    LEFT,
+    RIGHT,
+    AUTO
+  };
+
+  typedef bool (*EditCallback)(const char *caption, DataField &df,
+                               const char *help_text);
 
   const DialogLook &look;
 
@@ -48,15 +36,16 @@ class WndProperty : public WindowControl {
   /** Width reserved for the caption of the Control */
   int caption_width;
 
-  tstring value;
+  std::string value;
 
-  DataField *data_field;
+  DataField *data_field = nullptr;
 
   EditCallback edit_callback;
 
-  bool read_only;
+  bool read_only = false;
+  Alignment alignment = Alignment::LEFT;
 
-  bool dragging, pressed;
+  bool dragging = false, pressed = false;
 
 public:
   /**
@@ -66,38 +55,38 @@ public:
    * @param CaptionWidth Width of the Caption of the Control
    */
   WndProperty(ContainerWindow &parent, const DialogLook &look,
-              const TCHAR *Caption,
+              const char *Caption,
               const PixelRect &rc, int CaptionWidth,
-              const WindowStyle style);
+              const WindowStyle style) noexcept;
 
-  WndProperty(const DialogLook &_look);
+  WndProperty(const DialogLook &_look) noexcept;
 
   /** Destructor */
-  ~WndProperty();
+  ~WndProperty() noexcept;
 
   void Create(ContainerWindow &parent, const PixelRect &rc,
-              const TCHAR *_caption,
+              const char *_caption,
               unsigned _caption_width,
-              const WindowStyle style);
+              const WindowStyle style) noexcept;
 
 public:
   /**
    * Returns the recommended caption width, measured by the dialog
    * font.
    */
-  gcc_pure
-  unsigned GetRecommendedCaptionWidth() const;
+  [[gnu::pure]]
+  unsigned GetRecommendedCaptionWidth() const noexcept;
 
-  void SetCaptionWidth(int caption_width);
+  void SetCaptionWidth(int caption_width) noexcept;
 
-  void RefreshDisplay();
+  void RefreshDisplay() noexcept;
 
-  void SetReadOnly(bool _read_only=true) {
+  void SetReadOnly(bool _read_only=true) noexcept {
     read_only = _read_only;
   }
 
-  gcc_pure
-  bool IsReadOnly() const {
+  [[gnu::pure]]
+  bool IsReadOnly() const noexcept {
     return read_only;
   }
 
@@ -108,28 +97,34 @@ public:
    *
    * @return true if the value has been modified
    */
-  bool BeginEditing();
+  bool BeginEditing() noexcept;
+
+private:
+  /**
+   * Show full content in a dialog (for readonly fields with truncated content).
+   */
+  void ShowFullContent() noexcept;
 
 protected:
-  void OnResize(PixelSize new_size) override;
-  void OnSetFocus() override;
-  void OnKillFocus() override;
+  void OnResize(PixelSize new_size) noexcept override;
+  void OnSetFocus() noexcept override;
+  void OnKillFocus() noexcept override;
 
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
 
-  bool OnKeyCheck(unsigned key_code) const override;
-  bool OnKeyDown(unsigned key_code) override;
+  bool OnKeyCheck(unsigned key_code) const noexcept override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
 
-  void OnCancelMode() override;
+  void OnCancelMode() noexcept override;
 
 public:
   /**
    * Returns the Control's DataField
    * @return The Control's DataField
    */
-  DataField *GetDataField() {
+  DataField *GetDataField() noexcept {
     return data_field;
   }
 
@@ -137,35 +132,40 @@ public:
    * Returns the Control's DataField
    * @return The Control's DataField
    */
-  const DataField *GetDataField() const {
+  const DataField *GetDataField() const noexcept {
     return data_field;
   }
 
-  void SetDataField(DataField *Value);
+  void SetDataField(DataField *Value) noexcept;
 
-  void SetEditCallback(EditCallback _ec) {
+  void SetAlignment(Alignment a) noexcept { alignment = a; }
+  Alignment GetAlignment() const noexcept { return alignment; }
+
+  void SetEditCallback(EditCallback _ec) noexcept {
     edit_callback = _ec;
+  }
+
+  const char *GetText() const noexcept {
+    return value.c_str();
   }
 
   /**
    * Sets the Editors text to the given Value
    * @param Value The new text of the Editor Control
    */
-  void SetText(const TCHAR *_value);
+  void SetText(const char *_value) noexcept;
 
 private:
   /**
    * The OnPaint event is called when the button needs to be drawn
    * (derived from PaintWindow)
    */
-  void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 
   /** Increases the Editor value */
-  int IncValue();
+  int IncValue() noexcept;
   /** Decreases the Editor value */
-  int DecValue();
+  int DecValue() noexcept;
 
-  void UpdateLayout();
+  void UpdateLayout() noexcept;
 };
-
-#endif

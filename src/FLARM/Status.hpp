@@ -1,36 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_STATUS_HPP
-#define XCSOAR_FLARM_STATUS_HPP
+#pragma once
 
 #include "FLARM/Traffic.hpp"
-#include "NMEA/Validity.hpp"
+#include "FLARM/Id.hpp"
+#include "time/Validity.hpp"
 
 #include <type_traits>
+#include <cstdint>
 
 /**
  * The FLARM operation status read from the PFLAU sentence.
+ * @see FTD-012 Data Port ICD, PFLAU sentence
  */
 struct FlarmStatus {
   enum class GPSStatus: uint8_t {
@@ -50,23 +32,48 @@ struct FlarmStatus {
   /** Alarm level of FLARM (0-3) */
   FlarmTraffic::AlarmType alarm_level;
 
+  /**
+   * Relative bearing to the most threatening intruder (field 6).
+   * Only valid when alarm_level > NONE.
+   */
+  int16_t relative_bearing;
+
+  /** Alarm type of the most threatening intruder (field 7) */
+  uint8_t alarm_type;
+
+  /** Relative vertical distance to threat in metres (field 8) */
+  int32_t relative_vertical;
+
+  /** Horizontal distance to threat in metres (field 9) */
+  uint32_t relative_distance;
+
+  /** FLARM ID of the most threatening intruder (field 10) */
+  FlarmId target_id;
+
+  /** Were the extended fields (6-10) present in the sentence? */
+  bool has_extended;
+
   /** Is FLARM information available? */
   Validity available;
 
-  void Clear() {
+  constexpr void Clear() noexcept {
     available.Clear();
+    has_extended = false;
+    relative_bearing = 0;
+    alarm_type = 0;
+    relative_vertical = 0;
+    relative_distance = 0;
+    target_id.Clear();
   }
 
-  void Complement(const FlarmStatus &add) {
+  constexpr void Complement(const FlarmStatus &add) noexcept {
     if (!available && add.available)
       *this = add;
   }
 
-  void Expire(double clock) {
-    available.Expire(clock, 10);
+  constexpr void Expire(TimeStamp clock) noexcept {
+    available.Expire(clock, std::chrono::seconds(10));
   }
 };
 
 static_assert(std::is_trivial<FlarmStatus>::value, "type is not trivial");
-
-#endif

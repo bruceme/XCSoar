@@ -1,30 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_MATH_FASTMATH_HPP
-#define XCSOAR_MATH_FASTMATH_HPP
-
-#include "Compiler.h"
+#pragma once
 
 /**
  * Compares a^2 + b^2 against c^2
@@ -33,33 +10,25 @@ Copyright_License {
  *         0 if a^2 + b^2 = c^2,
  *        -1 if a^2 + b^2 < c^2,
  */
-gcc_const
-int
-compare_squared(int a, int b, int c);
-
-gcc_const
-double
-thermal_recency_fn(unsigned x);
-
-inline unsigned int
-CombinedDivAndMod(unsigned &lx)
+constexpr int
+compare_squared(int a, int b, int c) noexcept
 {
-  unsigned int ox = lx & 0xff;
-  // JMW no need to check max since overflow will result in
-  // beyond max dimensions
-  lx = lx >> 8;
-  return ox;
+  const unsigned a2b2 = a * a + b * b;
+  const unsigned c2 = c * c;
+  if (a2b2 > c2)
+    return 1;
+  if (a2b2 < c2)
+    return -1;
+  return 0;
 }
 
-gcc_const
+[[gnu::const]]
 unsigned
-isqrt4(unsigned val);
+isqrt4(unsigned val) noexcept;
 
-gcc_const
+[[gnu::const]]
 static inline unsigned
-ihypot(int x, int y)
+ihypot(int x, int y) noexcept
 {
   return isqrt4(x * x + y * y);
 }
-
-#endif

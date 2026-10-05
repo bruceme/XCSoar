@@ -1,31 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DebugPort.hpp"
-#include "OS/Args.hpp"
+#include "system/Args.hpp"
 #include "Device/Config.hpp"
 #include "Device/Port/Port.hpp"
 #include "Device/Port/ConfiguredPort.hpp"
+
+#include <stdexcept>
 
 DeviceConfig
 ParsePortArgs(Args &args)
@@ -37,39 +19,39 @@ ParsePortArgs(Args &args)
   config.path = args.ExpectNextT().c_str();
 
 #ifndef NDEBUG
-  if (config.path.equals(_T("dump"))) {
+  if (config.path.equals("dump")) {
     config = ParsePortArgs(args);
     config.dump_port = true;
     return config;
   }
 #endif
 
-  if (config.path.equals(_T("k6bt"))) {
+  if (config.path.equals("k6bt")) {
     config = ParsePortArgs(args);
     config.k6bt = true;
     return config;
   }
 
-  if (config.path.equals(_T("pty"))) {
+  if (config.path.equals("pty")) {
     config.port_type = DeviceConfig::PortType::PTY;
     config.path = args.ExpectNextT().c_str();
     return config;
   }
 
-  if (config.path.equals(_T("tcp"))) {
+  if (config.path.equals("tcp")) {
     config.port_type = DeviceConfig::PortType::TCP_LISTENER;
     config.tcp_port = atoi(args.ExpectNext());
     return config;
   }
 
-  if (config.path.equals(_T("tcp_client"))) {
+  if (config.path.equals("tcp_client")) {
     config.port_type = DeviceConfig::PortType::TCP_CLIENT;
     config.ip_address = args.ExpectNextT().c_str();
     config.tcp_port = atoi(args.ExpectNext());
     return config;
   }
 
-  if (config.path.equals(_T("udp"))) {
+  if (config.path.equals("udp")) {
     config.port_type = DeviceConfig::PortType::UDP_LISTENER;
     config.tcp_port = atoi(args.ExpectNext());
     return config;
@@ -87,25 +69,25 @@ ParsePortArgs(Args &args)
 }
 
 std::unique_ptr<Port>
-DebugPort::Open(boost::asio::io_service &io_service,
+DebugPort::Open(EventLoop &event_loop, Cares::Channel &cares,
                 DataHandler &handler)
 {
-  Port *port = OpenPort(io_service, config, this, handler);
+  auto port = OpenPort(event_loop, cares, config, this, handler);
   if (port == nullptr)
     throw std::runtime_error("Failed to open port");
 
-  return std::unique_ptr<Port>(port);
+  return port;
 }
 
 void
-DebugPort::PortStateChanged()
+DebugPort::PortStateChanged() noexcept
 {
   if (listener != nullptr)
     listener->PortStateChanged();
 }
 
 void
-DebugPort::PortError(const char *msg)
+DebugPort::PortError(const char *msg) noexcept
 {
   fprintf(stderr, "Port error: %s\n", msg);
 

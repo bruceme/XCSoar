@@ -1,27 +1,7 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef AIRCRAFT_STATE_FILTER_HPP
-#define AIRCRAFT_STATE_FILTER_HPP
+#pragma once
 
 #include "Math/Filter.hpp"
 #include "Math/DiffFilter.hpp"
@@ -43,21 +23,21 @@ public:
    * Non-initialising default constructor.  To initialise this
    * instance, call Design() and Reset().
    */
-  AircraftStateFilter() = default;
+  AircraftStateFilter() noexcept = default;
 
   /** 
    * Constructor
    * 
    * @param cutoff_wavelength -3db cutoff wavelength (s) of filters
    */
-  AircraftStateFilter(const double cutoff_wavelength);
+  AircraftStateFilter(const double cutoff_wavelength) noexcept;
 
   /**
    * Reset filters to initial state
    *
    * @param state State to reset to
    */
-  void Reset(const AircraftState &state);
+  void Reset(const AircraftState &state) noexcept;
 
   /**
    * Update the filters.  Expects time to have advanced;
@@ -65,7 +45,7 @@ public:
    *
    * @param state New state
    */
-  void Update(const AircraftState &state);
+  void Update(const AircraftState &state) noexcept;
 
   /**
    * Re-design filter.  Used to adjust the time constant of
@@ -76,28 +56,31 @@ public:
    *
    * @return True if design was successfull
    */
-  bool Design(const double cutoff_wavelength);
+  bool Design(FloatDuration cutoff_wavelength) noexcept;
 
   /**
    * Return filtered speed
    *
    * @return Speed (m/s)
    */
-  double GetSpeed() const;
+  [[gnu::pure]]
+  double GetSpeed() const noexcept;
 
   /**
    * Return filtered track bearing
    *
    * @return Track bearing (deg true north)
    */
-  Angle GetBearing() const;
+  [[gnu::pure]]
+  Angle GetBearing() const noexcept;
 
   /**
    * Return filtered climb rate
    *
    * @return Climb rate (m/s)
    */
-  inline double GetClimbRate() const {
+  [[gnu::pure]]
+  double GetClimbRate() const noexcept {
     return v_alt;
   }
 
@@ -107,7 +90,6 @@ public:
    * @param in_time Time step for extrapolation (s)
    * @return Predicted aircraft state in in_time seconds
    */
-  AircraftState GetPredictedState(double in_time) const;
+  [[gnu::pure]]
+  AircraftState GetPredictedState(FloatDuration in_time) const noexcept;
 };
-
-#endif

@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#include "../TopWindow.hpp"
+#include "ui/canvas/Features.hpp" // for DRAW_MOUSE_CURSOR
+#include "ui/event/Queue.hpp"
+#include "ui/event/Globals.hpp"
+#include "ui/event/Idle.hpp"
+#include "ui/dim/Size.hpp"
+
+#ifdef SOFTWARE_ROTATE_DISPLAY
+#include "DisplayOrientation.hpp"
+#ifdef ENABLE_OPENGL
+#include "ui/canvas/opengl/Globals.hpp"
+#endif
+#endif
+
+#ifdef USE_X11
+#include "ui/canvas/custom/TopCanvas.hpp"
+#endif
+
+namespace UI {
+
+#ifndef USE_WAYLAND
+void
+TopWindow::OnResize(PixelSize new_size) noexcept
+{
+#ifdef ENABLE_OPENGL
+  BumpRenderStateToken();
+#endif
+
+  PixelSize native_size = new_size;
+#if defined(ENABLE_OPENGL) && defined(SOFTWARE_ROTATE_DISPLAY) && defined(USE_LIBINPUT)
+  if (!event_queue->UsesSystemRotatedInput() &&
+      AreAxesSwapped(OpenGL::display_orientation))
+    native_size = PixelSize(new_size.height, new_size.width);
+#endif
+
+  event_queue->SetScreenSize(native_size);
+
+  ContainerWindow::OnResize(new_size);
+}
+#endif
+
+bool
+TopWindow::OnEvent(const Event &event)
+{
+  switch (event.type) {
+    Window *w;
+
+  case Event::NOP:
+  case Event::CALLBACK:
+    break;
+
+  case Event::CLOSE:
+    OnClose();
+    break;
+
+  case Event::KEY_DOWN:
+    ResetUserIdle();
+    w = GetFocusedWindow();
+    if (w == nullptr)
+      w = this;
+
+    return w->OnKeyDown(event.param);
+
+  case Event::KEY_UP:
+    ResetUserIdle();
+    w = GetFocusedWindow();
+    if (w == nullptr)
+      w = this;
+
+    return w->OnKeyUp(event.param);
+
+  case Event::MOUSE_MOTION:
+    ResetUserIdle();
+#ifdef DRAW_MOUSE_CURSOR
+    cursor_visible_until = std::chrono::steady_clock::now() +
+      std::chrono::seconds(10);
+    Invalidate();
+#endif
+
+    return OnMouseMove(event.point, 0);
+
+  case Event::MOUSE_DOWN:
+    ResetUserIdle();
+    return double_click.Check(event.point)
+      ? OnMouseDouble(event.point)
+      : OnMouseDown(event.point);
+
+  case Event::MOUSE_UP:
+    ResetUserIdle();
+    double_click.Moved(event.point);
+
+    return OnMouseUp(event.point);
+
+  case Event::MOUSE_WHEEL:
+    ResetUserIdle();
+    return OnMouseWheel(event.point, (int)event.param);
+
+#ifdef USE_WAYLAND
+  case Event::MOUSE_CANCEL:
+    ResetUserIdle();
+    OnCancelMode();
+    return true;
+
+  case Event::POINTER_DOWN:
+    ResetUserIdle();
+    if (!OnMultiTouchDown())
+      return false;
+    return OnMultiTouchMove(event.point, event.point2);
+
+  case Event::POINTER_MOVE:
+    ResetUserIdle();
+    return OnMultiTouchMove(event.point, event.point2);
+
+  case Event::POINTER_UP:
+    ResetUserIdle();
+    return OnMultiTouchUp();
+#endif
+
+#ifdef USE_X11
+  case Event::RESIZE:
+    if (event.point.x <= 0 || event.point.y <= 0)
+      return true;
+
+    if (screen->CheckResize(PixelSize(event.point.x, event.point.y)))
+      Resize(screen->GetSize());
+    return true;
+#endif
+
+#if defined(USE_X11) || defined(USE_WAYLAND) || defined(MESA_KMS)
+  case Event::EXPOSE:
+    Invalidate();
+    return true;
+#endif
+  }
+
+  return false;
+}
+
+} // namespace UI

@@ -1,36 +1,15 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CATMULL_ROM_INTERPOLATOR_HPP
-#define XCSOAR_CATMULL_ROM_INTERPOLATOR_HPP
+#pragma once
 
 #include "Math/Util.hpp"
 #include "Geo/GeoPoint.hpp"
 #include "Geo/GeoVector.hpp"
-#include "Util/Clamp.hpp"
+#include "time/Stamp.hpp"
 
 #include <algorithm>
-#include <assert.h>
+#include <cassert>
 
 /**
  * A Catmull-Rom splines interpolator
@@ -43,17 +22,18 @@ public:
     GeoPoint location;
     double gps_altitude;
     double baro_altitude;
-    double time;
+    TimeStamp time;
   };
 
 private:
-  const double time;
+  const FloatDuration time;
 
   unsigned num;
   Record p[4];
 
 public:
-  CatmullRomInterpolator(double _time):time(_time)
+  explicit CatmullRomInterpolator(FloatDuration _time) noexcept
+    :time(_time)
   {
     Reset();
   }
@@ -65,7 +45,7 @@ public:
   }
 
   void
-  Update(double t, GeoPoint location, double alt, double palt)
+  Update(TimeStamp t, GeoPoint location, double alt, double palt)
   {
     if (num && (t <= p[3].time))
       return;
@@ -88,25 +68,25 @@ public:
   }
 
   GeoVector 
-  GetVector(double _time) const
+  GetVector(TimeStamp _time) const noexcept
   {
     assert(Ready());
 
-    if ((p[2].time - p[1].time) <= 0)
+    if (p[2].time <= p[1].time)
       return GeoVector(0, Angle::Zero());
 
-    const Record r0 = Interpolate(_time - 0.05);
-    const Record r1 = Interpolate(_time + 0.05);
+    const Record r0 = Interpolate(_time - FloatDuration{0.05});
+    const Record r1 = Interpolate(_time + FloatDuration{0.05});
 
-    auto speed = p[1].location.DistanceS(p[2].location) / (p[2].time - p[1].time);
+    auto speed = p[1].location.DistanceS(p[2].location) / (p[2].time - p[1].time).count();
     Angle bearing = r0.location.Bearing(r1.location);
 
     return GeoVector(speed, bearing);
   }
 
-  gcc_pure
+  [[gnu::pure]]
   Record
-  Interpolate(double _time) const
+  Interpolate(TimeStamp _time) const noexcept
   {
     assert(Ready());
 
@@ -122,10 +102,12 @@ public:
 
     const auto u2 = Square(u);
     const auto u3 = u2 * u;
-    const double c[4]= {-time * u3 + 2 * time * u2 - time * u,
-                        (2 - time) * u3 + (time - 3) * u2 + 1,
-                        (time - 2) * u3 + (3 - 2 * time) * u2 + time * u,
-                        time * u3 - time * u2};
+    const double c[4] = {
+      -time.count() * u3 + 2 * time.count() * u2 - time.count() * u,
+      (2 - time.count()) * u3 + (time.count() - 3) * u2 + 1,
+      (time.count() - 2) * u3 + (3 - 2 * time.count()) * u2 + time.count() * u,
+      time.count() * u3 - time.count() * u2,
+    };
 
     Record r;
     r.location.latitude =
@@ -149,31 +131,28 @@ public:
     return r;
   }
 
-  double
-  GetMinTime() const
-  {
+  TimeStamp GetMinTime() const noexcept {
     assert(Ready());
 
     return p[0].time;
   }
 
-  double
-  GetMaxTime() const
-  {
+  TimeStamp GetMaxTime() const noexcept {
     assert(Ready());
 
-    return std::max({0., p[0].time, p[1].time, p[2].time, p[3].time});
+    return std::max({TimeStamp{}, p[0].time, p[1].time, p[2].time, p[3].time});
   }
 
   bool
-  NeedData(double t_simulation) const
+  NeedData(TimeStamp t_simulation) const
   {
-    return !Ready() || (p[2].time <= t_simulation + 0.1);
+    return !Ready() || (p[2].time <= t_simulation + FloatDuration{0.1});
   }
 
 private:
   double
-  GetTimeFraction(const double time, bool limit_range = true) const
+  GetTimeFraction(const TimeStamp time,
+                  bool limit_range = true) const noexcept
   {
     assert(Ready());
     assert(p[2].time > p[1].time);
@@ -181,10 +160,8 @@ private:
     const auto fraction = (time - p[1].time) / (p[2].time - p[1].time);
 
     if (limit_range)
-      return Clamp(fraction, 0., 1.);
+      return std::clamp(fraction, 0., 1.);
     else
       return fraction;
   }
 };
-
-#endif

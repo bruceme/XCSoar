@@ -1,72 +1,35 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Protocol.hpp"
 #include "Device/Declaration.hpp"
 #include "Operation/Operation.hpp"
 
-#include <tchar.h>
 #include <stdio.h>
 
-#ifdef _UNICODE
-#include <windows.h>
-#endif
-
 static void
-convert_string(char *dest, size_t size, const TCHAR *src)
+convert_string(char *dest, size_t size, const char *src)
 {
-#ifdef _UNICODE
-  size_t length = _tcslen(src);
-  if (length >= size)
-    length = size - 1;
-
-  int length2 = ::WideCharToMultiByte(CP_ACP, 0, src, length, dest, size,
-                                      nullptr, nullptr);
-  if (length2 < 0)
-    length2 = 0;
-  dest[length2] = '\0';
-#else
   strncpy(dest, src, size - 1);
   dest[size - 1] = '\0';
-#endif
 }
 
-static bool
+static void
 cai302DeclAddWaypoint(Port &port, int DeclIndex, const Waypoint &way_point,
                       OperationEnvironment &env)
 {
   char Name[13];
   convert_string(Name, sizeof(Name), way_point.name.c_str());
 
-  return CAI302::DeclareTP(port, DeclIndex, way_point.location,
-                           (int)way_point.elevation,
-                           Name, env);
+  CAI302::DeclareTP(port, DeclIndex, way_point.location,
+                    (int)way_point.GetElevationOrZero(),
+                    Name, env);
 }
 
 static bool
 DeclareInner(Port &port, const Declaration &declaration,
-             gcc_unused OperationEnvironment &env)
+             [[maybe_unused]] OperationEnvironment &env)
 {
   using CAI302::UploadShort;
   unsigned size = declaration.Size();
@@ -98,12 +61,10 @@ DeclareInner(Port &port, const Declaration &declaration,
 
   env.SetProgressPosition(4);
 
-  if (!CAI302::DownloadMode(port, env))
-    return false;
+  CAI302::DownloadMode(port, env);
 
   convert_string(pilot.name, sizeof(pilot.name), declaration.pilot_name);
-  if (!CAI302::DownloadPilot(port, pilot, 0, env))
-    return false;
+  CAI302::DownloadPilot(port, pilot, 0, env);
 
   env.SetProgressPosition(5);
 
@@ -111,28 +72,25 @@ DeclareInner(Port &port, const Declaration &declaration,
                  declaration.aircraft_type);
   convert_string(polar.glider_id, sizeof(polar.glider_id),
                  declaration.aircraft_registration);
-  if (!CAI302::DownloadPolar(port, polar, env))
-    return false;
+  CAI302::DownloadPolar(port, polar, env);
 
   env.SetProgressPosition(6);
 
   for (unsigned i = 0; i < size; ++i) {
-    if (!cai302DeclAddWaypoint(port, i, declaration.GetWaypoint(i), env))
-      return false;
-
+    cai302DeclAddWaypoint(port, i, declaration.GetWaypoint(i), env);
     env.SetProgressPosition(7 + i);
   }
 
-  return CAI302::DeclareSave(port, env);
+  CAI302::DeclareSave(port, env);
+  return true;
 }
 
 bool
 CAI302Device::Declare(const Declaration &declaration,
-                      gcc_unused const Waypoint *home,
+                      [[maybe_unused]] const Waypoint *home,
                       OperationEnvironment &env)
 {
-  if (!UploadMode(env))
-    return false;
+  UploadMode(env);
 
   if (!DeclareInner(port, declaration, env)) {
     mode = Mode::UNKNOWN;

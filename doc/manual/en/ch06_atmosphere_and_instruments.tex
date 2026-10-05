@@ -1,7 +1,10 @@
+% !TeX encoding = utf8
+% !TeX spellcheck = en
+
 \chapter{Atmosphere and Instruments}\label{cha:atmosph}
 XCSoar maintains an internal model of the atmosphere based on
-statistics gathered from the flight path and other instruments
-connected to the Pocket PC device.  These statistics and measurements
+statistics gathered from the flight path and other connected devices.
+These statistics and measurements
 are approximate and the weather can on some days change rapidly.  The
 pilot should at all times keep observing the weather.  In
 particular, when out-landing in fields, the pilot should look for
@@ -19,7 +22,7 @@ speeding up is recommended.
 
 When the averager value is displayed, the value shown is the average
 gross climb rate over the previous 30 seconds when in circling mode,
-and the netto (airmass) vertical speed over the previous 30 seconds
+and the netto (airmass) vertical speed over the previous 30~seconds
 when in cruise mode.
 
 \marginpar{\includegraphics[angle=0,width=0.5\linewidth,keepaspectratio='true']{figures/gaugevario2.png}}
@@ -42,10 +45,10 @@ adjusting the MacCready setting on one device should be kept in sync
 with the other, by the software and to not require additional input from
 the pilot.
 
-Pilots abuse the device synchronisation (see \ref{conf:comdevices}) for various 
-reasons. You may have  different MacCready settings on PDA and inteligent vario 
+Pilots abuse the device synchronisation (see Section~\ref{conf:comdevices}) for various
+reasons. You may have  different MacCready settings on PDA and intelligent vario
 to cross-check the results. You may do computations with different ballast 
-settings and cross-chsck the results. You may choose on one of the devices 
+settings and cross-check the results. You may choose on one of the devices
 manually a different wind setting and cross-check the results, etc.
 
 A list of supported variometers is maintained in
@@ -57,10 +60,10 @@ the variometer is in climb audio mode.
 \section{Audio Variometer}
 
 In addition to the variometer display XCSoar provides an acoustic variometer which transfers the 
-variometer measurements are transferre into sounds. The audio variometer is for now only available 
-on android devices. For proper performance connect your device to a barometric sensor or use the 
-internal one of your android device if provided.
-The audio vario is enabled/disabled via the gauges configuration in the configuration.
+variometer measurements into sounds. The audio variometer is for now only available
+on Android devices. For proper performance connect your device to a barometric sensor or use the
+internal one of your Android or iOS device if it has one.
+The audio vario is enabled and configured in Setup / Audio.
 
 
 \section{Air data inputs}
@@ -76,6 +79,8 @@ in a separate InfoBox.  Key sensor measurements that XCSoar uses include:
  so that it may effectively show areas of lift and sink.
 \item[Aircraft acceleration] (load factor)  Used for netto variometer
   calculations where an external netto variometer is not provided.
+  On Android, XCSoar uses the phone's accelerometer when no external
+  G-sensor is connected.
 \item[Barometric altitude] Used for display
 \item[Indicated airspeed] Used for display, in compensating final glide
   calculations for aircraft kinetic energy, and in netto variometer
@@ -102,7 +107,7 @@ all calculations.
 \begin{center}
 \includegraphics[angle=0,width=0.4\linewidth,keepaspectratio='true']{figures/optwind.png}
 
-%{\it DIAGRAM CUTOUT SHOWING WIND VECTOR AT GLIDER, MAYBE ALSO SHOW A
+%TODO{\it DIAGRAM CUTOUT SHOWING WIND VECTOR AT GLIDER, MAYBE ALSO SHOW A
 %WINDSOCK NEXT TO THE DISPLAY TO MAKE THE DIRECTION OBVIOUS.  NO
 %TERRAIN/TOPOGRAPHY}
 
@@ -115,7 +120,9 @@ XCSoar offers two ways of estimating wind during flight.
 \item[Circling]  This method uses GPS position fixes to estimate the wind
   based on drift, typically while thermalling; and is available on all
   XCSoar installations.
-\item[ZigZag]  This method uses GPS position fixes and true airspeed measurements
+  To improve wind calculations, airspeed and rotation rate measurements are
+  also used, if available.
+\item[Zigzag]  This method uses GPS position fixes and true airspeed measurements
   to estimate the wind, typically during cruise.  It is only available where
   XCSoar is connected to an intelligent variometer that outputs true airspeed.
 \end{description}
@@ -128,7 +135,7 @@ altitudes and times.  When the glider's altitude changes significantly,
 the statistics are consulted to determine the best estimate of the
 wind based on previous measurements.
 
-For PC and Pocket PC with touchscreens, you can
+For PC with touchscreens, you can
 also do this by highlighting the wind {\InfoBox} and using the cursor
 keys (up and down increase and decrease the magnitude, left and right
 rotate the wind direction).
@@ -138,8 +145,8 @@ estimation method is used for wind updates, via the field `Auto Wind':
 \begin{itemize}
 \item Manual
 \item Circling
-\item ZigZag
-\item Both (ZigZag and Circling)
+\item Zigzag
+\item Both (Zigzag and Circling)
 \end{itemize}
 
 When wind estimates change significantly, a status message
@@ -153,35 +160,40 @@ the wind estimate from completed turns.  Poor quality turns, where
 the bank angle changes significantly, are rejected or have minimal
 impact on the overall wind estimate.  The best turns are those with
 constant bank angle.
+If values from the airspeed measurement are available, i.e., a
+corresponding instrument is connected,
+speed variations during circling are compensated for.
+If a gyroscope (IMU sensor) is connected, changes in bank angle and
+changes in turn rate can be detected, and the circles in question
+will be excluded from the wind calculation.
 
 Estimates are only obtained if the average GPS fix rate is better than
 one every two seconds.  This results in improved fidelity of estimates
 in the presence of GPS dropouts.
 
-%{\it DIAGRAM SHOWING WIND CALCULATION, BAD TURN AND GOOD TURN}
+%TODO{\it DIAGRAM SHOWING WIND CALCULATION, BAD TURN AND GOOD TURN}
 
-\subsection*{Zig-Zag algorithm}
+\subsection*{Zigzag algorithm}
 
 For aircraft fitted with intelligent variometers connected to XCSoar,
-a so-called `zig-zag' wind estimation algorithm is available.  With
+a so-called `zigzag' wind estimation algorithm is available.  With
 this algorithm, the wind estimate can be updated continuously during
 long glides without circling.
 
 This allows the wind estimate to be updated during cruise while the
-aircraft performs a zigzag manoeuver.  No specific manoeuver is
+aircraft performs a zigzag manoeuvre.  No specific manoeuvre is
 required, in many cases the estimate will be updated as the aircraft's
 heading changes naturally as the pilot hunts for lift.  In general,
-however, the technique requires the aircraft heading to change over 40
-degrees.
+however, the technique requires the aircraft heading to change over 40~degrees.
 
 If the wind changes significantly while in straight flight, the
-zig-zag algorithm is used to update the wind estimate even if the
+zigzag algorithm is used to update the wind estimate even if the
 aircraft's heading does not change much. This provides greater
 accuracy in long final glides.
 
 Wind estimates are updated when a large difference between the
 estimated ground speed and the true ground speed are detected even
-without much zig-zag manoeuvering.
+without much zigzag manoeuvring.
 
 \subsection*{Compass algorithm}
 
@@ -189,13 +201,13 @@ For aircraft fitted with intelligent variometers and digital compasses
 connected to XCSoar, a wind estimation algorithm making use of
 magnetic heading and airspeed is being developed.  This provides
 another method of updating the wind estimate during cruise and does
-not require zig-zag manoeuvres.
+not require zigzag manoeuvres.
 
 \section{Wind settings dialogue}\label{sec:wind-setup}
 
 The wind dialogue allows the initial estimate of the wind speed and
 direction to be entered, usually prior to flight.
-\menulabel{\bmenug{Config 1}\blink\bmenus{Wind}}
+\menulabel{\bmenug{Config 1}\blink\bmenug{Wind}}
 
 \begin{center}
 \includegraphics[angle=0,width=0.4\linewidth,keepaspectratio='true']{figures/dialog-wind2.png}
@@ -203,7 +215,7 @@ direction to be entered, usually prior to flight.
 
 At any time during flight, the pilot can make corrections to the wind
 estimate by entering the correction in the wind settings dialogue.  Once the
-dialogue get closed , the internal estimate is ignored until a new internal
+dialogue gets closed, the internal estimate is ignored until a new internal
 estimate is obtained from the circling or zigzag algorithm.
 
 The automatic wind algorithm may also be switched on or off (or
@@ -221,9 +233,6 @@ thermal band meter.  This is shown above the final glide difference
 bar on the left side of the map display.  It is not shown when the
 glider is above final glide.  
 
-\vskip 2cm
-\marginpar{\hbox{\vbox{\includegraphics[angle=0,width=0.7\linewidth,keepaspectratio='true']{figures/thermalprofile.png}}}}
-
 The thermal band meter shows a graph, where the vertical axis is
 height above the break-off height (Section~\ref{sec:safety-heights}), and is
 scaled according to the maximum altitude achieved.  The horizontal axis is the average climb
@@ -233,6 +242,8 @@ setting, and the glider's current altitude is overlaid on the shaded
 area.  This scaling and arrow makes it easy to see how the pilot's
 MacCready setting compares with achieved thermals and to plan the
 desired working height band.
+
+\marginpar{\hbox{\vbox{\includegraphics[angle=0,width=0.7\linewidth,keepaspectratio='true']{figures/thermalprofile.png}}}}
 
 When cruising between thermals, the vertical position of the arrow,
 indicating the glider's height relative to the thermal band, can be
@@ -249,8 +260,8 @@ thermal marker symbol is a green circle with a spiral.
 \includegraphics[angle=0,width=0.8\linewidth,keepaspectratio='true']{figures/shot-tlocator-circling.png}
 \end{center}
 
-The thermal locator marks the location of the last 20 
-thermals on the map with the thermal symbol during cruise.
+The thermal locator marks the location of the last
+20~thermals on the map with the thermal symbol during cruise.
 
 This location is calculated to compensate for the thermal drift at 
 the glider's altitude.  This means that internally XCSoar remembers 
@@ -271,9 +282,9 @@ at altitude will be projected downwind at the new wind estimate.
 \section{Thermal assistant}\label{sec:thermal-assistant}
 
 The thermal assistant is a graphical aid to maximise the exploitation of the
-given thermal updraft. If it is configured ``On" \config{thermalassistant} the
-small polar digram is mapped to the lower left corner of the screen. A
-single tap on the small digram enlarges it to a full-screen view. 
+given thermal updraft. If it is configured ``On'' \config{thermalassistant} the
+small polar diagram is mapped to the lower left corner of the screen. A
+single tap on the small diagram enlarges it to a full-screen view. 
 
 The polar diagram shows the climb rate over the circular course of the glider.
 The screen-shots show a right circle, where the glider position is fixed to the
@@ -291,18 +302,18 @@ practical usage of the rotating climb diagram. A simple recipe to optimise
 the climb rate according to the assistant would be to follow these two steps
 repeatedly:
 \begin{description}
-\item[1.]  At the moment the maximum peak on the polar diagram passes the top of
+\item[1.]  At the moment, the maximum peak on the polar diagram passes the top of
 the display; that is a quarter of the circle before you reach that part again:
 Open the circle a bit to displace the circle centre in the direction of the
 strongest climb rate.
-\item[2.]  At the moment the maximum peak on the polar diagram passes the
+\item[2.]  At the moment, the maximum peak on the polar diagram passes the
 gliders position; the vario should show the maximal climb rate: Narrow the
-circle as much as possible to centre the thermal updraft at it's maximum. 
+circle as much as possible to centre the thermal updraft at its maximum. 
 \end{description}
 
-It must be said, that the interpretation of the thermal assistant allways relays
+It must be said, that the interpretation of the thermal assistant always relays
 on the specific lag of the connected sensor and PDA itself. A successful
-updraft optimisation will thus depend on a bit training to take the lag into account.
+updraft optimisation will thus depend on a bit of training to take the lag into account.
 
 
 \section{Convection forecast}\label{sec:convection-forecast}
@@ -319,25 +330,29 @@ forecast temperature on the ground, by adjusting the value in the
 The forecast convection ceiling is determined by the altitude at which
 the atmospheric temperature equals the maximum forecast temperature on
 the ground, cooled adiabatically as it rises according to the dry
-adiabatic lapse rate.  Typically the glider will not climb as far as
+adiabatic lapse rate.  Typically, the glider will not climb as far as
 the convection ceiling and so the measured values are extrapolated to
-find the ceiling.  If the atmosphere is stable, the convection ceiling
-is reported as zero altitude.
+find the ceiling.  The dry adiabat starts at the elevation of the
+ground where the sounding began, taken from the terrain file at the
+first measurement after take-off, or from the take-off altitude
+without one.  If the atmosphere is stable, no ceiling is found and the
+analysis page shows ``---'' in its place.
 
 The maximum forecast temperature on the ground is entered using the
 flight settings dialogue described in Section~\ref{sec:flight-setup}.
 
 
-%{\it DIAGRAM SHOWING THERMAL FORECAST, STABLE WITH CLOUD}
+%TODO{\it DIAGRAM SHOWING THERMAL FORECAST, STABLE WITH CLOUD}
 %
-%{\it DIAGRAM SHOWING THERMAL FORECAST, UNSTABLE }
+%TODO{\it DIAGRAM SHOWING THERMAL FORECAST, UNSTABLE }
 
 The forecast cloud base is determined by the altitude at which the dew
 point intersects the maximum forecast temperature on the ground,
 cooled adiabatically as it rises according to the dry adiabatic lapse
-rate.  If no clouds are forecast, the cloud base is reported as zero.
+rate.  If no clouds are forecast, no cloud base is found and the
+analysis page shows ``---'' in its place.
 
-%{\it DIAGRAM SHOWING THERMAL FORECAST, STABLE WITH NO CLOUDS}
+%TODO{\it DIAGRAM SHOWING THERMAL FORECAST, STABLE WITH NO CLOUDS}
 
 \section{Analysis dialogue}
 
@@ -378,61 +393,123 @@ trends in the soaring conditions.
 \section{Weather, METAR / TAF}\label{sec:metar-taf}
 
 If the hardware hosting XCSoar is able to connect to the internet, weather 
-reports and forecasts can be downloaded. \menulabelr{\bmenug{Info}\blink
-\bmenug{Weather}} Present actual informations available are depicted by a 
+reports and forecasts can be downloaded.
+\menulabelr{\bmenug{Info}\blink\bmenug{Weather}}
+Present actual informations available are depicted by a 
 little flag, pinned to the waypoint of the reporting station. 
-\menulabelr{\includegraphics[width=0.6cm]{icons/map_weather_station.pdf}} To 
-set up reports and forecasts, invoke the METAR and TAF dialogue. With 
+\menulabelr{\includegraphics[width=0.6cm]{icons/map_weather_station.pdf}}
+To set up reports and forecasts, invoke the METAR and TAF dialogue. With 
 \bmenuw{Add} a filtering screen for ICAO codes comes up. After typing and 
-pushing \bmenuw{OK}another station is added to the list. Accessing the 
+pushing \bmenuw{OK} another station is added to the list. Accessing the 
 information is either possible via selecting an airport and pushing 
 \bmenuw{Details} on the same screen or by touching the map invoking the ``Map 
 elements at this location'' dialogue. The dialogue will show airports, 
-airspaces... ...and weather data. If the flags are missing on the map, no 
+airspaces\textellipsis \textellipsis{}and weather data. If the flags are missing on the map, no 
 actual information is available. Invoke the info dialogue and touch 
 \bmenuw{Update}.
 
 \section{Weather forecast, RASP}\label{sec:weather-forecast}
 
-Regional Atmospheric Soaring Prediction - RASP - is intended to provide 
+Regional Atmospheric Soaring Prediction (RASP) is intended to provide
 detailed graphical weather forecasts for soaring purposes. For further details 
-the keen pilot is invited to consult \url{http://www.drjack.info} on how RASP 
+the pilot is invited to consult \url{http://www.drjack.info} on how RASP 
 forecasts work, from where they are available, and their use and limitations. 
-At \url{http://www.drjack.info/RASP} a map depicts the coverage of available 
-RASP forecasts worldwide, provided by many soaring and paragliding enthusiasts. 
-Please note, that some of these links do provide data in-season only as well 
-as just a part of these providers make available data in XCSoar format.
+RASP forecasts use a specialized forecast model with a particular focus on
+boundary layer (BL) meteorology and convective processes.
 
-For use within XCSoar, an ``xcsoar-rasp.dat'' file has to be installed 
-into the XCSoarData directory.  As is with February 2014, download of 
-``xcsoar.rasp.dat'' files is not (yet) supported by XCSoar's file manager. The 
-rasp forecasts are displayed as colour-coded terrain overlays on the map. \\ \\
-Make sure, terrain display is set to on. \tip{} \\ \\
-The RASP-forecast overlays are invoked via menu 
-\menulabelr{\bmenug{Info}\blink\bmenug{Weather}}
-\bmenug{Info}.
+You can find a list of available RASP forecasts at \url{http://www.drjack.info/RASP}.
+These are provided by various independent soaring and paragliding enthusiasts. 
+Please note that some of these links provide data in-season only, and only some
+of these providers make data available in XCSoar format.
 
-The Field setting determines which data field is displayed on the map.
-The Time setting determines at which forecast time the data field will
-be displayed.  Upon entering the weather dialogue, the Time setting is
-advanced to the next nearest forecast time available in the RASP file.
+You can either install RASP data files yourself, or use XCSoar's built-in automatic
+download for many regions worldwide via the 'Site Files / Site Files'
+configuration page, \ref{sec:site-files}, or the \emph{Update} button in
+Info $\rightarrow$ Weather $\rightarrow$ RASP.  In that RASP panel,
+\emph{Auto update} (on by default) also refreshes an out-of-date or missing
+file when you open a RASP map page or when auto time has no data; turn it
+off for offline use. 
+
+The files have \verb|.dat| extension and the information is shown 
+as colour-coded terrain overlays on the map.  \\ \\
+Make sure that terrain display is set to ``on''. \tip{}  \\ \\
+
+The main configuration dialog for RASP is in the weather setup via menu
+\menulabelr{\bmenug{Info}\blink\bmenug{Weather Setup}}
+\bmenuw{RASP}.
+You select the RASP data file to display, and the data field to be shown.
+After choosing the the configuration, use \bmenuw{Assign to page} to 
+assign that configuration to the current map page.
+
+Alternatively, you can control which pages show weather data and how weather display
+is controlled via the page configuration (Section~\ref{conf:screenpages}):
+Set \emph{Map overlay} to \emph{RASP},
+choose the \emph{RASP layer} for that page, and optionally set the
+\emph{Bottom area} to \emph{Weather controls} for in-flight forecast time
+control. This allows configuration of several pages quickly.
+
+\begin{center}
+\includegraphics[angle=0,width=0.8\linewidth,keepaspectratio='true']{figures/dialog-weather.png}
+\end{center}
+
+When the bottom \emph{Weather controls} panel is visible, \emph{Auto advance}
+follows the current local time.  Turn it off to select a
+fixed forecast time. When entering a page with RASP overlay for the first
+time, XCSoar selects the next forecast time in the RASP file at or after the
+current time.
+
 When a field is not available in the RASP file, the background is left blank.
+The current field name is displayed in the lower left corner of the screen
+whenever RASP data is displayed.
 
-The maximum and minimum values of the field in the map area are drawn
-\marginpar{\includegraphics[angle=0,width=0.95\linewidth,keepaspectratio='true']{figures/dialog-weather.png}}
-at their respective locations on the map.  The field name is displayed
-on the lower left of the screen.
-
-The fields available to display are as follows:
+RASP display configuration parameters are in the \bmenuw{RASP} tab in
+\menulabelr{\bmenug{Info}\blink\bmenug{Weather Setup}}. Global options are:
 \begin{description}
-\item[Terrain] Display terrain on map, no weather data displayed.
+\item[File] Shows the currently selected RASP data file and allows selection 
+and download of other RASP data files. 
+\item[Modified] Shows the last modification date of the currently selected RASP data file.
+\item[Update] Attempts to download the latest version of the currently selected RASP data file.
+This is available for RASP data files that were downloaded from the XCSoar repository.
+THe download is in the background, the data will automatically update once it is completed.
+\item[Layer] Selects the RASP data field to display on the currently active map page, 
+indicated above the layer field.
+\item[Colormap] Below the layer selector, a colormap preview is shown for the currently
+selected RASP data field, with the scale given in the currently selected units.
+\item[Contours] Allows activation/deactivation of contour lines in the weather data,
+as well as the density of the contour lines.
+\item[Opacity] Allows adjustment of the opacity of the weather overlay. Some weather layers
+are global and do not have a transparency channel, such as the surface temperature. This
+setting allows to make them partially transparent to enable the underlying terrain to
+shine through.\\
+For RASP layers with their own transparency souch as wave lift or cloud cover, this
+setting only reduces opacity, it never overrides the transparency of that layer.
+\item[Assign to page] Assigns the currently selected RASP configuration to the currently
+active map page.
+\item[Add page] Creates a new map page with the currently selected RASP configuration after
+the currently active page.
+\end{description}
+
+The available fields can vary by data source. Some examples include:
+\begin{description}
+\item[Wave] 
+Vertical velocity of the air mass at the given altitude.
+\begin{center}
+\includegraphics[angle=0,width=0.8\linewidth,keepaspectratio='true']{figures/rasp-wave.png}
+\end{center}
+
+\item[Rain] 
+Predicted preciptation rate integrated over the forecast step interval 
+(typically 15~minutes or 1~hour).
+\begin{center}
+\includegraphics[angle=0,width=0.8\linewidth,keepaspectratio='true']{figures/rasp-rain.png}
+\end{center}
 
 \item[W*] 
 Average dry thermal updraft strength near mid-BL height.  Subtract
 glider descent rate to get average vario reading for cloudless
 thermals.  Updraft strengths will be stronger than this forecast if
 convective clouds are present, since cloud condensation adds buoyancy
-aloft (i.e. this neglects ``cloudsuck'').  This value depends upon both
+aloft (i.e.\ this neglects ``cloudsuck'').  This value depends upon both
 the surface heating and the BL depth.
 
 \begin{center}
@@ -440,9 +517,8 @@ the surface heating and the BL depth.
 \end{center}
 
 \item[BL wind spd] 
-The speed and direction of the vector-averaged wind in the BL.  This
-prediction can be misleading if there is a large change in wind
-direction through the BL.
+The speed and direction of the vector-averaged wind in the boundary layer.\@  This
+prediction can be unreliable if there is large wind shear through the BL.\@
 
 \begin{center}
 \includegraphics[angle=0,width=0.8\linewidth,keepaspectratio='true']{figures/rasp-blwindspd.png}
@@ -465,22 +541,25 @@ glider flying.
 
 \item[dwcrit]  
 This parameter estimates the height above ground at which the average
-dry updraft strength drops below 225 fpm and is expected to give
+dry updraft strength drops below 225~fpm (1.1~m/s). This is expected to give
 better quantitative numbers for the maximum cloudless thermalling
 height than the BL Top altitude, especially when mixing results from
 vertical wind shear rather than thermals.  (Note: the present
-assumptions tend to underpredict the max. thermalling height for dry
-consitions.) In the presence of clouds the maximum thermalling height
-may instead be limited by the cloud base.  Being for ``dry'' thermals,
-this parameter omits the effect of ``cloudsuck''.
+assumptions tend to underpredict the max.\ thermalling height for dry
+conditions) In the presence of clouds the maximum thermalling height
+may instead be limited by the cloud base.
+
+\item[hwcrit]  
+Same as \emph{dwcrit}, but giving the altitude instead of the height at which the average
+dry updraft strength drops below 225~fpm.
 
 \item[bl cloud]  
 This parameter provides an additional means of evaluating the
-formation of clouds within the BL and might be used either in
+formation of clouds within the BL, and might be used either in
 conjunction with or instead of the other cloud prediction parameters.
 It assumes a very simple relationship between cloud cover percentage
-and the maximum relative humidity within the BL.  The cloud base
-altitude is not predicted, but is expected to be below the BL Top
+and the maximum relative humidity within the BL.\@  The cloud base
+altitude is not predicted, but is expected to be below the BL top
 altitude.
 
 \begin{center}
@@ -488,21 +567,11 @@ altitude.
 \end{center}
 
 \item[Sfc temp] 
-The temperature at a height of 2m above ground level.  This can be
+The temperature at a height of 2~m above ground level.  This can be
 compared to observed surface temperatures as an indication of model
-simulation accuracy; e.g. if observed surface temperatures are
+simulation accuracy; e.g.\ if observed surface temperatures are
 significantly below those forecast, then soaring conditions will be
 poorer than forecast.
-\item[hwcrit]  
-This parameter estimates the altitude at which the average dry updraft
-strength drops below 225 fpm and is expected to give better
-quantitative numbers for the maximum cloudless thermalling height than
-the BL Top altitude, especially when mixing results from vertical wind
-shear rather than thermals.  (Note: the present assumptions tend to
-underpredict the max. thermalling height for dry consitions.) In the
-presence of clouds the maximum thermalling height may instead be
-limited by the cloud base.  Being for ``dry'' thermals, this parameter
-omits the effect of ``cloudsuck''.
 \item[wblmaxmin]  
 Maximum grid-area-averaged extensive upward or downward motion within
 the BL as created by horizontal wind convergence. Positive convergence
@@ -518,17 +587,235 @@ The colour schemes used in rendering the RASP contours are illustrated
 in the table below.
 
 \begin{longtable}{c c c}
-\em{Cloud cover [\%]} & \em{Height [m]} & \em{Temperature [°C]} \\
+\emph{Cloud cover [\%]} & \emph{Height [m]} & \emph{Temperature [°C]} \\
 \includegraphics[angle=0,width=3.5cm,keepaspectratio='true']{figures/ramp-rasp-cloudpct.png} &
 \includegraphics[angle=0,width=3.5cm,keepaspectratio='true']{figures/ramp-rasp-h.png} &
 \includegraphics[angle=0,width=3.5cm,keepaspectratio='true']{figures/ramp-rasp-temperature.png} \\
 \\
-\em{Vertical speed [m/s]} & \em{Wind speed [m/s]} & \\
+\emph{Vertical speed [m/s]} & \emph{Wind speed [m/s]} & \\
 \includegraphics[angle=0,width=3.5cm,keepaspectratio='true']{figures/ramp-rasp-vertspeed.png} &
 \includegraphics[angle=0,width=3.5cm,keepaspectratio='true']{figures/ramp-rasp-windspeed.png} & \\
 
 \end{longtable}
 \end{maxipage}
+
+\section{Weather forecast, EDL Soaring}\label{sec:weather-edl}
+
+XCSoar can display wave-oriented weather overlays provided by the
+public EDL Soaring MBTiles service at
+\url{https://www.edl-soaring.com/mbtiles/}.  XCSoar downloads the
+tiles on demand from EDL Soaring's public extraction service and stores
+them locally as \verb|.mbtiles| files in the weather cache.
+
+Before using EDL, enable \emph{EDL Weather Page} in the system
+configuration under \emph{System setup / Weather} (requires an OpenGL build
+with HTTP support).
+
+Tiles are cached locally.  Open the \bmenuw{EDL} tab in
+\menulabelr{\bmenug{Info}\blink\bmenug{Weather}} or the EDL section in
+\emph{System setup / Weather} to manage the cache:
+\begin{description}
+\item[Cached day] Show which UTC days are already stored in the local
+  cache.  A day is marked \emph{Complete} when all 24 forecast hours and
+  all five EDL levels are available locally, otherwise it is marked
+  \emph{Partial}.
+\item[Precache day] Download all 24 hours and all five EDL levels for
+  the selected UTC day.  This is intended for pre-flight preparation, so
+  that the EDL data remains available when internet connectivity is lost
+  in flight.
+\item[Clean other days] Keep only the selected cached UTC day and delete
+  the other locally cached EDL days.
+\end{description}
+
+Configure a map page in the page configuration dialogue
+(Section~\ref{conf:screenpages}): set \emph{Main area} to \emph{Map}
+(or \emph{Map (north-up)}), \emph{Map overlay} to \emph{EDL}, and
+\emph{Bottom area} to \emph{Weather controls}.  The in-flight bottom
+panel provides:
+\begin{description}
+\item[Auto advance] When enabled, XCSoar follows the next UTC forecast
+  hour and selects the lowest isobar above the current aircraft
+  altitude.  Forecast and level selectors are disabled while auto advance
+  is active.
+\item[Forecast] Select the forecast hour to display.  XCSoar shows this
+  time in local time for the pilot's convenience, but requests the data
+  from the EDL service in UTC because the remote service expects UTC
+  timestamps.
+\item[Level] Select one of the supported pressure levels.  The EDL
+  source provides the fixed isobars 500, 600, 700, 800 and 900~hPa.
+  XCSoar also shows the approximate altitude corresponding to each
+  isobar in the current pressure setting.
+\end{description}
+
+Entering a page with EDL overlay resets the display to the next UTC
+forecast hour and enables auto advance.  The overlay legend in the upper
+right corner shows the active local forecast hour, the selected pressure
+level and its approximate altitude.
+
+The same EDL overlay can be enabled on any map page by setting
+\emph{Map overlay} to \emph{EDL} in the page configuration.
+
+The EDL source is intended for wave flying and provides rendered image
+tiles rather than raw meteorological grids.  XCSoar therefore uses the
+EDL imagery as a map overlay and does not expose additional model
+parameters beyond the forecast hour and the fixed isobar levels
+published by the EDL service.
+
+\section{Rain radar}\label{sec:rain-radar}
+
+XCSoar can draw the European weather radar composite on the map.  The
+data comes from EUMETNET's OPERA programme, is published under CC~BY
+4.0 and needs no account and no subscription.
+
+The layer is listed as \emph{Radar (EUMETNET OPERA)} on the
+``Overlay'' page of the
+\menulabelr{\bmenug{Info}\blink\bmenug{Weather}} \bmenug{Info} menu.
+Select it and press \bmenug{Use}; \bmenug{Disable} switches it off
+again.
+
+Selecting it draws the part of the newest composite covering the area
+the map is currently showing, so pan and zoom the map first and select
+the layer afterwards.  \bmenug{Update} fetches a fresh image for the
+area now visible.  A new composite is published every five minutes.
+
+A map page can also carry the radar permanently: set \emph{Map
+overlay} to \emph{Rain radar} in
+\config{screenpages}.  The picture is then fetched
+in the background whenever the page is shown, without a progress
+dialog interrupting the flight.
+
+It arrives in pieces, nearest first.  XCSoar divides the area around
+the aircraft into a block of tiles and fetches them in rings growing
+outwards from underneath the glider, so on a slow or intermittent
+connection the weather you are flying into is drawn before the
+distant weather is.  Each tile stays on the map on its own: flying on
+fetches only the tiles that come into range, and panning or zooming
+keeps whatever still fits.
+
+This is also what keeps the feature affordable.  The composite is one
+file of about five megabytes covering the continent, but it is
+tiled and carries a pyramid of reduced-resolution copies, and the
+server serves byte ranges, so XCSoar reads its index and then only
+those tiles it actually needs, at the resolution the map is drawn at.
+At the scales one flies at that is between two and three per cent of
+the file -- typically a hundred and fifty kilobytes for the whole
+block, and about a hundred for the first tile, the one under the
+aircraft.  Zoomed out far enough to see half the continent it is more,
+because more ground is being asked for.
+
+While such a page is open, XCSoar watches how old the picture is.
+XCSoar asks for a frame seven minutes old, because one takes four to
+six minutes to reach the server after it is measured; frames are
+renewed every five minutes, so what is on the map is between seven and
+twelve minutes old.  Once a frame passes twenty minutes it is removed
+from the map \emph{before} a replacement is fetched, so a failing or
+slow connection can never leave a stale echo on display.  If the
+replacement then fails to arrive, a warning says so; that warning
+offers to stop appearing, and can be switched back on with
+\emph{Warn when radar expires} on the \emph{Look / Language, Input}
+configuration page (Section~\ref{sec:interface}).
+
+The colours are the classes the Deutscher Wetterdienst uses for its
+own radar images, from cyan for the weakest echo through green,
+yellow and orange to red and violet for the heaviest, so the picture
+reads the way German pilots are used to.  Areas the radar network
+does not reach are left transparent rather than shaded, because the
+map underneath should stay visible.
+
+Coverage reaches from the Azores to northern Scandinavia and from
+Iceland to eastern Europe; nineteen national weather services
+contribute.
+
+Note that this feature requires and uses an internet connection.
+
+This is not the radar of the \emph{pc\_met} dialogue
+(Section~\ref{sec:pcmet}): those are the Deutscher Wetterdienst's own
+radar images, shown as pictures with the aircraft marked on them, and
+need a subscription.
+
+\section{Satellite imagery}\label{sec:satellite}
+
+XCSoar can draw Meteosat imagery underneath the moving map, so that
+terrain, airspace and the task are read on top of the cloud picture,
+at the map's own scale and orientation.
+
+The imagery comes from EUMETView, EUMETSAT's public web map service.
+It needs no account and no subscription: the rendered products are
+CC~BY 4.0, and the service declares neither fees nor access
+constraints.  This is the same Meteosat data the Deutscher
+Wetterdienst sells on in its \emph{pc\_met} satellite images, taken
+one step earlier in the chain, and for the Meteosat Third Generation
+layers at a finer sampling than \emph{pc\_met} carries at all.
+
+To switch it on, set \emph{Map overlay} to \emph{Satellite} in
+\config{screenpages} and choose a product under \emph{Satellite
+layer}.  Each page keeps its own choice, so one page can carry visible
+light and another infrared.
+
+The products offered are:
+
+\begin{description}
+\item[European HRV RGB] the closest counterpart to the \emph{pc\_met}
+  \emph{vis\_hrv} images, and the default.
+\item[Visible 0.6\,\textmu m (MTG)] the Third Generation imager at its
+  finest solar sampling, about twice as detailed as the previous
+  generation's high resolution channel.
+\item[Infrared 10.5\,\textmu m (MTG)] cloud top temperature, which
+  works at night.
+\item[True colour (MTG)] and \textbf{Geo colour (MTG)}, composites
+  that read like a photograph.
+\item[Rapid scan natural colour] renewed every five minutes rather
+  than every ten, over Europe.
+\end{description}
+
+The imagery is fetched as a block of five by five tiles centred on
+the aircraft.  At the scales a glider is flown at, a tile is about
+twenty-five kilometres across, so the block reaches at least fifty
+kilometres in every direction.
+
+The tiles are requested \emph{nearest first}: the one the glider is
+over, then the ring around it, then the next ring outwards.  This is
+deliberate, because a glider's mobile connection is usually slow and
+often absent.  The tile under the aircraft is about three kilobytes
+and is on the map almost at once; after nine tiles, some thirty
+kilobytes, the picture already covers the area a glider can reach,
+and the full block costs about eighty.  If the connection dies part
+way through, what remains on the map is a complete picture of the
+ground that matters most, rather than a half-drawn one.
+
+Only one tile is requested at a time.  Stacking requests on a thin
+link makes every tile arrive late instead of the nearest one arriving
+early.
+
+The tiles sit on the standard map tile grid, so flying on does not
+throw the picture away: when the aircraft crosses into the next tile,
+the tiles the new block shares with the old one stay exactly where
+they are and only the ones that have come into range are fetched.
+Panning fetches nothing at all.
+
+Zooming the map \emph{in} fetches nothing either --- the satellite has
+no finer detail to give, so a closer look would only spend data
+enlarging what is already on the screen.  Zooming \emph{out} past what
+the block covers does move it to a coarser grid, so that the imagery
+keeps covering the map instead of shrinking to the middle of it.  Each
+step is a halving, so an ordinary change of scale does not move it,
+and the coarsest grid spans a couple of thousand kilometres.
+
+A frame is not on the server the moment it is taken; the delay runs
+from about thirteen minutes on the rapid scan product to half an hour
+on the slower composites, and XCSoar waits accordingly rather than
+asking for a picture that does not exist yet.  EUMETView answers a
+request for a frame it does not have with an error rather than an
+older picture, so this margin is measured rather than guessed.  As with the radar, a
+frame that grows too old for its layer is taken off the map before a
+replacement is requested, so a failing connection cannot leave
+yesterday's weather on display.
+
+EUMETSAT's data policy requires the source to be named wherever the
+imagery is shown.  XCSoar carries the attribution in the overlay's
+label, which the map shows when the image is tapped.
+
+Note that this feature requires and uses an internet connection.
 
 \section{pc\_met, Deutscher Wetterdienst}\label{sec:pcmet}
 
@@ -541,12 +828,26 @@ may be expensive, depending on your mobile data plan.
 
 To enable the feature, enter your \emph{pc\_met} credentials in
 XCSoar's system configuration.  There are two username/password pairs:
-the first is for DWD's web services (on \texttt{www.flugwetter.de}),
-and the other is the FTP password (on \texttt{ftp.pcmet.de}).
+the first is for DWD's web services (on \url{www.flugwetter.de}),
+and the other is the FTP password (on \url{ftp.pcmet.de}).
 
 During preflight check and during the flight, you can check weather
 forecasts and live weather data in the
 \menulabelr{\bmenug{Info}\blink\bmenug{Weather}} \bmenug{Info} menu.
 Below ``Overlay'', you can choose layers for the map window.
 ``pc\_met'' is a collection of live images which are usually displayed
-on the DWD web site \texttt{www.flugwetter.de}.
+on the DWD web site \url{www.flugwetter.de}.
+
+In the radar images (``Radar''), the satellite images
+(``Satellitenbilder'') and in ``Sat Rad Blitz'', XCSoar draws the
+aircraft symbol at your current GPS position, as long as you are
+inside the map section shown by the image.  Without a fix, or outside
+that section, the image is shown unchanged.  The symbol is updated
+while the image is open, and it follows the zoom and pan of the image
+viewer.  Note that these images use the polar stereographic
+projection of the DWD, in which the meridians converge; north is
+straight up only along 10\degree{} East.
+
+For radar and satellite imagery drawn on the moving map itself,
+without a subscription, see Sections~\ref{sec:rain-radar} and
+\ref{sec:satellite}.

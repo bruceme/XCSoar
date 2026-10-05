@@ -1,40 +1,28 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BlueFlyDialogs.hpp"
 #include "Device/Driver/BlueFly/Internal.hpp"
 #include "Dialogs/WidgetDialog.hpp"
+#include "Dialogs/Error.hpp"
 #include "Form/DataField/Enum.hpp"
 #include "Language/Language.hpp"
+#include "Operation/Cancelled.hpp"
 #include "Operation/PopupOperationEnvironment.hpp"
 #include "UIGlobals.hpp"
 #include "Widget/RowFormWidget.hpp"
 
 class BlueFlyConfigurationWidget final
-  : public RowFormWidget, private ActionListener {
+  : public RowFormWidget {
   enum BlueFlyWidgets {
     VOLUME,
+    AUDIO_WHEN_CONNECTED,
+    LIFT_THRESHOLD,
+    LIFT_OFF_THRESHOLD,
+    SINK_THRESHOLD,
+    SINK_OFF_THRESHOLD,
     OUTPUT_MODE,
+    OUTPUT_FREQUENCY,
     SAVE,
   };
 
@@ -48,56 +36,103 @@ public:
     :RowFormWidget(look), dialog(_dialog), device(_device) {}
 
   /* virtual methods from Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override {
+  void Prepare([[maybe_unused]] ContainerWindow &parent,
+               [[maybe_unused]] const PixelRect &rc) noexcept override {
 
       AddFloat(N_("Volume"), nullptr,
-             _T("%.2f"),
-             _T("%.2f"),
+               "%.2f", "%.2f",
                0, 1.0, 0.1, true, 0);
 
+      AddBoolean(N_("Audio when connected"), nullptr, false);
+
+      AddFloat(NC_("Setting", "Lift threshold"), nullptr,
+               "%.2f m/s", "%.2f",
+               0, BlueFlyDevice::BlueFlySettings::THRESHOLD_MAX,
+               0.05, true, 0.2);
+
+      AddFloat(NC_("Setting", "Lift off threshold"), nullptr,
+               "%.2f m/s", "%.2f",
+               0, BlueFlyDevice::BlueFlySettings::THRESHOLD_MAX,
+               0.05, true, 0.05);
+
+      AddFloat(NC_("Setting", "Sink threshold"), nullptr,
+               "%.2f m/s", "%.2f",
+               0, BlueFlyDevice::BlueFlySettings::THRESHOLD_MAX,
+               0.05, true, 0.2);
+
+      AddFloat(NC_("Setting", "Sink off threshold"), nullptr,
+               "%.2f m/s", "%.2f",
+               0, BlueFlyDevice::BlueFlySettings::THRESHOLD_MAX,
+               0.05, true, 0.05);
+
       static constexpr StaticEnumChoice modes[] = {
-        { 0, _T("BlueFlyVario") },
-        { 1, _T("LK8EX1") },
-        { 2, _T("LX") },
-        { 3, _T("FlyNet") },
+        { 0, "BlueFlyVario" },
+        { 1, "LK8EX1" },
+        { 2, "LX" },
+        { 3, "FlyNet" },
+        { 4, "None" },
+        { 5, "BFV" },
+        { 6, "BFX" },
         { 0 }
       };
 
       AddEnum(N_("Output mode"), nullptr, modes);
 
-      AddButton(_("Save"), *this, SAVE);
+      AddInteger(NC_("Setting", "Output frequency"),
+                 _("Divisor of the 20 ms hardware tick (1 = 50 Hz, 10 = 5 Hz)."),
+                 "%d", "%d",
+                 BlueFlyDevice::BlueFlySettings::OUTPUT_FREQUENCY_MIN,
+                 BlueFlyDevice::BlueFlySettings::OUTPUT_FREQUENCY_MAX,
+                 1, 1);
+
+      AddButton(_("Save"), [this](){
+        bool _changed = false;
+        dialog.GetWidget().Save(_changed);
+      });
   }
 
-  void Show(const PixelRect &rc) override {
-    device.GetSettings(params);
+  void Show(const PixelRect &rc) noexcept override {
+    params = device.GetSettings();
 
     LoadValue(VOLUME, params.volume);
+    LoadValue(AUDIO_WHEN_CONNECTED, params.audio_when_connected);
+    LoadValue(LIFT_THRESHOLD, params.lift_threshold);
+    LoadValue(LIFT_OFF_THRESHOLD, params.lift_off_threshold);
+    LoadValue(SINK_THRESHOLD, params.sink_threshold);
+    LoadValue(SINK_OFF_THRESHOLD, params.sink_off_threshold);
     LoadValueEnum(OUTPUT_MODE, params.output_mode);
+    params.output_frequency =
+      BlueFlyDevice::BlueFlySettings::ExportOutputFrequency(
+        params.output_frequency);
+    LoadValue(OUTPUT_FREQUENCY, params.output_frequency);
 
     RowFormWidget::Show(rc);
   }
 
-  bool Save(bool &changed) override {
+  bool Save(bool &changed) noexcept override {
     PopupOperationEnvironment env;
 
     changed |= SaveValue(VOLUME, params.volume);
-    changed |= SaveValue(OUTPUT_MODE, params.output_mode);
+    changed |= SaveValue(AUDIO_WHEN_CONNECTED,
+                         params.audio_when_connected);
+    changed |= SaveValue(LIFT_THRESHOLD, params.lift_threshold);
+    changed |= SaveValue(LIFT_OFF_THRESHOLD, params.lift_off_threshold);
+    changed |= SaveValue(SINK_THRESHOLD, params.sink_threshold);
+    changed |= SaveValue(SINK_OFF_THRESHOLD, params.sink_off_threshold);
+    changed |= SaveValueEnum(OUTPUT_MODE, params.output_mode);
+    changed |= SaveValueInteger(OUTPUT_FREQUENCY,
+                                params.output_frequency);
 
-    device.WriteDeviceSettings(params, env);
+    try {
+      device.WriteDeviceSettings(params, env);
+    } catch (OperationCancelled) {
+      return false;
+    } catch (...) {
+      ShowError(std::current_exception(), "BlueFly Vario");
+      return false;
+    }
 
     return true;
-  }
-
-private:
-  /* virtual methods from ActionListener */
-  void OnAction(int id) override {
-    bool _changed = false;
-
-    switch (id) {
-    case SAVE:
-      dialog.GetWidget().Save(_changed);
-      break;
-    }
   }
 };
 
@@ -126,11 +161,11 @@ dlgConfigurationBlueFlyVarioShowModal(Device &_device)
 
   const DialogLook &look = UIGlobals::GetDialogLook();
 
-  WidgetDialog dialog(look);
+  WidgetDialog dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+                      look,
+                      "BlueFly Vario",
+                      new BlueFlyConfigurationWidget(look, dialog, device));
 
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _T("BlueFly Vario"),
-                    new BlueFlyConfigurationWidget(look, dialog, device));
-
-  dialog.AddButton(_("Cancel"), mrCancel);
+  dialog.AddButton(_("Close"), mrCancel);
   dialog.ShowModal();
 }

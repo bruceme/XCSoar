@@ -1,43 +1,55 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxSettings.hpp"
 #include "Language/Language.hpp"
+#include "util/StringAPI.hxx"
+#include "util/TruncateString.hpp"
 
 #include <algorithm>
-#include <tchar.h>
-
 using namespace InfoBoxFactory;
 
+bool
+InfoBoxCustomText::AssignLine(StaticString<MAX_LENGTH> &dest,
+                              const char *src) noexcept
+{
+  /* RowFormWidget::GetValueString() returns nullptr for a #DataField
+     which does not implement GetAsString(); treat it like an empty
+     line */
+  if (src == nullptr)
+    src = "";
+
+  char buffer[MAX_LENGTH];
+  CopyTruncateString(buffer, sizeof(buffer), src);
+
+  /* KeyValueFileWriter stores an empty value when the text contains
+     a quotation mark or a line break */
+  char *out = buffer;
+  for (const char *in = buffer; *in != '\0'; ++in)
+    if (*in != '"' && *in != '\n' && *in != '\r')
+      *out++ = *in;
+  *out = '\0';
+
+  if (StringIsEqual(buffer, dest))
+    return false;
+
+  dest = buffer;
+  return true;
+}
+
 void
-InfoBoxSettings::Panel::Clear()
+InfoBoxSettings::Panel::Clear() noexcept
 {
   name.clear();
   std::fill_n(contents, MAX_CONTENTS, InfoBoxFactory::MIN_TYPE_VAL);
+  geometry = INHERIT_GEOMETRY;
+
+  for (auto &i : text)
+    i.Clear();
 }
 
 bool
-InfoBoxSettings::Panel::IsEmpty() const
+InfoBoxSettings::Panel::IsEmpty() const noexcept
 {
   for (unsigned i = 0; i < MAX_CONTENTS; ++i)
     if (contents[i] != 0)
@@ -47,15 +59,15 @@ InfoBoxSettings::Panel::IsEmpty() const
 }
 
 void
-InfoBoxSettings::SetDefaults()
+InfoBoxSettings::SetDefaults() noexcept
 {
   use_final_glide = false;
 
   geometry = Geometry::SPLIT_8;
 
-  inverse = false;
   use_colors = true;
-  border_style = BorderStyle::BOX;
+  theme = Theme::FOLLOW_GLOBAL;
+  border_style = BorderStyle::SHADED;
 
   for (unsigned i = 0; i < MAX_PANELS; ++i)
     panels[i].Clear();
@@ -81,7 +93,7 @@ InfoBoxSettings::SetDefaults()
   panels[2].name = N_("FinalGlide");
 
   for (unsigned i = PREASSIGNED_PANELS; i < MAX_PANELS; i++)
-    panels[i].name.Format(_T("AUX-%u"), i-2);
+    panels[i].name.Format("AUX-%u", i-2);
 
   for (unsigned i = 0; i < DFLT_CONFIG_PANELS; i++)
     for (unsigned j = 0; j < DFLT_CONFIG_BOXES; j++)

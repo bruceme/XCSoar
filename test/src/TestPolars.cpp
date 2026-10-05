@@ -1,38 +1,20 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TestUtil.hpp"
 
 #include "GlideSolvers/GlidePolar.hpp"
-#include "IO/ConfiguredFile.hpp"
-#include "OS/Path.hpp"
+#include "io/ConfiguredFile.hpp"
+#include "system/Path.hpp"
 #include "Profile/Profile.hpp"
 #include "Polar/Polar.hpp"
 #include "Polar/Parser.hpp"
 #include "Polar/PolarFileGlue.hpp"
 #include "Polar/PolarStore.hpp"
-#include "Util/ConvertString.hpp"
-#include "Util/Macros.hpp"
-#include "Util/PrintException.hxx"
+#include "Plane/Plane.hpp"
+#include "util/Macros.hpp"
+#include "util/PrintException.hxx"
+#include "util/StringAPI.hxx"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -44,7 +26,7 @@ TestBasic()
   // Test ReadString()
   PolarInfo polar;
   ParsePolar(polar, "318, 100, 80, -0.606, 120, -0.99, 160, -1.918");
-  ok1(equals(polar.reference_mass, 318));
+  ok1(equals(polar.shape.reference_mass, 318));
   ok1(equals(polar.max_ballast, 100));
   ok1(equals(polar.shape[0].v, 22.2222222));
   ok1(equals(polar.shape[0].w, -0.606));
@@ -55,7 +37,7 @@ TestBasic()
   ok1(equals(polar.wing_area, 0.0));
 
   ParsePolar(polar, "318, 100, 80, -0.606, 120, -0.99, 160, -1.918, 9.8");
-  ok1(equals(polar.reference_mass, 318));
+  ok1(equals(polar.shape.reference_mass, 318));
   ok1(equals(polar.max_ballast, 100));
   ok1(equals(polar.shape[0].v, 22.2222222));
   ok1(equals(polar.shape[0].w, -0.606));
@@ -77,8 +59,8 @@ TestFileImport()
 {
   // Test LoadFromFile()
   PolarInfo polar;
-  PolarGlue::LoadFromFile(polar, Path(_T("test/data/test.plr")));
-  ok1(equals(polar.reference_mass, 318));
+  PolarGlue::LoadFromFile(polar, Path("test/data/test.plr"));
+  ok1(equals(polar.shape.reference_mass, 318));
   ok1(equals(polar.max_ballast, 100));
   ok1(equals(polar.shape[0].v, 22.2222222));
   ok1(equals(polar.shape[0].w, -0.606));
@@ -89,20 +71,37 @@ TestFileImport()
   ok1(equals(polar.wing_area, 9.8));
 }
 
+/**
+ * PolarStore::Item::v_no is SI m/s (0 if unknown).  Values in the
+ * typical km/h range (e.g. 190) indicate a unit mistake.
+ */
+static bool
+MaxCruiseUnitPlausible(double v_no) noexcept
+{
+  return v_no == 0 || (v_no > 0 && v_no <= DEFAULT_MAX_SPEED);
+}
+
 static void
 TestBuiltInPolars()
 {
-  unsigned count = PolarStore::Count();
-  for(unsigned i = 0; i < count; i++) {
-    PolarInfo polar = PolarStore::GetItem(i).ToPolarInfo();
+  for (const auto &i : PolarStore::GetAll()) {
+    PolarInfo polar = i.ToPolarInfo();
+    ok(polar.IsValid(), i.name);
+    /* keep ok(..., name): ok1() would hide which polar failed */
+    ok(MaxCruiseUnitPlausible(i.v_no), i.name);
 
-    WideToUTF8Converter narrow(PolarStore::GetItem(i).name);
-    ok(polar.IsValid(), narrow);
+    if (StringIsEqual(i.name, "LS-8 (15m)") ||
+        StringIsEqual(i.name, "LS-8 (18m)"))
+      ok1(equals(i.v_no, 52.78));
   }
+
+  const auto &default_polar = PolarStore::GetDefault();
+  ok(MaxCruiseUnitPlausible(default_polar.v_no), default_polar.name);
+  ok1(equals(default_polar.v_no, 52.78));
 }
 
 struct PerformanceItem {
-  unsigned storeIndex;
+  const char* name;
   bool check_best_LD;
   double best_LD;
   bool check_best_LD_speed;
@@ -115,23 +114,23 @@ struct PerformanceItem {
 
 static const PerformanceItem performanceData[] = {
   /* 206 Hornet         */
-  {   0, true, 38,   true,  103, true,  0.6,  true,   74 },
+  {  "206 Hornet", true, 38,   true,  103, true,  0.6,  true,   74 },
   /* Discus             */
-  {  30, true, 43,   false,   0, true,  0.59, false,   0 },
+  {  "Discus", true, 43,   false,   0, true,  0.59, false,   0 },
   /* G-103 TWIN II (PIL)*/
-  {  37, true, 38.5, true,   95, true,  0.64, true,   80 },
+  {  "G 103 Twin 2", true, 38.5, true,   95, true,  0.64, true,   80 },
   /* H-201 Std. Libelle */
-  {  41, true, 38,   true,   90, true,  0.6,  true,   75 },
+  {  "H-201 Std Libelle", true, 38,   true,   90, true,  0.6,  true,   75 },
   /* Ka6 CR             */
-  {  45, true, 30,   true,   85, true,  0.65, true,   72 },
+  {  "Ka 6CR", true, 30,   true,   85, true,  0.65, true,   72 },
   /* K8                 */
-  {  46, true, 25,   true,   75, false, 0,    true,   62 },
+  {  "Ka 8", true, 25,   true,   75, false, 0,    true,   62 },
   /* LS-4               */
-  {  52, true, 40.5, false,   0, true,  0.60, false,   0 },
+  {  "LS-4", true, 40.5, false,   0, true,  0.60, false,   0 },
   /* Std. Cirrus        */
-  {  79, true, 38.5, false,   0, true,  0.6,  false,   0 },
+  {  "Std Cirrus", true, 38.5, false,   0, true,  0.6,  false,   0 },
   /* LS-1f              */
-  { 157, true, 38.2, false,   0, true,  0.64, false,   0 },
+  { "LS-1f", true, 38.2, false,   0, true,  0.64, false,   0 },
 };
 
 static bool
@@ -142,16 +141,24 @@ ValuePlausible(double ref, double used, double threshold = 0.05)
   return fabs(ref - used) < ref * threshold;
 }
 
+[[gnu::pure]]
+static auto
+GetPolarByName(const char *name) noexcept
+{
+  for (const auto &i : PolarStore::GetAll())
+    if (StringIsEqual(i.name, name))
+      return i.ToPolarInfo();
+
+  abort();
+}
+
 static void
 TestBuiltInPolarsPlausibility()
 {
   for(unsigned i = 0; i < ARRAY_SIZE(performanceData); i++) {
-    assert(i < PolarStore::Count());
-    unsigned si = performanceData[i].storeIndex;
-    PolarInfo polar = PolarStore::GetItem(si).ToPolarInfo();
+    const char *polarName = performanceData[i].name;
+    const auto polar = GetPolarByName(polarName);
     PolarCoefficients pc = polar.CalculateCoefficients();
-
-    WideToUTF8Converter polarName(PolarStore::GetItem(i).name);
 
     ok(pc.IsValid(), polarName);
 
@@ -159,8 +166,8 @@ TestBuiltInPolarsPlausibility()
     gp.SetCoefficients(pc, false);
 
     // Glider empty weight
-    gp.SetReferenceMass(polar.reference_mass, false);
-    gp.SetBallastRatio(polar.max_ballast / polar.reference_mass);
+    gp.SetReferenceMass(polar.shape.reference_mass, false);
+    gp.SetBallastRatio(polar.max_ballast / polar.shape.reference_mass);
     gp.SetWingArea(polar.wing_area);
 
     gp.Update();
@@ -184,9 +191,11 @@ TestBuiltInPolarsPlausibility()
   }
 }
 
-int main(int argc, char **argv)
+int main()
 try {
-  unsigned num_tests = 19 + 9 + PolarStore::Count();
+  unsigned num_tests = 19 + 9 +
+    PolarStore::GetAll().size() * 2 + 1 +
+    /* LS-8 (15m), LS-8 (18m), default exact v_no */ 3;
 
   // NOTE: Plausibility tests disabled for now since many fail
   if (0)
@@ -203,7 +212,7 @@ try {
     TestBuiltInPolarsPlausibility();
 
   return exit_status();
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

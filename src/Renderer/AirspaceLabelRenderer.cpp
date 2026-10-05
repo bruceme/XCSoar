@@ -1,28 +1,8 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#include "AirspaceLabelList.hpp"
 #include "AirspaceLabelRenderer.hpp"
+#include "AirspaceLabelPlacement.hpp"
 #include "AirspaceRendererSettings.hpp"
 #include "Projection/WindowProjection.hpp"
 #include "Look/AirspaceLook.hpp"
@@ -30,13 +10,83 @@ Copyright_License {
 #include "Airspace/AirspaceComputerSettings.hpp"
 #include "Airspace/AirspaceVisibility.hpp"
 #include "Airspace/AirspaceWarningCopy.hpp"
+#include "Engine/Airspace/AbstractAirspace.hpp"
+#include "Airspace/AirspaceClass.hpp"
 #include "Formatter/AirspaceFormatter.hpp"
+#include "Language/Language.hpp"
+#include "Renderer/TextInBox.hpp"
+#include "Geo/GeoBounds.hpp"
 #include "NMEA/Aircraft.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
+#include "LogFile.hpp"
+#include "util/CharUtil.hxx"
+#include "util/StaticArray.hxx"
+#include "util/StaticString.hxx"
+#include "util/UTF8.hpp"
 #include "Sizes.h"
 
-class AirspaceMapVisible : public AirspacePredicate
+#include <algorithm>
+#include <cstdlib>
+
+static constexpr double NOTAM_LABEL_MAX_MAP_SCALE = 4000;
+static constexpr std::size_t NOTAM_LABEL_MAX_CHARS = 40;
+static constexpr unsigned NOTAM_CLUSTER_VISIBLE_LINES = 3;
+static constexpr unsigned NOTAM_CLUSTER_LABEL_LINES = 2;
+static constexpr unsigned NOTAM_CLUSTER_ANCHOR_OFFSET = 18;
+static constexpr unsigned NOTAM_CLUSTER_SCREEN_MARGIN = 12;
+static constexpr std::size_t NOTAM_CLUSTER_MAX_COUNT = 64;
+
+struct NotamLabelCluster {
+  PixelPoint anchor;
+  unsigned count = 0;
+  StaticArray<StaticString<64>, NOTAM_CLUSTER_VISIBLE_LINES> labels;
+};
+
+struct AirspaceLabelLayout {
+  char top_text[NAME_SIZE + 1];
+  char base_text[NAME_SIZE + 1];
+  PixelSize top_size;
+  PixelSize base_size;
+  PixelSize visual_size;
+  PixelRect visual_rect;
+  PixelPoint top_text_origin;
+  PixelPoint base_text_origin;
+  int separator_y;
+  unsigned padding;
+
+  void SetVisualRect(const PixelRect rect) noexcept {
+    visual_rect = rect;
+
+    const int text_right = rect.right - int(padding);
+    top_text_origin = {text_right - int(top_size.width), rect.top};
+    base_text_origin = {text_right - int(base_size.width),
+                        rect.bottom - int(base_size.height)};
+    separator_y = rect.top + int(visual_size.height) / 2;
+  }
+};
+
+static AirspaceLabelLayout
+MakeAirspaceLabelLayout(Canvas &canvas,
+                        const AirspaceLabelList::Label &label) noexcept
+{
+  AirspaceLabelLayout layout{};
+  AirspaceFormatter::FormatAltitudeShort(layout.top_text, label.top, false);
+  layout.top_size = canvas.CalcTextSize(layout.top_text);
+
+  AirspaceFormatter::FormatAltitudeShort(layout.base_text, label.base, false);
+  layout.base_size = canvas.CalcTextSize(layout.base_text);
+
+  layout.padding = Layout::GetTextPadding();
+  layout.visual_size = {
+    std::max(layout.top_size.width, layout.base_size.width) +
+      2 * layout.padding,
+    layout.top_size.height + layout.base_size.height,
+  };
+  return layout;
+}
+
+class AirspaceMapVisible
 {
   const AirspaceVisibility visible_predicate;
   const AirspaceWarningCopy &warnings;
@@ -44,30 +94,171 @@ class AirspaceMapVisible : public AirspacePredicate
 public:
   AirspaceMapVisible(const AirspaceComputerSettings &_computer_settings,
                      const AirspaceRendererSettings &_renderer_settings,
-                     const AircraftState& _state,
-                     const AirspaceWarningCopy& _warnings)
+                     const AircraftState &_state,
+                     const AirspaceWarningCopy &_warnings) noexcept
     :visible_predicate(_computer_settings, _renderer_settings, _state),
      warnings(_warnings) {}
 
-  bool operator()(const AbstractAirspace& airspace) const {
+  [[gnu::pure]]
+  bool operator()(const AbstractAirspace& airspace) const noexcept {
     return visible_predicate(airspace) ||
       warnings.IsInside(airspace) ||
       warnings.HasWarning(airspace);
   }
 };
 
+static StaticString<64>
+MakeNotamLabelText(const AbstractAirspace &airspace) noexcept
+{
+  const char *const name = airspace.GetName();
+  if (name == nullptr || name[0] == '\0')
+    return StaticString<64>{C_("Status", "NOTAM")};
+
+  if (!ValidateUTF8(name))
+    return StaticString<64>{C_("Status", "NOTAM")};
+
+  StaticString<64> label;
+  constexpr std::size_t max_bytes_without_ellipsis =
+    64 - 1 - 3; // storage minus terminator and "..."
+  const std::size_t length =
+    TruncateStringUTF8(name, NOTAM_LABEL_MAX_CHARS,
+                       max_bytes_without_ellipsis);
+  std::copy_n(name, length, label.buffer());
+  label.buffer()[length] = '\0';
+
+  // NOTAM names may contain line breaks; replace them before rendering.
+  std::replace(label.buffer(), label.buffer() + length, '\r', ' ');
+  std::replace(label.buffer(), label.buffer() + length, '\n', ' ');
+
+  if (std::all_of(label.buffer(), label.buffer() + length,
+                  [](const char ch) { return IsWhitespaceOrNull(ch); }))
+    return StaticString<64>{C_("Status", "NOTAM")};
+
+  if (name[length] != '\0')
+    label += "...";
+
+  return label;
+}
+
+[[gnu::pure]]
+static unsigned
+GetNotamClusterDistance() noexcept
+{
+  return Layout::Scale(20u);
+}
+
+[[gnu::pure]]
+static unsigned
+GetNotamLabelLineStep(const Canvas &canvas) noexcept
+{
+  return canvas.GetFontHeight() + Layout::GetTextPadding() + Layout::Scale(2u);
+}
+
+[[gnu::pure]]
+static bool
+MatchesNotamCluster(const NotamLabelCluster &cluster,
+                    const PixelPoint pos,
+                    const unsigned distance) noexcept
+{
+  return std::abs(pos.x - cluster.anchor.x) <= int(distance) &&
+         std::abs(pos.y - cluster.anchor.y) <= int(distance);
+}
+
+static void
+AddToNotamCluster(NotamLabelCluster &cluster,
+                  const StaticString<64> &label) noexcept
+{
+  ++cluster.count;
+
+  if (cluster.labels.size() < NOTAM_CLUSTER_VISIBLE_LINES)
+    cluster.labels.append(label);
+}
+
+static StaticString<32>
+MakeNotamOverflowLabel(const unsigned hidden_count) noexcept
+{
+  StaticString<32> summary;
+  if (hidden_count == 1)
+    summary = _("+ 1 NOTAM");
+  else
+    summary.Format(_("+ %u NOTAMs"), hidden_count);
+  return summary;
+}
+
+[[gnu::pure]]
+static PixelPoint
+AdjustNotamClusterAnchor(const PixelPoint anchor,
+                         const PixelRect &screen_rect) noexcept
+{
+  const int offset = Layout::Scale(NOTAM_CLUSTER_ANCHOR_OFFSET);
+  const int margin = Layout::Scale(NOTAM_CLUSTER_SCREEN_MARGIN);
+
+  if (anchor.y - offset > screen_rect.top + margin)
+    return anchor.At(0, -offset);
+
+  if (anchor.y + offset < screen_rect.bottom - margin)
+    return anchor.At(0, offset);
+
+  return anchor;
+}
+
+static void
+DrawNotamCluster(Canvas &canvas,
+                 const PixelPoint anchor,
+                 const NotamLabelCluster &cluster,
+                 const TextInBoxMode mode,
+                 const PixelRect &screen_rect,
+                 LabelBlock *label_block) noexcept
+{
+  const unsigned visible_lines = std::min(cluster.count,
+                                          NOTAM_CLUSTER_VISIBLE_LINES);
+  if (visible_lines == 0)
+    return;
+
+  const int line_step = GetNotamLabelLineStep(canvas);
+  const int first_offset = -int((visible_lines - 1) * line_step) / 2;
+
+  unsigned index = 0;
+  const unsigned label_lines = cluster.count > NOTAM_CLUSTER_VISIBLE_LINES
+    ? NOTAM_CLUSTER_LABEL_LINES
+    : cluster.labels.size();
+
+  for (; index < label_lines; ++index)
+    TextInBox(canvas, cluster.labels[index].c_str(),
+              anchor.At(0, first_offset + int(index * line_step)),
+              mode, screen_rect, label_block);
+
+  if (cluster.count > NOTAM_CLUSTER_VISIBLE_LINES) {
+    const auto summary = MakeNotamOverflowLabel(cluster.count - label_lines);
+    TextInBox(canvas, summary.c_str(),
+              anchor.At(0, first_offset + int(index * line_step)),
+              mode, screen_rect, label_block);
+  }
+}
+
 void
 AirspaceLabelRenderer::Draw(Canvas &canvas,
-#ifndef ENABLE_OPENGL
-                            Canvas &stencil_canvas,
-#endif
                             const WindowProjection &projection,
                             const MoreData &basic, const DerivedInfo &calculated,
                             const AirspaceComputerSettings &computer_settings,
-                            const AirspaceRendererSettings &settings)
+                            const AirspaceRendererSettings &settings,
+                            LabelBlock *label_block) noexcept
 {
-  if (airspaces == nullptr || airspaces->IsEmpty())
+  const bool draw_altitude_labels =
+    settings.label_selection == AirspaceRendererSettings::LabelSelection::ALL;
+  const bool draw_notam_labels =
+    settings.show_notam_labels &&
+    projection.GetMapScale() <= NOTAM_LABEL_MAX_MAP_SCALE;
+
+  if (!draw_altitude_labels)
+    placement_cache.clear();
+
+  if ((!draw_altitude_labels && !draw_notam_labels) ||
+      airspaces == nullptr || airspaces->IsEmpty()) {
+    if (airspaces == nullptr || airspaces->IsEmpty())
+      placement_cache.clear();
     return;
+  }
 
   AirspaceWarningCopy awc;
   if (warning_manager != nullptr)
@@ -78,86 +269,166 @@ AirspaceLabelRenderer::Draw(Canvas &canvas,
                                    aircraft, awc);
 
   DrawInternal(canvas,
-#ifndef ENABLE_OPENGL
-               stencil_canvas,
-#endif
-               projection, settings, awc, visible, computer_settings.warnings);
+               projection, visible, computer_settings.warnings,
+               draw_altitude_labels, draw_notam_labels, label_block);
 }
 
-void
+inline void
 AirspaceLabelRenderer::DrawInternal(Canvas &canvas,
-#ifndef ENABLE_OPENGL
-                                    Canvas &stencil_canvas,
-#endif
                                     const WindowProjection &projection,
-                                    const AirspaceRendererSettings &settings,
-                                    const AirspaceWarningCopy &awc,
-                                    const AirspacePredicate &visible,
-                                    const AirspaceWarningConfig &config)
+                                    AirspacePredicate visible,
+                                    const AirspaceWarningConfig &config,
+                                    const bool draw_altitude_labels,
+                                    const bool draw_notam_labels,
+                                    LabelBlock *label_block) noexcept
 {
   AirspaceLabelList labels;
-  for (const auto &i : airspaces->QueryWithinRange(projection.GetGeoScreenCenter(),
-                                                   projection.GetScreenDistanceMeters())) {
-    const AbstractAirspace &airspace = i.GetAirspace();
-    if (visible(airspace))
-      labels.Add(airspace.GetCenter(), airspace.GetType(), airspace.GetBase(),
-                 airspace.GetTop());
+
+  if (draw_altitude_labels) {
+    for (const auto &i : airspaces->QueryWithinRange(projection.GetGeoScreenCenter(),
+                                                     projection.GetScreenDistanceMeters())) {
+      const AbstractAirspace &airspace = i.GetAirspace();
+      if (visible(airspace))
+        labels.Add(airspace.GetCenter(), airspace.GetClass(),
+                   airspace.GetBase(), airspace.GetTop(),
+                   reinterpret_cast<AirspaceLabelList::Identity>(&airspace));
+    }
+
+    labels.Sort(config);
   }
 
-  if(settings.label_selection == AirspaceRendererSettings::LabelSelection::ALL)
-  {
-    labels.Sort(config);
+  // default paint settings
+  canvas.SetTextColor(look.label_text_color);
+  canvas.Select(*look.name_font);
+  canvas.Select(look.label_pen);
+  canvas.Select(look.label_brush);
+  canvas.SetBackgroundTransparent();
 
-    // default paint settings
-    canvas.SetTextColor(look.label_text_color);
-    canvas.Select(*look.name_font);
-    canvas.Select(look.label_pen);
-    canvas.Select(look.label_brush);
-    canvas.SetBackgroundTransparent();
-
-    // draw
-    TCHAR topText[NAME_SIZE + 1];
-    TCHAR baseText[NAME_SIZE + 1];
+  if (draw_altitude_labels) {
+    const PixelRect screen_rect = projection.GetScreenRect();
+    if (placement_cache_serial != airspaces->GetSerial() ||
+        placement_cache_font_serial != look.name_font_serial ||
+        placement_cache_screen_size != screen_rect.GetSize()) {
+      // Airspace addresses are only valid within this store generation.
+      placement_cache.clear();
+      placement_cache_serial = airspaces->GetSerial();
+      placement_cache_font_serial = look.name_font_serial;
+      placement_cache_screen_size = screen_rect.GetSize();
+    }
 
     for (const auto &label : labels) {
-      // size of text
-      AirspaceFormatter::FormatAltitudeShort(topText, label.top, false);
-      PixelSize topSize = canvas.CalcTextSize(topText);
-      AirspaceFormatter::FormatAltitudeShort(baseText, label.base, false);
-      PixelSize baseSize = canvas.CalcTextSize(baseText);
-      int labelWidth = std::max(topSize.cx, baseSize.cx) +
-                       2 * Layout::GetTextPadding();
-      int labelHeight = topSize.cy + baseSize.cy;
-
-      // box
-      const auto pos = projection.GeoToScreen(label.pos);
-      PixelRect rect;
-      rect.left = pos.x - labelWidth / 2;
-      rect.top = pos.y;
-      rect.right = rect.left + labelWidth;
-      rect.bottom = rect.top + labelHeight;
-      canvas.Rectangle(rect.left, rect.top, rect.right, rect.bottom);
-
-#ifdef USE_GDI
-      canvas.DrawLine(rect.left + Layout::GetTextPadding(),
-                      rect.top + labelHeight / 2,
-                      rect.right - Layout::GetTextPadding(),
-                      rect.top + labelHeight / 2);
-#else
-      canvas.DrawHLine(rect.left + Layout::GetTextPadding(),
-                       rect.right - Layout::GetTextPadding(),
-                       rect.top + labelHeight / 2, look.label_pen.GetColor());
-#endif
-
-      // top text
-      int x = rect.right - Layout::GetTextPadding() - topSize.cx;
-      int y = rect.top;
-      canvas.DrawText(x, y, topText);
-
-      // base text
-      x = rect.right - Layout::GetTextPadding() - baseSize.cx;
-      y = rect.bottom - baseSize.cy;
-      canvas.DrawText(x, y, baseText);
+      const auto cached = placement_cache.find(label.identity);
+      const std::optional<AirspaceLabelCandidate> preferred_candidate =
+        cached != placement_cache.end()
+          ? std::optional<AirspaceLabelCandidate>{cached->second}
+          : std::nullopt;
+      if (const auto candidate =
+            DrawLabel(canvas, projection.GeoToScreen(label.pos), screen_rect,
+                      label, label_block, preferred_candidate))
+        placement_cache.insert_or_assign(label.identity, *candidate);
     }
   }
+
+  // Retain the last successful placement only for labels in this draw pass.
+  std::erase_if(placement_cache, [&labels](const auto &entry) {
+    return std::none_of(labels.begin(), labels.end(),
+                        [&entry](const auto &label) {
+                          return label.identity == entry.first;
+                        });
+  });
+
+  if (draw_notam_labels) {
+    TextInBoxMode mode{};
+    mode.shape = LabelShape::ROUNDED_WHITE;
+    mode.align = TextInBoxMode::Alignment::CENTER;
+    mode.vertical_position = TextInBoxMode::VerticalPosition::CENTERED;
+    mode.move_in_view = true;
+
+    StaticArray<NotamLabelCluster, NOTAM_CLUSTER_MAX_COUNT> clusters;
+    const unsigned cluster_distance = GetNotamClusterDistance();
+
+    for (const auto &i : airspaces->QueryWithinRange(projection.GetGeoScreenCenter(),
+                                                     projection.GetScreenDistanceMeters())) {
+      const AbstractAirspace &airspace = i.GetAirspace();
+      if (!visible(airspace) ||
+          airspace.GetType() != AirspaceClass::NOTAM)
+        continue;
+
+      const GeoBounds screen_bounds = projection.GetScreenBounds();
+      GeoBounds airspace_bounds = airspace.GetGeoBounds();
+      if (!airspace_bounds.Overlaps(screen_bounds))
+        continue;
+
+      auto pos = projection.GeoToScreenIfVisible(airspace.GetCenter());
+      if (!pos) {
+        if (!airspace_bounds.IntersectWith(screen_bounds))
+          continue;
+
+        pos = projection.GeoToScreenIfVisible(airspace_bounds.GetCenter());
+        if (!pos)
+          continue;
+      }
+
+      const auto label = MakeNotamLabelText(airspace);
+
+      NotamLabelCluster *cluster = nullptr;
+      for (auto &candidate : clusters)
+        if (MatchesNotamCluster(candidate, *pos, cluster_distance)) {
+          cluster = &candidate;
+          break;
+        }
+
+      if (cluster == nullptr) {
+        if (clusters.full()) {
+#ifndef NDEBUG
+          LogFmt("AirspaceLabelRenderer: skipped NOTAM label at {},{} "
+                 "(cluster buffer full)",
+                 pos->x, pos->y);
+#endif
+          continue;
+        }
+
+        cluster = &clusters.append();
+        cluster->anchor = *pos;
+        cluster->count = 0;
+        cluster->labels.clear();
+      }
+
+      AddToNotamCluster(*cluster, label);
+    }
+
+    const PixelRect screen_rect = projection.GetScreenRect();
+    for (const auto &cluster : clusters)
+      DrawNotamCluster(canvas,
+                       AdjustNotamClusterAnchor(cluster.anchor, screen_rect),
+                       cluster, mode, screen_rect, label_block);
+  }
+}
+
+std::optional<AirspaceLabelCandidate>
+AirspaceLabelRenderer::DrawLabel(Canvas &canvas, const PixelPoint anchor,
+                                 const PixelRect &map_rect,
+                                 const AirspaceLabelList::Label &label,
+                                 LabelBlock *const label_block,
+                                 const std::optional<AirspaceLabelCandidate>
+                                   preferred_candidate) noexcept
+{
+  auto layout = MakeAirspaceLabelLayout(canvas, label);
+  const auto placement =
+    PlaceAirspaceLabel(anchor, layout.visual_size, layout.padding,
+                       map_rect, label_block, preferred_candidate);
+
+  if (!placement)
+    return std::nullopt;
+
+  layout.SetVisualRect(placement->visual_rect);
+  canvas.DrawRectangle(layout.visual_rect);
+
+  canvas.DrawHLine(layout.visual_rect.left + layout.padding,
+                   layout.visual_rect.right - layout.padding,
+                   layout.separator_y, look.label_pen.GetColor());
+
+  canvas.DrawText(layout.top_text_origin, layout.top_text);
+  canvas.DrawText(layout.base_text_origin, layout.base_text);
+  return placement->candidate_index;
 }

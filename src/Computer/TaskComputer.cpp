@@ -1,31 +1,12 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskComputer.hpp"
+#include "Atmosphere/AirDensity.hpp"
 #include "Task/ProtectedTaskManager.hpp"
 #include "Engine/Task/TaskManager.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
+#include "Engine/Waypoint/Waypoints.hpp"
 #include "NMEA/Aircraft.hpp"
 #include "NMEA/MoreData.hpp"
 #include "NMEA/Derived.hpp"
@@ -34,6 +15,7 @@ Copyright_License {
 #include <algorithm>
 
 using std::max;
+using namespace std::chrono;
 
 // JMW TODO: abstract up to higher layer so a base copy of this won't
 // call any event
@@ -45,11 +27,11 @@ TaskComputer::TaskComputer(ProtectedTaskManager &_task,
    route(airspace_database, warnings),
    contest(trace.GetFull(), trace.GetContest(), trace.GetSprint())
 {
-  task.SetRoutePlanner(&route.GetRoutePlanner());
+  task.SetRoutePlanner(&route.GetProtectedRoutePlanner());
 }
 
 void
-TaskComputer::ResetFlight(const bool full)
+TaskComputer::ResetFlight([[maybe_unused]] const bool full)
 {
   task.Reset();
   route.ResetFlight();
@@ -74,9 +56,14 @@ TaskComputer::ProcessBasicTask(const MoreData &basic,
 
   _task->SetTaskBehaviour(settings_computer.task);
 
+  if (settings_computer.polar.glide_polar_task.IsValid())
+    if (const auto altitude = basic.GetAnyAltitude())
+      _task->SetDensityRatio(AirDensityRatio(*altitude));
+
+  const AircraftState current_as = ToAircraftState(basic, calculated);
+
   if (force || (last_location_available &&
                 basic.location_available.Modified(last_location_available))) {
-    const AircraftState current_as = ToAircraftState(basic, calculated);
     const AircraftState &last_as = valid_last_state ? last_state : current_as;
 
     _task->Update(current_as, last_as);
@@ -91,6 +78,8 @@ TaskComputer::ProcessBasicTask(const MoreData &basic,
     if (_task->UpdateAutoMC(current_as, fallback_mc))
       calculated.ProvideAutoMacCready(basic.clock,
                                       _task->GetGlidePolar().GetMC());
+  } else {
+    _task->UpdateCommonStatsPolar(current_as);
   }
 
   last_location_available = basic.location_available;
@@ -114,10 +103,15 @@ TaskComputer::ProcessMoreTask(const MoreData &basic,
                      settings_computer.task.route_planner,
                      glide_polar, safety_polar);
 
-  if (settings_computer.features.block_stf_enabled)
-    calculated.V_stf = calculated.common_stats.V_block;
-  else
-    calculated.V_stf = calculated.common_stats.V_dolphin;
+  if (glide_polar.IsValid()) {
+    calculated.V_stf = settings_computer.features.block_stf_enabled
+      ? calculated.common_stats.V_block
+      : calculated.common_stats.V_dolphin;
+    calculated.V_stf_available = calculated.V_stf > 0;
+  } else {
+    calculated.V_stf = 0;
+    calculated.V_stf_available = false;
+  }
 
   if (calculated.task_stats.current_leg.vector_remaining.IsValid()) {
     const GeoVector &v = calculated.task_stats.current_leg.vector_remaining;
@@ -125,7 +119,7 @@ TaskComputer::ProcessMoreTask(const MoreData &basic,
   }
 }
 
-gcc_pure
+[[gnu::pure]]
 static TracePoint
 Predicted(const ContestSettings &settings,
           const MoreData &basic,
@@ -140,7 +134,7 @@ Predicted(const ContestSettings &settings,
   /* predict that the next task point will be reached, using the
      calculated remaining time and the minimum arrival altitude */
   return TracePoint(current_leg.location_remaining,
-                    unsigned(basic.time + current_leg.time_remaining_now),
+                    (basic.time + current_leg.time_remaining_now).Cast<duration<unsigned>>(),
                     current_leg.solution_remaining.min_arrival_altitude,
                     0, 0);
 }
@@ -166,8 +160,9 @@ TaskComputer::ProcessIdle(const MoreData &basic, DerivedInfo &calculated,
 }
 
 void 
-TaskComputer::ProcessAutoTask(const NMEAInfo &basic,
-                              const DerivedInfo &calculated)
+TaskComputer::ProcessAutoTask([[maybe_unused]] const NMEAInfo &basic,
+                              const DerivedInfo &calculated,
+                              Waypoints &waypoints)
 {
   if (!calculated.flight.flying) {
     /* not flying (yet) */
@@ -184,9 +179,15 @@ TaskComputer::ProcessAutoTask(const NMEAInfo &basic,
   if (calculated.altitude_agl_valid && calculated.altitude_agl > 500)
     return;
 
+  // Use terrain altitude if available, otherwise fall back to GPS/baro altitude
+  // from takeoff detection (better than 0 when terrain data is unavailable)
+  const double elevation = calculated.terrain_valid
+    ? calculated.terrain_altitude
+    : calculated.flight.takeoff_altitude;
+
   ProtectedTaskManager::ExclusiveLease _task(task);
-  _task->TakeoffAutotask(calculated.flight.takeoff_location,
-                         calculated.terrain_altitude);
+  _task->TakeoffAutotask(calculated.flight.takeoff_location, elevation,
+                         waypoints);
 }
 
 void 

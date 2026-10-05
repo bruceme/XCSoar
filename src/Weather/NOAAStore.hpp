@@ -1,38 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef NOAA_STORE_HPP
-#define NOAA_STORE_HPP
+#pragma once
 
 #include "METAR.hpp"
 #include "ParsedMETAR.hpp"
 #include "TAF.hpp"
 
 #include <list>
-
-#ifdef _UNICODE
-#include <tchar.h>
-#endif
 
 class NOAAStore
 {
@@ -50,19 +25,14 @@ public:
     TAF taf;
 
     /**
-     * Returns the four letter code as a TCHAR string.  This may
+     * Returns the four letter code as a char string.  This may
      * return a pointer to a static buffer, and consecutive calls
      * (even with different objects) may Invalidate the previous
      * return value.  May be called only from the main thread.
      */
-#ifdef _UNICODE
-    gcc_pure
-    const TCHAR *GetCodeT() const;
-#else
     const char *GetCodeT() const {
       return code;
     }
-#endif
   };
 
   typedef std::list<Item> StationContainer;
@@ -98,32 +68,23 @@ public:
   }
 
   /**
-   * Check if the four letter code is valid
-   * @param code Four letter code of the station/airport (upper case)
+   * Check if the four letter code is valid (ASCII letters or digits).
    */
   static bool IsValidCode(const char *code);
-#ifdef _UNICODE
-  static bool IsValidCode(const TCHAR *code);
-#endif
 
   /**
    * Add a station to the set of stations for which
-   * weather information should be downloaded
-   * @param code Four letter code of the station/airport (upper case)
+   * weather information should be downloaded.
+   * @param code Four letter ICAO-style code; stored upper-case
    */
   iterator AddStation(const char *code);
-#ifdef _UNICODE
-  iterator AddStation(const TCHAR *code);
-#endif
 
   /**
    * Returns the amount of stations in the array
    * @return The amount of stations in the array
    */
-  gcc_pure
+  [[gnu::pure]]
   unsigned Count() const {
     return std::distance(begin(), end());
   }
 };
-
-#endif

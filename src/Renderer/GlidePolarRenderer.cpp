@@ -1,60 +1,55 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "GlidePolarRenderer.hpp"
 #include "ChartRenderer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Screen/Layout.hpp"
 #include "Engine/GlideSolvers/GlidePolar.hpp"
 #include "Units/Units.hpp"
 #include "Language/Language.hpp"
 #include "NMEA/ClimbHistory.hpp"
 #include "Formatter/UserUnits.hpp"
-#include "Util/StaticString.hxx"
+#include "util/StaticString.hxx"
+#include "util/UTF8.hpp"
 #include "GlidePolarInfoRenderer.hpp"
 
-#include <stdio.h>
+#include <fmt/format.h>
 
 void
-GlidePolarCaption(TCHAR *sTmp, const GlidePolar &glide_polar)
+GlidePolarCaption(char *sTmp, size_t buffer_size,
+                  const GlidePolar &glide_polar)
 {
+  if (sTmp == nullptr || buffer_size == 0)
+    return;
+
   if (!glide_polar.IsValid()) {
-    *sTmp = _T('\0');
+    *sTmp = '\0';
     return;
   }
 
-  _stprintf(sTmp, Layout::landscape ?
-                  _T("%s:\r\n  %d\r\n  at %d %s\r\n\r\n%s:\r\n  %3.2f %s\r\n  at %d %s") :
-                  _T("%s:\r\n  %d at %d %s\r\n%s:\r\n  %3.2f %s at %d %s"),
-            _("L/D"),
-            (int)glide_polar.GetBestLD(),
-            (int)Units::ToUserSpeed(glide_polar.GetVBestLD()),
-            Units::GetSpeedName(),
-            _("Min. sink"),
-            (double)Units::ToUserVSpeed(glide_polar.GetSMin()),
-            Units::GetVerticalSpeedName(),
-            (int)Units::ToUserSpeed(glide_polar.GetVMin()),
-            Units::GetSpeedName());
+  const auto mc =
+    FormatUserVerticalSpeed(glide_polar.GetMC(), true, false);
+
+  /* Portrait info area is five lines.  Landscape uses the side panel. */
+  const char *const format = Layout::landscape
+    ? "{}:\r\n  {}\r\n  at {} {}\r\n  {} {}\r\n\r\n{}:\r\n  {:.2f} {}\r\n  at {} {}"
+    : "{}:\r\n  {} at {} {}\r\n  {} {}\r\n{}:\r\n  {:.2f} {} at {} {}";
+
+  auto result = fmt::format_to_n(sTmp, buffer_size - 1, fmt::runtime(format),
+                                 _("L/D"),
+                                 (int)glide_polar.GetBestLD(),
+                                 (int)Units::ToUserSpeed(glide_polar.GetVBestLD()),
+                                 Units::GetSpeedName(),
+                                 _("MC"),
+                                 mc.c_str(),
+                                 _("Min. sink"),
+                                 (double)Units::ToUserVSpeed(glide_polar.GetSMin()),
+                                 Units::GetVerticalSpeedName(),
+                                 (int)Units::ToUserSpeed(glide_polar.GetVMin()),
+                                 Units::GetSpeedName());
+  *result.out = '\0';
+  CropIncompleteUTF8(sTmp);
 }
 
 void
@@ -64,9 +59,13 @@ RenderGlidePolar(Canvas &canvas, const PixelRect rc,
                  const GlidePolar &glide_polar)
 {
   ChartRenderer chart(chart_look, canvas, rc);
+  chart.SetXLabel("V", Units::GetSpeedName());
+  chart.SetYLabel("w", Units::GetVerticalSpeedName());
+  chart.Begin();
 
   if (!glide_polar.IsValid()) {
     chart.DrawNoData();
+    chart.Finish();
     return;
   }
 
@@ -96,7 +95,8 @@ RenderGlidePolar(Canvas &canvas, const PixelRect rc,
     auto w_dolphin = -glide_polar.SinkRate(v_dolphin)+w;
     inrange = w_dolphin > s_min;
     if ((v_dolphin > v_dolphin_last) && inrange) {
-      chart.DrawLine(v_dolphin_last, w_dolphin_last, v_dolphin, w_dolphin,
+      chart.DrawLine({v_dolphin_last, w_dolphin_last},
+                     {v_dolphin, w_dolphin},
                      ChartLook::STYLE_REDTHICKDASH);
       v_dolphin_last = v_dolphin;
       w_dolphin_last = w_dolphin;
@@ -116,14 +116,14 @@ RenderGlidePolar(Canvas &canvas, const PixelRect rc,
   for (auto i = vmin; i <= vmax; i+= dv) {
     auto sinkrate0 = -glide_polar.SinkRate(i);
     auto sinkrate1 = -glide_polar.SinkRate(i+dv);
-    chart.DrawLine(i, sinkrate0, i + dv, sinkrate1,
+    chart.DrawLine({i, sinkrate0}, {i + dv, sinkrate1},
                    ChartLook::STYLE_BLACK);
 
     if (climb_history.Check(i)) {
       auto v1 = climb_history.Get(i);
 
       if (v0valid)
-        chart.DrawLine(i0, v0, i, v1, ChartLook::STYLE_BLUE);
+        chart.DrawLine({i0, v0}, {i, v1}, ChartLook::STYLE_BLUE);
 
       v0 = v1;
       i0 = i;
@@ -135,20 +135,19 @@ RenderGlidePolar(Canvas &canvas, const PixelRect rc,
   auto sb = -glide_polar.GetSBestLD();
   auto slope = (sb - MACCREADY) / glide_polar.GetVBestLD();
 
-  chart.DrawLine(vmin, MACCREADY + slope * vmin,
-                 vmax, MACCREADY + slope * vmax,
+  chart.DrawLine({vmin, MACCREADY + slope * vmin},
+                 {vmax, MACCREADY + slope * vmax},
                  ChartLook::STYLE_BLUETHINDASH);
 
   // draw labels and other overlays
 
   double vv = 0.9*vmax+0.1*vmin;
-  chart.DrawLabel(_T("Polar"), vv, -glide_polar.SinkRate(vv));
+  chart.DrawLabel({vv, -glide_polar.SinkRate(vv)}, "Polar");
   vv = 0.8*vmax+0.2*vmin;
-  chart.DrawLabel(_T("Best glide"), vv, MACCREADY + slope * vv);
-  chart.DrawLabel(_T("Dolphin"), v_dolphin_last_l, w_dolphin_last_l);
-
-  chart.DrawXLabel(_T("V"), Units::GetSpeedName());
-  chart.DrawYLabel(_T("w"), Units::GetVerticalSpeedName());
+  chart.DrawLabel({vv, MACCREADY + slope * vv}, "Best glide");
+  chart.DrawLabel({v_dolphin_last_l, w_dolphin_last_l},"Dolphin");
 
   RenderGlidePolarInfo(canvas, rc, chart_look, glide_polar);
+
+  chart.Finish();
 }

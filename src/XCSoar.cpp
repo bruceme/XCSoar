@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /**
  * This is the main entry point for the application
@@ -34,75 +14,57 @@ Copyright_License {
 #include "MainWindow.hpp"
 #include "Interface.hpp"
 #include "Look/GlobalFonts.hpp"
-#include "Screen/Init.hpp"
-#include "Net/HTTP/Init.hpp"
-#include "UtilsSystem.hpp"
-#include "ResourceLoader.hpp"
+#include "ui/window/Init.hpp"
+#include "ui/event/Queue.hpp"
+#include "net/http/Init.hpp"
 #include "Language/Language.hpp"
 #include "Language/LanguageGlue.hpp"
 #include "Simulator.hpp"
 #include "Audio/GlobalPCMMixer.hpp"
 #include "Audio/GlobalPCMResourcePlayer.hpp"
 #include "Audio/GlobalVolumeController.hpp"
-#include "OS/Args.hpp"
-#include "IO/Async/GlobalAsioThread.hpp"
+#include "Dialogs/DataManagement/ExportFlightsPanel.hpp"
+#include "system/Args.hpp"
+#include "io/async/GlobalAsioThread.hpp"
+#include "io/async/AsioThread.hpp"
+#include "util/PrintException.hxx"
+#include "UIActions.hpp"
+#include "Hardware/SystemPower.hpp"
 
-#ifndef NDEBUG
-#include "Thread/Thread.hpp"
-#endif
+#include <cstdio>
 
 #ifdef ENABLE_SDL
-/* this is necessary on Mac OS X, to let libSDL bootstrap Quartz
+#ifdef SDL_MAIN_HANDLED
+/* When SDL_MAIN_HANDLED is defined, we must call SDL_SetMainReady()
+   before using SDL to avoid SDL's -Dmain=SDL_main
+   macro which conflicts with "main" in the XCSoar code */
+#include <SDL.h>
+#else
+/* this is necessary on macOS, to let libSDL bootstrap Quartz
    before entering our main() */
 #include <SDL_main.h>
+#endif
 #endif
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #if !TARGET_OS_IPHONE
-#import <AppKit/AppKit.h>
+#include "Apple/MacOSMainMenu.hpp"
 #endif
 #endif
 
-#include <assert.h>
-
-static const char *const Usage = "\n"
-  "  -datapath=      path to XCSoar data can be defined\n"
-#ifdef SIMULATOR_AVAILABLE
-  "  -simulator      bypass startup-screen, use simulator mode directly\n"
-  "  -fly            bypass startup-screen, use fly mode directly\n"
-#endif
-  "  -profile=fname  load profile from file fname\n"
-  "  -WIDTHxHEIGHT   use screen resolution WIDTH x HEIGHT\n"
-  "  -portrait       use a 480x640 screen resolution\n"
-  "  -square         use a 480x480 screen resolution\n"
-  "  -small          use a 320x240 screen resolution\n"
-#if !defined(ANDROID)
-  "  -dpi=DPI        force usage of DPI for pixel density\n"
-  "  -dpi=XDPIxYDPI  force usage of XDPI and YDPI for pixel density\n"
-#endif
-#ifdef HAVE_CMDLINE_FULLSCREEN
-  "  -fullscreen     full-screen mode\n"
-#endif
-#ifdef HAVE_CMDLINE_RESIZABLE
-  "  -resizable      resizable window\n"
-#endif
-#ifdef WIN32
-  "  -console        open debug output console\n"
-#endif
-  ;
+#include <cassert>
 
 static int
 Main()
 {
+  /* must happen before any other thread is created; see
+     UI::BlockSignals() */
+  UI::BlockSignals();
+
   ScreenGlobalInit screen_init;
 
-#if defined(__APPLE__) && !TARGET_OS_IPHONE
-  // We do not want the ugly non-localized main menu which SDL creates
-  [NSApp setMainMenu: [[NSMenu alloc] init]];
-#endif
-
-#ifdef WIN32
+#ifdef _WIN32
   /* try to make the UI most responsive */
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #endif
@@ -110,16 +72,28 @@ Main()
   AllowLanguage();
   InitLanguage();
 
-  ScopeGlobalAsioThread global_asio_thread;
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
+  InitialiseMacOSMainMenu();
+#endif
 
-  ScopeGlobalPCMMixer global_pcm_mixer;
+  ScopeGlobalAsioThread global_asio_thread;
+  const Net::ScopeInit net_init(asio_thread->GetEventLoop());
+
+  ScopeGlobalPCMMixer global_pcm_mixer(asio_thread->GetEventLoop());
   ScopeGlobalPCMResourcePlayer global_pcm_resouce_player;
   ScopeGlobalVolumeController global_volume_controller;
 
   // Perform application initialization and run loop
   int ret = EXIT_FAILURE;
-  if (Startup())
+  if (Startup(screen_init.GetDisplay()))
     ret = CommonInterface::main_window->RunEventLoop();
+  else if (WasStartupCancelledByUser())
+    /* quitting from the startup dialogs is a deliberate user action,
+       not an error */
+    ret = EXIT_SUCCESS;
+
+  /* The export-flight cache owns an InjectTask on the Asio event loop. */
+  ShutdownExportFlightsPanel();
 
   Shutdown();
 
@@ -128,7 +102,6 @@ Main()
   Fonts::Deinitialize();
 
   DeinitialiseDataPath();
-  Net::Deinitialise();
 
   return ret;
 }
@@ -136,40 +109,54 @@ Main()
 /**
  * Main entry point for the whole XCSoar application
  */
-#ifndef WIN32
+#ifndef _WIN32
 int main(int argc, char **argv)
 #else
 int WINAPI
-WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-        gcc_unused LPSTR lpCmdLine2,
-        int nCmdShow)
+WinMain([[maybe_unused]] HINSTANCE hInstance, [[maybe_unused]] HINSTANCE hPrevInstance,
+        [[maybe_unused]] LPSTR lpCmdLine2,
+        [[maybe_unused]] int nCmdShow)
 #endif
-{
-#ifdef USE_WIN32_RESOURCES
-  ResourceLoader::Init(hInstance);
+try {
+#if defined(ENABLE_SDL) && defined(SDL_MAIN_HANDLED)
+  SDL_SetMainReady();
 #endif
-
-  Net::Initialise();
-
-  InitialiseDataPath();
-  StartupLogFreeRamAndStorage();
-
-  // Write startup note + version to logfile
-  LogFormat(_T("Starting XCSoar %s"), XCSoar_ProductToken);
 
   // Read options from the command line
   {
-#ifdef WIN32
-    Args args(GetCommandLine(), Usage);
+#ifdef _WIN32
+    Args args(GetCommandLine(), CommandLine::OptionSummary());
 #else
-    Args args(argc, argv, Usage);
+    Args args(argc, argv, CommandLine::OptionSummary());
 #endif
     CommandLine::Parse(args);
   }
 
+  InitialiseDataPath();
+  CommandLine::ApplyPendingProfile();
+
+  // Write startup note + version to logfile
+  LogFormat("Starting %s", XCSoar_ProductToken);
+
   int ret = Main();
 
-  assert(!ExistsAnyThread());
+  bool power_action_succeeded = true;
+  switch (UIActions::GetExitAction()) {
+  case UIActions::ExitAction::REBOOT:
+    power_action_succeeded = SystemPower::Reboot();
+    break;
+
+  case UIActions::ExitAction::POWER_OFF:
+    power_action_succeeded = SystemPower::PowerOff();
+    break;
+
+  case UIActions::ExitAction::NONE:
+  case UIActions::ExitAction::QUIT:
+    break;
+  }
+
+  if (!power_action_succeeded)
+    std::fprintf(stderr, "Failed to execute system power action\n");
 
 #if defined(__APPLE__) && TARGET_OS_IPHONE
   /* For some reason, the app process does not exit on iOS, but a black
@@ -178,4 +165,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #endif
 
   return ret;
+} catch (...) {
+  PrintException(std::current_exception());
+  return EXIT_FAILURE;
 }

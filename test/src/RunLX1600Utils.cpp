@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DebugPort.hpp"
 #include "Device/Port/Port.hpp"
@@ -29,15 +9,15 @@ Copyright_License {
 #include "Device/Parser.hpp"
 #include "Device/Config.hpp"
 #include "Device/Driver/LX/LX1600.hpp"
-#include "OS/Args.hpp"
-#include "Util/StringUtil.hpp"
-#include "Util/PrintException.hxx"
+#include "system/Args.hpp"
+#include "util/StringUtil.hpp"
+#include "util/PrintException.hxx"
 #include "Operation/ConsoleOperationEnvironment.hpp"
-#include "IO/Async/GlobalAsioThread.hpp"
-#include "IO/Async/AsioThread.hpp"
+#include "io/async/GlobalAsioThread.hpp"
+#include "io/async/AsioThread.hpp"
 #include "Units/System.hpp"
 #include "Atmosphere/Pressure.hpp"
-#include "IO/NullDataHandler.hpp"
+#include "io/NullDataHandler.hpp"
 
 #include <stdio.h>
 
@@ -103,10 +83,7 @@ SetMC(Port &port, OperationEnvironment &env)
 
   fprintf(stdout, "Setting MC to \"%.1f\" ...\n", (double)mc);
 
-  if (LX1600::SetMacCready(port, env, mc))
-    fprintf(stdout, "MC set to \"%.1f\"\n", (double)mc);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetMacCready(port, env, mc);
 }
 
 static void
@@ -118,10 +95,7 @@ SetBallast(Port &port, OperationEnvironment &env)
 
   fprintf(stdout, "Setting Ballast to \"%.1f\" ...\n", (double)ballast);
 
-  if (LX1600::SetBallast(port, env, ballast))
-    fprintf(stdout, "Ballast set to \"%.1f\"\n", (double)ballast);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetBallast(port, env, ballast);
 }
 
 static void
@@ -133,10 +107,7 @@ SetBugs(Port &port, OperationEnvironment &env)
 
   fprintf(stdout, "Setting Bugs to \"%u\" ...\n", bugs);
 
-  if (LX1600::SetBugs(port, env, bugs))
-    fprintf(stdout, "Bugs set to \"%u\"\n", bugs);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetBugs(port, env, bugs);
 }
 
 static void
@@ -149,11 +120,7 @@ SetAltitudeOffset(Port &port, OperationEnvironment &env)
   fprintf(stdout, "Setting altitude offset to \"%.1f m\" ...\n",
           (double)altitude_offset);
 
-  if (LX1600::SetAltitudeOffset(port, env, Units::ToUserUnit(altitude_offset, Unit::FEET)))
-    fprintf(stdout, "Altitude offset set to \"%.1f m\"\n",
-            (double)altitude_offset);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetAltitudeOffset(port, env, Units::ToUserUnit(altitude_offset, Unit::FEET));
 }
 
 static void
@@ -166,11 +133,7 @@ SetQNH(Port &port, OperationEnvironment &env)
   fprintf(stdout, "Setting QNH to \"%.1f hPa\" ...\n",
           (double)qnh);
 
-  if (LX1600::SetQNH(port, env, AtmosphericPressure::HectoPascal(qnh)))
-    fprintf(stdout, "QNH set to \"%.1f hPa\"\n",
-            (double)qnh);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetQNH(port, env, AtmosphericPressure::HectoPascal(qnh));
 }
 
 static void
@@ -182,10 +145,7 @@ SetVolume(Port &port, OperationEnvironment &env)
 
   fprintf(stdout, "Setting Volume to \"%u %%\" ...\n", volume);
 
-  if (LX1600::SetVolume(port, env, volume))
-    fprintf(stdout, "Volume set to \"%u %%\"\n", volume);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetVolume(port, env, volume);
 }
 
 static void
@@ -197,11 +157,7 @@ SetPolar(Port &port, OperationEnvironment &env)
       !ReadDouble("polar coefficient c", c))
     return;
 
-  if (LX1600::SetPolar(port, env, a, b, c))
-    fprintf(stdout, "Polar coefficients set to \"%.2f, %.2f, %.2f\"\n",
-            (double)a, (double)b, (double)c);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetPolar(port, env, a, b, c);
 }
 
 static void
@@ -214,11 +170,7 @@ SetFilters(Port &port, OperationEnvironment &env)
       !ReadUnsigned("the TE level (50 - 150 %, default = 0 = off)", te_level))
     return;
 
-  if (LX1600::SetFilters(port, env, vario_filter, te_filter, te_level))
-    fprintf(stdout, "Filters set to \"%.1f, %.1f, %u\"\n",
-            (double)vario_filter, (double)te_filter, te_level);
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetFilters(port, env, vario_filter, te_filter, te_level);
 }
 
 static void
@@ -237,11 +189,8 @@ SetSCSettings(Port &port, OperationEnvironment &env)
   else if (!ReadDouble("the SC threshold speed (50 - 150 km/h, default=110)", threshold_speed))
     return;
 
-  if (LX1600::SetSCSettings(port, env, (LX1600::SCMode)mode, deadband,
-                            (LX1600::SCControlMode)control_mode, threshold_speed))
-    fprintf(stdout, "SC settings changed!\n");
-  else
-    fprintf(stdout, "Operation failed!\n");
+  LX1600::SetSCSettings(port, env, (LX1600::SCMode)mode, deadband,
+                        (LX1600::SCControlMode)control_mode, threshold_speed);
 }
 
 static void
@@ -336,7 +285,7 @@ try {
   ScopeGlobalAsioThread global_asio_thread;
 
   NullDataHandler handler;
-  auto port = debug_port.Open(*asio_thread, handler);
+  auto port = debug_port.Open(*asio_thread, *global_cares_channel, handler);
 
   ConsoleOperationEnvironment env;
 

@@ -1,156 +1,130 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ReplayDialog.hpp"
+#include "Dialogs/DataManagement/ExportFlightsPanel.hpp"
 #include "Dialogs/Error.hpp"
 #include "Dialogs/WidgetDialog.hpp"
 #include "Widget/RowFormWidget.hpp"
-#include "Form/ActionListener.hpp"
-#include "Form/DataField/Listener.hpp"
 #include "UIGlobals.hpp"
+#include "Interface.hpp"
 #include "Components.hpp"
 #include "Replay/Replay.hpp"
-#include "Form/DataField/File.hpp"
-#include "Form/DataField/Float.hpp"
+#include "Form/DataField/Base.hpp"
 #include "Language/Language.hpp"
-
-enum Buttons {
-  START,
-  STOP,
-  FAST_FORWARD,
-};
+#include "Repository/FileType.hpp"
+#include "Form/DataField/File.hpp"
 
 class ReplayControlWidget final
-  : public RowFormWidget, ActionListener, DataFieldListener {
+  : public RowFormWidget
+{
   enum Controls {
     FILE,
     RATE,
   };
 
-public:
-  ReplayControlWidget(const DialogLook &look)
-    :RowFormWidget(look) {}
+  Replay &replay;
 
-  void CreateButtons(WidgetDialog &dialog) {
-    dialog.AddButton(_("Start"), *this, START);
-    dialog.AddButton(_("Stop"), *this, STOP);
-    dialog.AddButton(_T("+10'"), *this, FAST_FORWARD);
+public:
+  ReplayControlWidget(Replay &_replay, const DialogLook &look) noexcept
+    :RowFormWidget(look), replay(_replay) {}
+
+  void CreateButtons(WidgetDialog &dialog) noexcept {
+    dialog.AddButton(_("Start"), [this](){ OnStartClicked(); });
+    dialog.AddButton(_("Stop"), [this](){ OnStopClicked(); });
+    dialog.AddButton("+10'", [this](){ OnFastForwardClicked(); });
   }
 
 private:
-  void OnStopClicked();
-  void OnStartClicked();
-  void OnFastForwardClicked();
+  void OnStopClicked() noexcept;
+  void OnStartClicked() noexcept;
+  void OnFastForwardClicked() noexcept;
+
+  static bool EditReplayFile(const char *caption, DataField &df,
+                             const char *help_text);
 
 public:
   /* virtual methods from class Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
-
-private:
-  /* virtual methods from ActionListener */
-  virtual void OnAction(int id) override;
-
-  /* methods from DataFieldListener */
-  virtual void OnModified(DataField &df) override;
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override;
 };
 
 void
-ReplayControlWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+ReplayControlWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                             [[maybe_unused]] const PixelRect &rc) noexcept
 {
-  auto *file =
-    AddFile(_("File"),
-            _("Name of file to replay.  Can be an IGC file (.igc), a raw NMEA log file (.nmea), or if blank, runs the demo."),
-            nullptr,
-            _T("*.nmea\0*.igc\0"),
-            true);
-  ((FileDataField *)file->GetDataField())->Lookup(Path(replay->GetFilename()));
-  file->RefreshDisplay();
+  WndProperty &file = *AddFile(_("Flight"),
+          _("Name of file to replay. May be an IGC file (.igc) or a raw NMEA log file (.nmea). Leave blank to run the demo."),
+          {},
+          {FileType::NMEA, FileType::IGC},
+          true);
+  file.SetEditCallback(EditReplayFile);
+  LoadValue(FILE, replay.GetFilename());
+  GetFileDataField(FILE).Sort(FileDataField::SortOrder::DESCENDING, true);
 
   AddFloat(_("Rate"),
            _("Time acceleration of replay. Set to 0 for pause, 1 for normal real-time replay."),
-           _T("%.0f x"), _T("%.0f"),
-           0, 10, 1, false, replay->GetTimeScale(), this);
+           "%.0f x", "%.0f",
+           0, 10, 1, false, replay.GetTimeScale());
+  GetDataField(RATE).SetOnModified([this]{
+    replay.SetTimeScale(GetValueFloat(RATE));
+  });
 }
 
 inline void
-ReplayControlWidget::OnStopClicked()
+ReplayControlWidget::OnStopClicked() noexcept
 {
-  replay->Stop();
+  replay.Stop();
 }
 
 inline void
-ReplayControlWidget::OnStartClicked()
+ReplayControlWidget::OnStartClicked() noexcept
 {
-  const auto &df = (const FileDataField &)GetDataField(FILE);
-  const Path path = df.GetPathFile();
+  const Path path = GetValueFile(FILE);
 
   try {
-    replay->Start(path);
-  } catch (const std::runtime_error &e) {
-    ShowError(e, _("Replay"));
-  }
-}
-
-void
-ReplayControlWidget::OnAction(int id)
-{
-  switch (id) {
-  case START:
-    OnStartClicked();
-    break;
-
-  case STOP:
-    OnStopClicked();
-    break;
-
-  case FAST_FORWARD:
-    OnFastForwardClicked();
-    break;
+    replay.Start(path, CommonInterface::GetSystemSettings().devices[0]);
+  } catch (...) {
+    ShowError(std::current_exception(), _("Replay"));
   }
 }
 
 inline void
-ReplayControlWidget::OnFastForwardClicked()
+ReplayControlWidget::OnFastForwardClicked() noexcept
 {
-  replay->FastForward(10 * 60);
+  replay.FastForward(std::chrono::minutes{10});
+}
+
+bool
+ReplayControlWidget::EditReplayFile([[maybe_unused]] const char *caption,
+                                    DataField &df,
+                                    [[maybe_unused]] const char *help_text)
+{
+  auto &file = static_cast<FileDataField &>(df);
+  AllocatedPath path(file.GetValue());
+  switch (PickReplayFlight(_("Flight"), path)) {
+  case ReplayFlightChoice::CANCEL:
+    return false;
+
+  case ReplayFlightChoice::DEMO:
+    file.SetIndex(0);
+    return true;
+
+  case ReplayFlightChoice::FILE:
+    file.ForceModify(path);
+    return true;
+  }
+
+  return false;
 }
 
 void
-ReplayControlWidget::OnModified(DataField &_df)
-{
-  const DataFieldFloat &df = (const DataFieldFloat &)_df;
-
-  replay->SetTimeScale(df.GetAsFixed());
-}
-
-void
-ShowReplayDialog()
+ShowReplayDialog(Replay &replay) noexcept
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
-  ReplayControlWidget *widget = new ReplayControlWidget(look);
-  WidgetDialog dialog(look);
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _("Replay"), widget);
+  ReplayControlWidget *widget = new ReplayControlWidget(replay, look);
+  WidgetDialog dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+                      look, _("Replay"), widget);
   widget->CreateButtons(dialog);
   dialog.AddButton(_("Close"), mrOK);
 

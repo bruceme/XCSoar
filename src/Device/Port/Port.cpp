@@ -1,267 +1,249 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Port.hpp"
 #include "Listener.hpp"
-#include "Time/TimeoutClock.hpp"
+#include "Device/Error.hpp"
+#include "time/TimeoutClock.hpp"
 #include "Operation/Operation.hpp"
+#include "Operation/Cancelled.hpp"
+#include "util/Exception.hxx"
+#include "util/SpanCast.hxx"
 
 #include <algorithm>
-#include <string.h>
 
-Port::Port(PortListener *_listener, DataHandler &_handler)
+Port::Port(PortListener *_listener, DataHandler &_handler) noexcept
   :listener(_listener), handler(_handler) {}
 
-Port::~Port() {}
+Port::~Port() noexcept = default;
 
 bool
 Port::WaitConnected(OperationEnvironment &env)
 {
-  while (GetState() == PortState::LIMBO && !env.IsCancelled())
-    env.Sleep(200);
+  while (GetState() == PortState::LIMBO) {
+    if (env.IsCancelled())
+      throw OperationCancelled{};
+
+    env.Sleep(std::chrono::milliseconds(200));
+  }
 
   return GetState() == PortState::READY;
 }
 
-size_t
-Port::Write(const char *s)
+std::size_t
+Port::Write(std::string_view s)
 {
-  return Write(s, strlen(s));
+  return Write(AsBytes(s));
 }
 
-bool
-Port::FullWrite(const void *buffer, size_t length,
-                OperationEnvironment &env, unsigned timeout_ms)
+void
+Port::FullWrite(std::span<const std::byte> src,
+                OperationEnvironment &env,
+                std::chrono::steady_clock::duration _timeout)
 {
-  const TimeoutClock timeout(timeout_ms);
+  const TimeoutClock timeout(_timeout);
 
-  const char *p = (const char *)buffer, *end = p + length;
-  while (p < end) {
+  while (!src.empty()) {
+    if (env.IsCancelled())
+      throw OperationCancelled{};
+
     if (timeout.HasExpired())
-      return false;
+      throw DeviceTimeout{"Port write timeout"};
 
-    size_t nbytes = Write(p, end - p);
-    if (nbytes == 0 || env.IsCancelled())
-      return false;
+    std::size_t nbytes = Write(src);
 
-    p += nbytes;
+    if (env.IsCancelled())
+      throw OperationCancelled{};
+
+    if (nbytes == 0) {
+      /* the port took nothing this time: a serial port on Windows
+         does that when its own write timeout expires first, e.g. on
+         a USB adapter that is still coming up right after the
+         machine did - try again until our timeout expires, but do
+         not spin on a port that returns at once; the sleep is
+         capped by the remaining time so the deadline cannot be
+         overshot */
+      env.Sleep(std::min<std::chrono::steady_clock::duration>(
+          std::chrono::milliseconds(20), timeout.GetRemainingOrZero()));
+      continue;
+    }
+
+    src = src.subspan(nbytes);
   }
-
-  return true;
 }
 
-bool
-Port::FullWriteString(const char *s,
-                      OperationEnvironment &env, unsigned timeout_ms)
+void
+Port::FullWrite(std::string_view s,
+                OperationEnvironment &env,
+                std::chrono::steady_clock::duration timeout)
 {
-  return FullWrite(s, strlen(s), env, timeout_ms);
+  FullWrite(AsBytes(s), env, timeout);
 }
 
-int
-Port::GetChar()
+std::byte
+Port::ReadByte()
 {
-  unsigned char ch;
-  return Read(&ch, sizeof(ch)) == sizeof(ch)
-    ? ch
-    : -1;
+  std::byte b;
+  if (Read(std::span{&b, 1}) != sizeof(b))
+    throw std::runtime_error{"Port read failed"};
+
+  return b;
 }
 
-bool
-Port::FullFlush(OperationEnvironment &env, unsigned timeout_ms,
-                unsigned total_timeout_ms)
+void
+Port::FullFlush(OperationEnvironment &env,
+                std::chrono::steady_clock::duration timeout,
+                std::chrono::steady_clock::duration _total_timeout)
 {
   Flush();
 
-  const TimeoutClock total_timeout(total_timeout_ms);
+  const TimeoutClock total_timeout(_total_timeout);
 
-  char buffer[0x100];
   do {
-    switch (WaitRead(env, timeout_ms)) {
-    case WaitResult::READY:
-      if (!Read(buffer, sizeof(buffer)))
-        return false;
-      break;
-
-    case WaitResult::TIMEOUT:
-      return true;
-
-    case WaitResult::FAILED:
-    case WaitResult::CANCELLED:
-      return false;
+    try {
+      WaitRead(env, timeout);
+    } catch (const DeviceTimeout &) {
+      return;
     }
+
+    if (std::byte buffer[0x100];
+        Read(std::span{buffer}) <= 0)
+      throw std::runtime_error{"Port read failed"};
   } while (!total_timeout.HasExpired());
-
-  return true;
 }
 
-bool
-Port::FullRead(void *buffer, size_t length, OperationEnvironment &env,
-               unsigned first_timeout_ms, unsigned subsequent_timeout_ms,
-               unsigned total_timeout_ms)
+void
+Port::FullRead(std::span<std::byte> dest, OperationEnvironment &env,
+               std::chrono::steady_clock::duration first_timeout,
+               std::chrono::steady_clock::duration subsequent_timeout,
+               std::chrono::steady_clock::duration total_timeout)
 {
-  const TimeoutClock full_timeout(total_timeout_ms);
+  const TimeoutClock full_timeout(total_timeout);
 
-  char *p = (char *)buffer, *end = p + length;
+  auto nbytes = WaitAndRead(dest, env, first_timeout);
+  dest = dest.subspan(nbytes);
 
-  size_t nbytes = WaitAndRead(buffer, length, env, first_timeout_ms);
-  if (nbytes <= 0)
-    return false;
-
-  p += nbytes;
-
-  while (p < end) {
-    const int ft = full_timeout.GetRemainingSigned();
-    if (ft < 0)
+  while (!dest.empty()) {
+    const auto ft = full_timeout.GetRemainingSigned();
+    if (ft.count() < 0)
       /* timeout */
-      return false;
+      throw DeviceTimeout{"Port read timeout"};
 
-    const unsigned t = std::min(unsigned(ft), subsequent_timeout_ms);
+    const auto t = std::min(ft, subsequent_timeout);
 
-    nbytes = WaitAndRead(p, end - p, env, t);
-    if (nbytes == 0)
-      /*
-       * Error occured, or no data read, which is also an error
-       * when WaitRead returns READY
-       */
-      return false;
-
-    p += nbytes;
+    nbytes = WaitAndRead(dest, env, t);
+    dest = dest.subspan(nbytes);
   }
-
-  return true;
 }
 
-bool
-Port::FullRead(void *buffer, size_t length, OperationEnvironment &env,
-               unsigned timeout_ms)
+void
+Port::FullRead(std::span<std::byte> dest, OperationEnvironment &env,
+               std::chrono::steady_clock::duration timeout)
 {
-  return FullRead(buffer, length, env, timeout_ms, timeout_ms, timeout_ms);
+  FullRead(dest, env, timeout, timeout, timeout);
 }
 
-Port::WaitResult
-Port::WaitRead(OperationEnvironment &env, unsigned timeout_ms)
+void
+Port::WaitRead(OperationEnvironment &env,
+               std::chrono::steady_clock::duration timeout)
 {
-  unsigned remaining = timeout_ms;
+  auto remaining = timeout;
 
   do {
     /* this loop is ugly, and should be redesigned when we have
        non-blocking I/O in all Port implementations */
-    const unsigned t = std::min(remaining, 500u);
-    WaitResult result = WaitRead(t);
-    if (result != WaitResult::TIMEOUT)
-      return result;
+    const auto t = std::min<std::chrono::steady_clock::duration>(remaining, std::chrono::milliseconds(500));
+
+    try {
+      WaitRead(t);
+      return;
+    } catch (const DeviceTimeout &){
+    }
 
     if (env.IsCancelled())
-      return WaitResult::CANCELLED;
+      throw OperationCancelled{};
 
     remaining -= t;
-  } while (remaining > 0);
+  } while (remaining.count() > 0);
 
-  return WaitResult::TIMEOUT;
+  throw DeviceTimeout{"Port read timeout"};
 }
 
-size_t
-Port::WaitAndRead(void *buffer, size_t length,
-                  OperationEnvironment &env, unsigned timeout_ms)
+std::size_t
+Port::WaitAndRead(std::span<std::byte> dest,
+                  OperationEnvironment &env,
+                  std::chrono::steady_clock::duration timeout)
 {
-  WaitResult wait_result = WaitRead(env, timeout_ms);
-  if (wait_result != WaitResult::READY)
-    // Operation canceled, Timeout expired or I/O error occurred
-    return 0;
+  WaitRead(env, timeout);
 
-  int nbytes = Read(buffer, length);
-  if (nbytes < 0)
-    return 0;
+  const auto nbytes = Read(dest);
+  if (nbytes <= 0)
+    throw std::runtime_error{"Port read failed"};
 
-  return (size_t)nbytes;
+  return (std::size_t)nbytes;
 }
 
-size_t
-Port::WaitAndRead(void *buffer, size_t length,
+std::size_t
+Port::WaitAndRead(std::span<std::byte> dest,
                   OperationEnvironment &env, TimeoutClock timeout)
 {
-  int remaining = timeout.GetRemainingSigned();
-  if (remaining < 0)
-    return 0;
+  const auto remaining = timeout.GetRemainingSigned();
+  if (remaining.count() < 0)
+    throw DeviceTimeout{"Port read timeout"};
 
-  return WaitAndRead(buffer, length, env, remaining);
+  return WaitAndRead(dest, env, remaining);
 }
 
-bool
-Port::ExpectString(const char *token, OperationEnvironment &env,
-                   unsigned timeout_ms)
+void
+Port::ExpectString(std::string_view token, OperationEnvironment &env,
+                   std::chrono::steady_clock::duration _timeout)
 {
-  const char *const token_end = token + strlen(token);
+  const char *const token_end = token.data() + token.size();
 
-  const TimeoutClock timeout(timeout_ms);
+  const TimeoutClock timeout(_timeout);
 
   char buffer[256];
 
-  const char *p = token;
+  const char *p = token.data();
   while (true) {
-    size_t nbytes = WaitAndRead(buffer,
-                                std::min(sizeof(buffer), size_t(token_end - p)),
-                                env, timeout);
-    if (nbytes == 0 || env.IsCancelled())
-      return false;
+    std::span<std::byte> dest = std::as_writable_bytes(std::span{buffer});
+    if (std::size_t(token_end - p) < dest.size())
+      dest = dest.first(token_end - p);
+
+    auto nbytes = WaitAndRead(dest, env, timeout);
 
     for (const char *q = buffer, *end = buffer + nbytes; q != end; ++q) {
       const char ch = *q;
       if (ch != *p)
         /* retry */
-        p = token;
+        p = token.data();
       else if (++p == token_end)
-        return true;
+        return;
     }
   }
 }
 
-Port::WaitResult
-Port::WaitForChar(const char token, OperationEnvironment &env,
-                  unsigned timeout_ms)
+void
+Port::WaitForByte(const std::byte token, OperationEnvironment &env,
+                  std::chrono::steady_clock::duration _timeout)
 {
-  const TimeoutClock timeout(timeout_ms);
+  const TimeoutClock timeout(_timeout);
 
   while (true) {
-    WaitResult wait_result = WaitRead(env, timeout.GetRemainingOrZero());
-    if (wait_result != WaitResult::READY)
-      // Operation canceled, Timeout expired or I/O error occurred
-      return wait_result;
+    WaitRead(env, timeout.GetRemainingOrZero());
 
     // Read and compare character with token
-    int ch = GetChar();
-    if (ch == token)
+    const auto b = ReadByte();
+    if (b == token)
       break;
 
     if (timeout.HasExpired())
-      return WaitResult::TIMEOUT;
+      throw DeviceTimeout{"Port read timeout"};
   }
-
-  return WaitResult::READY;
 }
 
 void
-Port::StateChanged()
+Port::StateChanged() noexcept
 {
   PortListener *l = listener;
   if (l != nullptr)
@@ -269,9 +251,17 @@ Port::StateChanged()
 }
 
 void
-Port::Error(const char *msg)
+Port::Error(const char *msg) noexcept
 {
   PortListener *l = listener;
   if (l != nullptr)
     l->PortError(msg);
+}
+
+void
+Port::Error(std::exception_ptr e) noexcept
+{
+  PortListener *l = listener;
+  if (l != nullptr)
+    l->PortError(GetFullMessage(e).c_str());
 }

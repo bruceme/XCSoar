@@ -1,36 +1,18 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "File.hpp"
 #include "ComboList.hpp"
+#include "Language/Language.hpp"
 #include "LocalPath.hpp"
-#include "Util/StringAPI.hxx"
-#include "OS/FileUtil.hpp"
+#include "util/StringAPI.hxx"
+#include "util/StringCompare.hxx"
+#include "util/StaticString.hxx"
+#include "system/FileUtil.hpp"
 
 #include <algorithm>
 
-#include <windef.h> /* for MAX_PATH */
-#include <assert.h>
+#include <cassert>
 #include <stdlib.h>
 
 /**
@@ -38,19 +20,20 @@ Copyright_License {
  * @param str The string to check
  * @return True if string equals a xcsoar internal file's filename
  */
-gcc_pure
+[[gnu::pure]]
 static bool
-IsInternalFile(const TCHAR* str)
+IsInternalFile(const char *str) noexcept
 {
-  static const TCHAR *const ifiles[] = {
-    _T("xcsoar-checklist.txt"),
-    _T("xcsoar-flarm.txt"),
-    _T("xcsoar-marks.txt"),
-    _T("xcsoar-persist.log"),
-    _T("xcsoar-startup.log"),
-    _T("xcsoar.log"),
-    _T("xcsoar-rasp.dat"),
-    _T("user.cup"),
+  static const char *const ifiles[] = {
+    "xcsoar-checklist.txt",
+    "xcsoar-checklist.xcc",
+    "xcsoar-flarm.txt",
+    "xcsoar-marks.txt",
+    "xcsoar-persist.log",
+    "xcsoar-startup.log",
+    "xcsoar.log",
+    "xcsoar-rasp.dat",
+    "user.cup",
     nullptr
   };
 
@@ -67,16 +50,21 @@ private:
   FileDataField &datafield;
 
 public:
-  FileVisitor(FileDataField &_datafield) : datafield(_datafield) {}
+  explicit FileVisitor(FileDataField &_datafield) noexcept
+    : datafield(_datafield) {}
 
   void Visit(Path path, Path filename) override {
-    if (!IsInternalFile(filename.c_str()))
+    bool skip = IsInternalFile(filename.c_str());
+    if (skip && datafield.HasFileType(FileType::CHECKLIST) &&
+        StringIsEqual(filename.c_str(), "xcsoar-checklist.txt"))
+      skip = false;
+    if (!skip)
       datafield.AddFile(path);
   }
 };
 
 inline void
-FileDataField::Item::Set(Path _path)
+FileDataField::Item::Set(Path _path) noexcept
 {
   path = _path;
   filename = path.GetBase();
@@ -84,34 +72,56 @@ FileDataField::Item::Set(Path _path)
     filename = path;
 }
 
-FileDataField::FileDataField(DataFieldListener *listener)
+FileDataField::FileDataField(DataFieldListener *listener) noexcept
   :DataField(Type::FILE, true, listener),
    // Set selection to zero
    current_index(0),
-   loaded(false), postponed_sort(false),
-   postponed_value(nullptr) {}
-
-int
-FileDataField::GetAsInteger() const
+   loaded(false), postponed_sort(SortOrder::NO_ORDER),
+   postponed_preserve_first(false), postponed_value(nullptr)
 {
-  if (!postponed_value.IsNull())
-    EnsureLoadedDeconst();
-
-  return current_index;
+  file_types.append() = FileType::UNKNOWN;
 }
 
 void
-FileDataField::SetAsInteger(int new_value)
+FileDataField::SetFileTypes(std::initializer_list<FileType> _file_types) noexcept
 {
-  Set(new_value);
+  file_types.clear();
+
+  for (const auto type : _file_types) {
+    if (file_types.full())
+      break;
+
+    bool duplicate = false;
+    for (const auto existing : file_types)
+      if (existing == type) {
+        duplicate = true;
+        break;
+      }
+
+    if (!duplicate)
+      file_types.append() = type;
+  }
+
+  if (file_types.empty())
+    file_types.append() = FileType::UNKNOWN;
+}
+
+bool
+FileDataField::HasFileType(FileType type) const noexcept
+{
+  for (const auto candidate : file_types)
+    if (candidate == type)
+      return true;
+
+  return false;
 }
 
 void
-FileDataField::ScanDirectoryTop(const TCHAR *filter)
+FileDataField::ScanDirectoryTop(const char *filter) noexcept
 {
   if (!loaded) {
     if (!postponed_patterns.full() &&
-        _tcslen(filter) < PatternList::value_type().capacity()) {
+        strlen(filter) < PatternList::value_type().capacity()) {
       postponed_patterns.append() = filter;
       return;
     } else
@@ -119,23 +129,75 @@ FileDataField::ScanDirectoryTop(const TCHAR *filter)
   }
 
   FileVisitor fv(*this);
-  VisitDataFiles(filter, fv);
 
-  Sort();
+  bool has_typed_dir = false;
+  for (const auto type : file_types) {
+    const auto subdir = GetFileTypeDefaultDir(type);
+    if (type != FileType::UNKNOWN && subdir != nullptr) {
+      has_typed_dir = true;
+      break;
+    }
+  }
+
+  if (has_typed_dir) {
+    Directory::VisitSpecificFiles(GetPrimaryDataPath(), filter, fv, false);
+
+    StaticArray<AllocatedPath, 8> visited_paths;
+    const auto was_visited = [&visited_paths](const AllocatedPath &path) {
+      for (const auto &visited_path : visited_paths)
+        if (visited_path == path)
+          return true;
+
+      return false;
+    };
+
+    for (const auto type : file_types) {
+      const auto subdir = GetFileTypeDefaultDir(type);
+      if (type == FileType::UNKNOWN || subdir == nullptr)
+        continue;
+
+      auto typed_path = LocalPath(subdir);
+      if (typed_path == nullptr || !Directory::Exists(typed_path))
+        continue;
+
+      if (was_visited(typed_path))
+        continue;
+
+      Directory::VisitSpecificFiles(typed_path, filter, fv, true);
+
+      if (!visited_paths.full())
+        visited_paths.append() = std::move(typed_path);
+    }
+
+    if (HasFileType(FileType::WAYPOINTDETAILS)) {
+      /* Compatibility fallback: an earlier subdir migration could move
+         ambiguous .txt waypoint details into airspace/. */
+      const auto airspace_path =
+        LocalPath(GetFileTypeDefaultDir(FileType::AIRSPACE));
+      if (airspace_path != nullptr && !was_visited(airspace_path) &&
+          Directory::Exists(airspace_path))
+        Directory::VisitSpecificFiles(airspace_path, filter, fv, true);
+    }
+  } else {
+    VisitDataFiles(filter, fv);
+  }
+
+  if (postponed_sort == SortOrder::NO_ORDER)
+    Sort();
 }
 
 void
-FileDataField::ScanMultiplePatterns(const TCHAR *patterns)
+FileDataField::ScanMultiplePatterns(const char *patterns) noexcept
 {
   size_t length;
-  while ((length = _tcslen(patterns)) > 0) {
+  while ((length = strlen(patterns)) > 0) {
     ScanDirectoryTop(patterns);
     patterns += length + 1;
   }
 }
 
 int
-FileDataField::Find(Path path) const
+FileDataField::Find(Path path) const noexcept
 {
   for (unsigned i = 0, n = files.size(); i < n; i++)
     if (files[i].path == path)
@@ -145,7 +207,7 @@ FileDataField::Find(Path path) const
 }
 
 void
-FileDataField::Lookup(Path text)
+FileDataField::SetValue(Path text) noexcept
 {
   if (!loaded) {
     postponed_value = text;
@@ -153,12 +215,40 @@ FileDataField::Lookup(Path text)
   }
 
   auto i = Find(text);
-  if (i >= 0)
+  if (i >= 0) {
     current_index = i;
+  } else if (text != nullptr && !StringIsEmpty(text.c_str())) {
+    /* file configured in profile but not found on disk - add it to
+       the list so the user can see what's configured */
+    if (!files.full()) {
+      auto &item = files.append();
+      item.Set(text);
+      current_index = files.size() - 1;
+    }
+  }
 }
 
 void
-FileDataField::ForceModify(Path path)
+FileDataField::ModifyValue(Path new_value) noexcept
+{
+  if (new_value == GetValue())
+    return;
+
+  if (!loaded) {
+    postponed_value = new_value;
+    Modified();
+    return;
+  }
+
+  auto i = Find(new_value);
+  if (i >= 0) {
+    current_index = i;
+    Modified();
+  }
+}
+
+void
+FileDataField::ForceModify(Path path) noexcept
 {
   EnsureLoaded();
 
@@ -177,7 +267,7 @@ FileDataField::ForceModify(Path path)
 }
 
 unsigned
-FileDataField::GetNumFiles() const
+FileDataField::GetNumFiles() const noexcept
 {
   EnsureLoadedDeconst();
 
@@ -185,14 +275,14 @@ FileDataField::GetNumFiles() const
 }
 
 Path
-FileDataField::GetPathFile() const
+FileDataField::GetValue() const noexcept
 {
   if (!loaded && postponed_value != nullptr)
     return postponed_value;
 
   if (current_index >= files.size())
     // TODO: return nullptr instead of empty string?
-    return Path(_T(""));
+    return Path("");
 
   const Path path = files[current_index].path;
   assert(path != nullptr);
@@ -200,7 +290,7 @@ FileDataField::GetPathFile() const
 }
 
 void
-FileDataField::AddFile(Path path)
+FileDataField::AddFile(Path path) noexcept
 {
   assert(loaded);
 
@@ -215,17 +305,17 @@ FileDataField::AddFile(Path path)
 }
 
 void
-FileDataField::AddNull()
+FileDataField::AddNull() noexcept
 {
   assert(!files.full());
 
   Item &item = files.append();
-  item.filename = Path(_T(""));
-  item.path = Path(_T(""));
+  item.filename = Path("");
+  item.path = Path("");
 }
 
-const TCHAR *
-FileDataField::GetAsString() const
+const char *
+FileDataField::GetAsString() const noexcept
 {
   if (!loaded && postponed_value != nullptr)
     return postponed_value.c_str();
@@ -233,11 +323,11 @@ FileDataField::GetAsString() const
   if (current_index < files.size())
     return files[current_index].path.c_str();
   else
-    return _T("");
+    return "";
 }
 
-const TCHAR *
-FileDataField::GetAsDisplayString() const
+const char *
+FileDataField::GetAsDisplayString() const noexcept
 {
   if (!loaded && postponed_value != nullptr) {
     /* get basename from postponed_value */
@@ -251,16 +341,31 @@ FileDataField::GetAsDisplayString() const
   if (current_index < files.size())
     return files[current_index].filename.c_str();
   else
-    return _T("");
+    return "";
 }
 
 void
-FileDataField::Set(unsigned new_value)
+FileDataField::SetIndex(unsigned new_value) noexcept
 {
   if (new_value > 0)
     EnsureLoaded();
   else
     postponed_value = nullptr;
+
+  if (new_value < files.size())
+    current_index = new_value;
+}
+
+void
+FileDataField::ModifyIndex(unsigned new_value) noexcept
+{
+  if (new_value > 0)
+    EnsureLoaded();
+  else
+    postponed_value = nullptr;
+
+  if (new_value == current_index)
+    return;
 
   if (new_value < files.size()) {
     current_index = new_value;
@@ -269,7 +374,7 @@ FileDataField::Set(unsigned new_value)
 }
 
 void
-FileDataField::Inc()
+FileDataField::Inc() noexcept
 {
   EnsureLoaded();
 
@@ -280,7 +385,7 @@ FileDataField::Inc()
 }
 
 void
-FileDataField::Dec()
+FileDataField::Dec() noexcept
 {
   if (current_index > 0) {
     current_index--;
@@ -289,23 +394,50 @@ FileDataField::Dec()
 }
 
 void
-FileDataField::Sort()
+FileDataField::Sort(SortOrder order, bool preserve_first) noexcept
 {
+  if (order == SortOrder::NO_ORDER)
+    return;
+
   if (!loaded) {
-    postponed_sort = true;
+    postponed_sort = order;
+    postponed_preserve_first = preserve_first;
     return;
   }
 
-  // Sort the filelist (except for the first (empty) element)
-  std::sort(files.begin(), files.end(), [](const Item &a,
-                                           const Item &b) {
-              // Compare by filename
-              return StringCollate(a.filename.c_str(), b.filename.c_str()) < 0;
-            });
+  if (files.size() > 1) {
+    if (preserve_first) {
+      // Keep first entry in place for flight replay demo; sort remainder by the requested order
+      if (order == SortOrder::DESCENDING) {
+        std::sort(std::next(files.begin()), files.end(), [](const Item &a, const Item &b) {
+                  return StringCollate(a.filename.c_str(), b.filename.c_str()) > 0;
+        });
+      } else {
+        // Sort the filelist in ascending order
+        std::sort(std::next(files.begin()), files.end(), [](const Item &a, const Item &b) {
+                  return StringCollate(a.filename.c_str(), b.filename.c_str()) < 0;
+        });
+      }
+    } else if (order == SortOrder::DESCENDING) {
+      std::sort(files.begin(), files.end(), [](const Item &a,
+                                             const Item &b) {
+                return StringCollate(a.filename.c_str(), b.filename.c_str()) > 0;
+              });
+    } else {
+      // Sort the filelist in ascending order
+      std::sort(files.begin(), files.end(), [](const Item &a,
+                                             const Item &b) {
+                return StringCollate(a.filename.c_str(), b.filename.c_str()) < 0;
+              });
+    }
+  }
+
+  postponed_sort = SortOrder::NO_ORDER;
+  postponed_preserve_first = false;
 }
 
 ComboList
-FileDataField::CreateComboList(const TCHAR *reference) const
+FileDataField::CreateComboList([[maybe_unused]] const char *reference) const noexcept
 {
   /* sorry for the const_cast .. this method keeps the promise of not
      modifying the object, given that one does not count filling the
@@ -314,11 +446,19 @@ FileDataField::CreateComboList(const TCHAR *reference) const
 
   ComboList combo_list;
 
-  TCHAR buffer[MAX_PATH];
+  StaticString<1024> buffer;
 
+  unsigned combo_index = 0;
   for (unsigned i = 0; i < files.size(); i++) {
     const Path path = files[i].filename;
     assert(path != nullptr);
+
+    const bool is_not_found = !StringIsEmpty(path.c_str()) &&
+                              !File::Exists(files[i].path);
+
+    /* hide not-found files that are no longer selected */
+    if (is_not_found && i != current_index)
+      continue;
 
     /* is a file with the same base name present in another data
        directory? */
@@ -331,43 +471,51 @@ FileDataField::CreateComboList(const TCHAR *reference) const
       }
     }
 
-    const TCHAR *display_string = path.c_str();
+    const char *display_string = path.c_str();
     if (found) {
       /* yes - append the absolute path to allow the user to see the
          difference */
-      _tcscpy(buffer, path.c_str());
-      _tcscat(buffer, _T(" ("));
-      _tcscat(buffer, files[i].path.c_str());
-      _tcscat(buffer, _T(")"));
+      buffer.Format("%s (%s)", path.c_str(), files[i].path.c_str());
+      display_string = buffer;
+    } else if (is_not_found) {
+      /* file configured in profile does not exist on disk */
+      buffer.Format("%s [%s]", path.c_str(), _("Not found"));
       display_string = buffer;
     }
 
-    combo_list.Append(display_string);
+    if (i == current_index)
+      combo_list.current_index = combo_index;
+    combo_index++;
+    combo_list.Append(i, display_string);
   }
-
-  combo_list.current_index = current_index;
 
   return combo_list;
 }
 
+void
+FileDataField::SetFromCombo(int i, const char *) noexcept
+{
+  ModifyIndex(i);
+}
+
 unsigned
-FileDataField::size() const
+FileDataField::size() const noexcept
 {
   EnsureLoadedDeconst();
 
   return files.size();
 }
 
-Path
-FileDataField::GetItem(unsigned index) const
+const FileDataField::Item &
+FileDataField::GetItem(unsigned index) const noexcept
 {
   EnsureLoadedDeconst();
 
-  return files[index].path;
+  return files[index];
 }
 
 void
-FileDataField::EnsureLoaded()
+FileDataField::EnsureLoaded() noexcept
 {
   if (loaded)
     return;
@@ -378,9 +526,9 @@ FileDataField::EnsureLoaded()
        i != end; ++i)
     ScanDirectoryTop(*i);
 
-  if (postponed_sort)
-    Sort();
+  if (postponed_sort != SortOrder::NO_ORDER)
+    Sort(postponed_sort, postponed_preserve_first);
 
-  if (!postponed_value.IsNull())
-    Lookup(postponed_value);
+  if (postponed_value != nullptr)
+    SetValue(postponed_value);
 }

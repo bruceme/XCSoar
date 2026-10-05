@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskStatusPanel.hpp"
 #include "Form/DataField/Float.hpp"
@@ -27,9 +7,10 @@ Copyright_License {
 #include "Units/Units.hpp"
 #include "Formatter/UserUnits.hpp"
 #include "Formatter/TimeFormatter.hpp"
-#include "Components.hpp"
 #include "Task/ProtectedTaskManager.hpp"
 #include "Language/Language.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
 
 enum Controls {
   TaskTime,
@@ -49,20 +30,19 @@ enum Controls {
 };
 
 void
-TaskStatusPanel::OnModified(DataField &df)
+TaskStatusPanel::OnModified(DataField &df) noexcept
 {
   if (IsDataField(MC, df)) {
     const DataFieldFloat &dff = (const DataFieldFloat &)df;
-    auto mc = Units::ToSysVSpeed(dff.GetAsFixed());
+    auto mc = Units::ToSysVSpeed(dff.GetValue());
     ActionInterface::SetManualMacCready(mc);
-    Refresh();
   }
 }
 
 void
-TaskStatusPanel::Refresh()
+TaskStatusPanel::Refresh() noexcept
 {
-  if (protected_task_manager == nullptr)
+  if (!backend_components->protected_task_manager)
     return;
 
   const DerivedInfo &calculated = CommonInterface::Calculated();
@@ -71,13 +51,19 @@ TaskStatusPanel::Refresh()
   SetRowVisible(TaskTime, task_stats.has_targets);
   if (task_stats.has_targets)
     SetText(TaskTime,
-            FormatSignedTimeHHMM((int)protected_task_manager->GetOrderedTaskSettings().aat_min_time));
+            FormatTimeHHMM(backend_components->protected_task_manager->GetOrderedTaskSettings().aat_min_time));
 
-  SetText(ETETime,
-          FormatSignedTimeHHMM((int)task_stats.GetEstimatedTotalTime()));
+  if (task_stats.total.remaining_effective.IsDefined())
+    SetText(ETETime,
+            FormatSignedTimeHHMM(task_stats.GetEstimatedTotalTime()));
+  else
+    ClearText(ETETime);
 
-  SetText(RemainingTime,
-          FormatSignedTimeHHMM((int)task_stats.total.time_remaining_now));
+  if (task_stats.total.remaining_effective.IsDefined() && !task_stats.task_finished)
+    SetText(RemainingTime,
+            FormatSignedTimeHHMM(task_stats.total.time_remaining_now));
+  else
+    ClearText(RemainingTime);
 
   if (task_stats.total.planned.IsDefined())
     SetText(TaskDistance,
@@ -85,11 +71,13 @@ TaskStatusPanel::Refresh()
   else
     ClearText(TaskDistance);
 
-  if (task_stats.total.remaining.IsDefined())
+  if (task_stats.total.remaining.IsDefined() && !task_stats.task_finished)
     SetText(RemainingDistance,
             FormatUserDistanceSmart(task_stats.total.remaining.GetDistance()));
+  else
+    ClearText(RemainingDistance);
 
-  if (task_stats.total.planned.IsDefined())
+  if (task_stats.total.remaining_effective.IsDefined() && !task_stats.task_finished)
     SetText(EstimatedSpeed,
             FormatUserTaskSpeed(task_stats.total.planned.GetSpeed()));
   else
@@ -117,7 +105,7 @@ TaskStatusPanel::Refresh()
   } else
     ClearValue(RANGE);
 
-  if (task_stats.total.remaining_effective.IsDefined())
+  if (task_stats.total.remaining_effective.IsDefined() && !task_stats.task_finished)
     LoadValue(SPEED_REMAINING, task_stats.total.remaining_effective.GetSpeed(),
               UnitGroup::TASK_SPEED);
   else
@@ -135,7 +123,7 @@ TaskStatusPanel::Refresh()
 }
 
 void
-TaskStatusPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+TaskStatusPanel::Prepare([[maybe_unused]] ContainerWindow &parent, [[maybe_unused]] const PixelRect &rc) noexcept
 {
   AddReadOnly(_("Assigned task time"));
   AddReadOnly(_("Estimated task time"));
@@ -146,10 +134,10 @@ TaskStatusPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   AddReadOnly(_("Speed average"));
 
   AddFloat(_("Set MacCready"),
-           _("Adjusts MC value used in the calculator.  "
-             "Use this to determine the effect on estimated task time due to changes in conditions.  "
+           _("Adjusts MC value used in the calculator. "
+             "Use this to determine the effect on estimated task time due to changes in conditions. "
              "This value will not affect the main computer's setting if the dialog is exited with the Cancel button."),
-           _T("%.1f %s"), _T("%.1f"),
+           "%.1f %s", "%.1f",
            0, Units::ToUserVSpeed(5),
            GetUserVerticalSpeedStep(), false, 0,
            this);
@@ -158,22 +146,44 @@ TaskStatusPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
 
   AddReadOnly(_("AAT range"),
               /* xgettext:no-c-format */
-              _("For AAT tasks, this value tells you how far based on the targets of your task you will fly relative to the minimum and maximum possible tasks. -100% indicates the minimum AAT distance.  0% is the nominal AAT distance.  +100% is maximum AAT distance."),
-              _T("%.0f %%"), 0);
+              _("For AAT tasks, this value tells you how far based on the targets of your task you will fly relative to the minimum and maximum possible tasks. -100% indicates the minimum AAT distance. 0% is the nominal AAT distance. +100% is the maximum AAT distance."),
+              "%.0f %%", 0);
 
-  AddReadOnly(_("Speed remaining"), nullptr, _T("%.0f %s"),
+  AddReadOnly(_("Speed remaining"), nullptr, "%.0f %s",
               UnitGroup::TASK_SPEED, 0);
 
-  AddReadOnly(_("Achieved MacCready"), nullptr, _T("%.1f %s"),
+  AddReadOnly(_("Achieved MacCready"), nullptr, "%.1f %s",
               UnitGroup::VERTICAL_SPEED, 0);
   DataFieldFloat &emc_df = (DataFieldFloat &)GetDataField(EFFECTIVE_MC);
   emc_df.SetFormat(GetUserVerticalSpeedFormat(false, false));
 
-  AddReadOnly(_("Achieved speed"), nullptr, _T("%.0f %s"),
+  AddReadOnly(_("Achieved speed"), nullptr, "%.0f %s",
               UnitGroup::TASK_SPEED, 0);
 
   AddReadOnly(_("Cruise efficiency"),
-              _("Efficiency of cruise.  100 indicates perfect MacCready performance, greater than 100 indicates better than MacCready performance is achieved through flying in streets.  Less than 100 is appropriate if you fly considerably off-track.  This value estimates your cruise efficiency according to the current flight history with the set MC value.  Calculation begins after task is started."),
-              _T("%.0f %%"),
+              _("Efficiency of cruise. 100 indicates perfect MacCready performance; greater than 100 indicates better than MacCready performance is achieved through flying in streets. Less than 100 is appropriate if you fly considerably off-track. This value estimates your cruise efficiency according to the current flight history with the set MC value. Calculation begins after task is started."),
+              "%.0f %%",
               0);
+}
+
+void
+TaskStatusPanel::Show(const PixelRect &rc) noexcept
+{
+  Refresh();
+  CommonInterface::GetLiveBlackboard().AddListener(rate_limiter);
+  StatusPanel::Show(rc);
+}
+
+void
+TaskStatusPanel::Hide() noexcept
+{
+  StatusPanel::Hide();
+  CommonInterface::GetLiveBlackboard().RemoveListener(rate_limiter);
+  rate_limiter.Cancel();
+}
+
+void
+TaskStatusPanel::OnCalculatedUpdate([[maybe_unused]] const MoreData &basic, [[maybe_unused]] const DerivedInfo &calculated)
+{
+  Refresh();
 }

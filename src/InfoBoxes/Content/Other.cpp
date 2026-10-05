@@ -1,40 +1,139 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxes/Content/Other.hpp"
 #include "InfoBoxes/Data.hpp"
+#include "Dialogs/Dialogs.h"
 #include "Interface.hpp"
+#include "UIState.hpp"
+#include "InfoBoxes/Panel/Panel.hpp"
+#include "InfoBoxes/Panel/CustomTextEdit.hpp"
+#include "Input/InputEvents.hpp"
+#include "Formatter/UserUnits.hpp"
+#include "Math/Util.hpp"
 #include "Renderer/HorizonRenderer.hpp"
-#include "Hardware/Battery.hpp"
-#include "OS/SystemLoad.hpp"
+#include "Hardware/PowerGlobal.hpp"
+#include "system/SystemLoad.hpp"
+#include "Formatter/TimeFormatter.hpp"
 #include "Language/Language.hpp"
 #include "UIGlobals.hpp"
 #include "Look/Look.hpp"
 
-#include <tchar.h>
+#ifdef HAVE_BATTERY
+#include "Hardware/PowerInfo.hpp"
+#endif
 
 void
-UpdateInfoBoxGLoad(InfoBoxData &data)
+UpdateInfoBoxHeartRate(InfoBoxData &data) noexcept
+{
+  const auto &basic = CommonInterface::Basic();
+
+  if (!basic.heart_rate_available) {
+    data.SetInvalid();
+    return;
+  }
+
+  data.FmtValue("{}", basic.heart_rate);
+}
+
+/**
+ * Blood oxygen saturation below which the value is shown in yellow.
+ * Above it the value is drawn in the normal text colour.
+ *
+ * There is no official limit for aviation; this is the value recommended
+ * by the AOPA Air Safety Institute and in gliding literature, and it is
+ * also the alarm limit most commonly used on hospital monitors.
+ */
+static constexpr unsigned BLOOD_OXYGEN_CAUTION = 90;
+
+/**
+ * Blood oxygen saturation below which the value is shown in red.  This is
+ * the factory default alarm limit of pulse oximeters that are common in
+ * aviation, and the value at which gliding literature advises to use
+ * supplemental oxygen.
+ */
+static constexpr unsigned BLOOD_OXYGEN_WARNING = 85;
+
+/**
+ * How far the value has to rise above a threshold again before the colour
+ * improves.  Consumer pulse oximeters are only accurate to a few percent,
+ * so without this the colour would flicker while the value hovers around a
+ * threshold.  A deteriorating value changes the colour immediately.
+ */
+static constexpr unsigned BLOOD_OXYGEN_HYSTERESIS = 2;
+
+/**
+ * Show how old the value is once it exceeds this age.  A working pulse
+ * oximeter reports every few seconds; the pilot cannot tell a current
+ * reading from an old one, and the reading already lags the actual
+ * saturation by a minute or more, so an old value should not be presented
+ * as if it were current.
+ */
+static constexpr auto BLOOD_OXYGEN_SHOW_AGE = std::chrono::seconds(30);
+
+static constexpr unsigned BLOOD_OXYGEN_LEVEL_OK = 0;
+static constexpr unsigned BLOOD_OXYGEN_LEVEL_CAUTION = 1;
+static constexpr unsigned BLOOD_OXYGEN_LEVEL_WARNING = 2;
+
+[[gnu::const]]
+static unsigned
+BloodOxygenLevel(unsigned spo2, unsigned previous) noexcept
+{
+  if (spo2 < BLOOD_OXYGEN_WARNING +
+      (previous >= BLOOD_OXYGEN_LEVEL_WARNING ? BLOOD_OXYGEN_HYSTERESIS : 0))
+    return BLOOD_OXYGEN_LEVEL_WARNING;
+
+  if (spo2 < BLOOD_OXYGEN_CAUTION +
+      (previous >= BLOOD_OXYGEN_LEVEL_CAUTION ? BLOOD_OXYGEN_HYSTERESIS : 0))
+    return BLOOD_OXYGEN_LEVEL_CAUTION;
+
+  return BLOOD_OXYGEN_LEVEL_OK;
+}
+
+void
+UpdateInfoBoxBloodOxygen(InfoBoxData &data) noexcept
+{
+  const auto &basic = CommonInterface::Basic();
+
+  /* the level the hysteresis compares against; only ever touched from the
+     user interface thread */
+  static unsigned level = BLOOD_OXYGEN_LEVEL_OK;
+
+  if (!basic.blood_oxygen_available) {
+    /* a value that arrives after a gap is judged without hysteresis */
+    level = BLOOD_OXYGEN_LEVEL_OK;
+    data.SetInvalid();
+    return;
+  }
+
+  level = BloodOxygenLevel(basic.blood_oxygen, level);
+
+  data.SetValueFromPercent(basic.blood_oxygen);
+
+  static constexpr unsigned colors[] = {
+    0, // the normal text colour
+    4, // yellow
+    1, // red
+  };
+
+  data.SetValueColor(colors[level]);
+
+  /* this is the age of the reception, not of the measurement: the sensor
+     may have measured considerably earlier than it sent the value */
+  const Validity now{basic.clock};
+  if (now.IsValid()) {
+    const auto age = now.GetTimeDifference(basic.blood_oxygen_available);
+    if (age >= BLOOD_OXYGEN_SHOW_AGE) {
+      data.SetComment(FormatTimespanSmart(age).c_str());
+      return;
+    }
+  }
+
+  data.SetCommentInvalid();
+}
+
+void
+UpdateInfoBoxGLoad(InfoBoxData &data) noexcept
 {
   if (!CommonInterface::Basic().acceleration.available) {
     data.SetInvalid();
@@ -42,63 +141,54 @@ UpdateInfoBoxGLoad(InfoBoxData &data)
   }
 
   // Set Value
-  data.SetValue(_T("%2.2f"), CommonInterface::Basic().acceleration.g_load);
+  data.FmtValue("{:2.2f}", CommonInterface::Basic().acceleration.g_load);
 }
 
 void
-UpdateInfoBoxBattery(InfoBoxData &data)
+UpdateInfoBoxBattery(InfoBoxData &data) noexcept
 {
 #ifdef HAVE_BATTERY
+  const auto &info = Power::global_info;
+  const auto &battery = info.battery;
+  const auto &external = info.external;
+
   bool DisplaySupplyVoltageAsValue=false;
-  switch (Power::External::Status) {
-    case Power::External::OFF:
-      if (CommonInterface::Basic().battery_level_available)
-        data.UnsafeFormatComment(_T("%s; %d%%"),
-                                 _("AC Off"),
-                                 (int)CommonInterface::Basic().battery_level);
-      else
-        data.SetComment(_("AC Off"));
-      break;
-    case Power::External::ON:
-      if (!CommonInterface::Basic().voltage_available)
-        data.SetComment(_("AC ON"));
-      else{
-        DisplaySupplyVoltageAsValue = true;
-        data.SetValueFromVoltage(CommonInterface::Basic().voltage);
-      }
-      break;
-    case Power::External::UNKNOWN:
-    default:
+  switch (external.status) {
+  case Power::ExternalInfo::Status::OFF:
+    if (CommonInterface::Basic().battery_level_available)
+      data.FmtComment("{}; {}%",
+                      _("AC Off"),
+                      (int)CommonInterface::Basic().battery_level);
+    else
+      data.SetComment(_("AC Off"));
+    break;
+
+  case Power::ExternalInfo::Status::ON:
+    if (!CommonInterface::Basic().voltage_available)
+      data.SetComment(_("AC ON"));
+    else{
+      DisplaySupplyVoltageAsValue = true;
+      data.SetValueFromVoltage(CommonInterface::Basic().voltage);
+    }
+    break;
+
+  case Power::ExternalInfo::Status::UNKNOWN:
+  default:
+    data.SetCommentInvalid();
+  }
+
+  if (battery.remaining_percent) {
+    if (!DisplaySupplyVoltageAsValue)
+      data.SetValueFromPercent(*battery.remaining_percent);
+    else
+      data.SetCommentFromPercent(* battery.remaining_percent);
+  } else {
+    if (!DisplaySupplyVoltageAsValue)
+      data.SetValueInvalid();
+    else
       data.SetCommentInvalid();
   }
-#ifndef ANDROID
-  switch (Power::Battery::Status){
-    case Power::Battery::HIGH:
-    case Power::Battery::LOW:
-    case Power::Battery::CRITICAL:
-    case Power::Battery::CHARGING:
-      if (Power::Battery::RemainingPercentValid){
-#endif
-        if (!DisplaySupplyVoltageAsValue)
-          data.SetValueFromPercent(Power::Battery::RemainingPercent);
-        else
-          data.SetCommentFromPercent(Power::Battery::RemainingPercent);
-#ifndef ANDROID
-      }
-      else
-        if (!DisplaySupplyVoltageAsValue)
-          data.SetValueInvalid();
-        else
-          data.SetCommentInvalid();
-      break;
-    case Power::Battery::NOBATTERY:
-    case Power::Battery::UNKNOWN:
-      if (!DisplaySupplyVoltageAsValue)
-        data.SetValueInvalid();
-      else
-        data.SetCommentInvalid();
-  }
-#endif
+
   return;
 
 #endif
@@ -115,63 +205,69 @@ UpdateInfoBoxBattery(InfoBoxData &data)
 }
 
 void
-UpdateInfoBoxExperimental1(InfoBoxData &data)
+UpdateInfoBoxExperimental1(InfoBoxData &data) noexcept
 {
   // Set Value
   data.SetInvalid();
 }
 
 void
-UpdateInfoBoxExperimental2(InfoBoxData &data)
+UpdateInfoBoxExperimental2(InfoBoxData &data) noexcept
 {
   // Set Value
   data.SetInvalid();
 }
 
 void
-UpdateInfoBoxCPULoad(InfoBoxData &data)
+UpdateInfoBoxCPULoad(InfoBoxData &data) noexcept
 {
-  unsigned percent_load = SystemLoadCPU();
-  if (percent_load <= 100) {
-    data.SetValueFromPercent(percent_load);
+  const auto percent_load = SystemLoadCPU();
+  if (percent_load) {
+    data.SetValueFromPercent(*percent_load);
   } else {
     data.SetInvalid();
   }
 }
 
 void
-UpdateInfoBoxFreeRAM(InfoBoxData &data)
+UpdateInfoBoxFreeRAM(InfoBoxData &data) noexcept
 {
-  // used to be implemented on WinCE
+  /* The numeric id stays so saved layouts do not shift. The value was
+     only available on Windows CE. */
   data.SetInvalid();
 }
 
 void
-InfoBoxContentHorizon::OnCustomPaint(Canvas &canvas, const PixelRect &rc)
+InfoBoxContentHorizon::OnCustomPaint(Canvas &canvas,
+                                     const PixelRect &rc) noexcept
 {
-  if (CommonInterface::Basic().acceleration.available) {
-    const Look &look = UIGlobals::GetLook();
-    HorizonRenderer::Draw(canvas, rc,
-                          look.horizon, CommonInterface::Basic().attitude);
-  }
+  const auto &attitude = CommonInterface::Basic().attitude;
+  if (!attitude.bank_angle_available && !attitude.pitch_angle_available)
+    return;
+
+  const Look &look = UIGlobals::GetLook();
+  HorizonRenderer::Draw(canvas, rc, look.horizon, attitude);
 }
 
 void
-InfoBoxContentHorizon::Update(InfoBoxData &data)
+InfoBoxContentHorizon::Update(InfoBoxData &data) noexcept
 {
-  if (!CommonInterface::Basic().attitude.IsBankAngleUseable() &&
-      !CommonInterface::Basic().attitude.IsPitchAngleUseable()) {
+  const auto &basic = CommonInterface::Basic();
+
+  if (!basic.attitude.bank_angle_available &&
+      !basic.attitude.pitch_angle_available) {
     data.SetInvalid();
     return;
   }
 
-  data.SetCustom();
+  data.SetCustom(basic.attitude.bank_angle_available.ToInteger() +
+                 basic.attitude.pitch_angle_available.ToInteger());
 }
 
 // TODO: merge with original copy from Dialogs/StatusPanels/SystemStatusPanel.cpp
-gcc_pure
-static const TCHAR *
-GetGPSStatus(const NMEAInfo &basic)
+[[gnu::pure]]
+static const char *
+GetGPSStatus(const NMEAInfo &basic) noexcept
 {
   if (!basic.alive)
     return N_("Disconnected");
@@ -184,7 +280,7 @@ GetGPSStatus(const NMEAInfo &basic)
 }
 
 void
-UpdateInfoBoxNbrSat(InfoBoxData &data)
+UpdateInfoBoxNbrSat(InfoBoxData &data) noexcept
 {
     const NMEAInfo &basic = CommonInterface::Basic();
     const GPSState &gps = basic.gps;
@@ -195,9 +291,74 @@ UpdateInfoBoxNbrSat(InfoBoxData &data)
         data.SetComment(_("No GPS"));
     else if (gps.satellites_used_available) {
         // known number of sats
-        data.FormatValue(_T("%u"), gps.satellites_used);
+        data.FmtValue("{}", gps.satellites_used);
     } else {
         // valid but unknown number of sats
         data.SetValueInvalid();
     }
+}
+
+void
+InfoBoxContentNbrSat::Update(InfoBoxData &data) noexcept
+{
+  UpdateInfoBoxNbrSat(data);
+}
+
+bool
+InfoBoxContentNbrSat::HandleClick() noexcept
+{
+  dlgStatusShowModal(1);
+  return true;
+}
+
+void
+InfoBoxContentBallast::Update(InfoBoxData &data) noexcept
+{
+  const auto &polar_settings = CommonInterface::GetComputerSettings().polar;
+  const auto &polar = polar_settings.glide_polar_task;
+
+  /* whole litres, matching Flight Setup */
+  data.FmtValue("{}", iround(polar.GetBallastLitres()));
+  data.SetValueUnit(Unit::LITRE);
+
+  /* blue while ballast is being dumped */
+  data.SetValueColor(polar_settings.ballast_timer_active ? 2 : 0);
+
+  const double wing_loading = polar.GetWingLoading();
+  if (wing_loading > 0) {
+    char buffer[32];
+    FormatUserWingLoading(wing_loading, buffer, sizeof(buffer), true);
+    data.SetComment(buffer);
+  } else
+    data.SetCommentInvalid();
+}
+
+bool
+InfoBoxContentBallast::HandleClick() noexcept
+{
+  InputEvents::eventSetup("Basic");
+  return true;
+}
+
+void
+InfoBoxContentCustomText::Update(InfoBoxData &data) noexcept
+{
+  const auto &settings = CommonInterface::GetUISettings().info_boxes;
+  const unsigned panel = CommonInterface::GetUIState().panel_index;
+  const InfoBoxCustomText &text = settings.panels[panel].text[GetSlot()];
+
+  data.SetTitle(text.title.c_str());
+  data.SetValue(text.value.c_str());
+  data.SetComment(text.comment.c_str());
+}
+
+static constexpr InfoBoxPanel custom_text_infobox_panels[] = {
+  { NC_("Menu", "Setup"), LoadCustomTextEditPanel },
+  { nullptr, nullptr }
+};
+
+const InfoBoxPanel *
+InfoBoxContentCustomText::GetDialogContent() noexcept
+{
+  return custom_text_infobox_panels;
 }

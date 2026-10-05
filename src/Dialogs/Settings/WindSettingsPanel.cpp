@@ -1,30 +1,10 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WindSettingsPanel.hpp"
-#include "Profile/ProfileKeys.hpp"
+#include "Profile/Keys.hpp"
+#include "Profile/ProfileMap.hpp"
 #include "Form/Button.hpp"
-#include "Form/DataField/Enum.hpp"
 #include "Form/DataField/Float.hpp"
 #include "Interface.hpp"
 #include "Language/Language.hpp"
@@ -33,7 +13,7 @@ Copyright_License {
 
 WindSettingsPanel::WindSettingsPanel(bool _edit_manual_wind,
                                      bool _clear_manual_button,
-                                     bool _edit_trail_drift)
+                                     bool _edit_trail_drift) noexcept
   :RowFormWidget(UIGlobals::GetDialogLook()),
    edit_manual_wind(_edit_manual_wind),
    clear_manual_button(_clear_manual_button),
@@ -41,28 +21,29 @@ WindSettingsPanel::WindSettingsPanel(bool _edit_manual_wind,
    clear_manual_window(nullptr) {}
 
 void
-WindSettingsPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
+WindSettingsPanel::ClearManual() noexcept
+{
+  CommonInterface::SetComputerSettings().wind.manual_wind_available.Clear();
+  manual_modified = false;
+  UpdateVector();
+}
+
+void
+WindSettingsPanel::Prepare(ContainerWindow &parent,
+                           const PixelRect &rc) noexcept
 {
   RowFormWidget::Prepare(parent, rc);
 
   const WindSettings &settings = CommonInterface::GetComputerSettings().wind;
   const MapSettings &map_settings = CommonInterface::GetMapSettings();
 
-  static constexpr StaticEnumChoice auto_wind_list[] = {
-    { AUTOWIND_NONE, N_("Manual"),
-      N_("When the algorithm is switched off, the pilot is responsible for setting the wind estimate.") },
-    { AUTOWIND_CIRCLING, N_("Circling"),
-      N_("Requires only a GPS source.") },
-    { AUTOWIND_ZIGZAG, N_("ZigZag"),
-      N_("Requires GPS and an intelligent vario with airspeed output.") },
-    { AUTOWIND_CIRCLING | AUTOWIND_ZIGZAG, N_("Both"),
-      N_("Use ZigZag and circling.") },
-    { 0 }
-  };
+  AddBoolean(_("Circling wind"),
+             _("Estimate the wind vector while circling. Requires only a GPS."),
+             settings.circling_wind);
 
-  AddEnum(_("Auto wind"),
-          _("This allows switching on or off the automatic wind algorithm."),
-          auto_wind_list, settings.GetLegacyAutoWindMode());
+  AddBoolean(_("ZigZag wind"),
+             _("Estimate the wind vector during glides. Requires an airspeed sensor."),
+             settings.zig_zag_wind);
 
   AddBoolean(_("External wind"),
              _("Should XCSoar accept wind estimates from other instruments?"),
@@ -71,20 +52,24 @@ WindSettingsPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   if (edit_trail_drift)
     AddBoolean(_("Trail drift"),
                _("Determines whether the snail trail is drifted with the wind "
-                 "when displayed in circling mode. Switched Off, "
-                 "the snail trail stays uncompensated for wind drift."),
+                 "when displayed in circling mode at near map scales. Switched "
+                 "Off, the snail trail stays uncompensated for wind drift. "
+                 "In circling this also applies to the projected track curve: "
+                 "On keeps it relative to the air mass; Off includes wind."),
                map_settings.trail.wind_drift_enabled);
-  else
+  else if (edit_manual_wind)
     AddDummy();
 
   if (edit_manual_wind) {
+    AddSpacer();
+
     SpeedVector manual_wind = CommonInterface::Calculated().GetWindOrZero();
 
-    AddReadOnly(_("Source"));
+    AddReadOnly(C_("Wind source", "Source"));
 
     WndProperty *wp =
       AddFloat(_("Speed"), _("Manual adjustment of wind speed."),
-               _T("%.0f %s"), _T("%.0f"),
+               "%.0f %s", "%.0f",
                0,
                Units::ToUserWindSpeed(Units::ToSysUnit(200,
                                                        Unit::KILOMETER_PER_HOUR)),
@@ -103,13 +88,13 @@ WindSettingsPanel::Prepare(ContainerWindow &parent, const PixelRect &rc)
   }
 
   if (clear_manual_button)
-    AddButton(_("Clear"), *this, CLEAR_MANUAL);
+    AddButton(_("Clear"), [this](){ ClearManual(); });
 
   UpdateVector();
 }
 
 void
-WindSettingsPanel::Show(const PixelRect &rc)
+WindSettingsPanel::Show(const PixelRect &rc) noexcept
 {
   if (edit_manual_wind) {
     UpdateVector();
@@ -120,7 +105,7 @@ WindSettingsPanel::Show(const PixelRect &rc)
 }
 
 void
-WindSettingsPanel::Hide()
+WindSettingsPanel::Hide() noexcept
 {
   RowFormWidget::Hide();
 
@@ -129,17 +114,19 @@ WindSettingsPanel::Hide()
 }
 
 bool
-WindSettingsPanel::Save(bool &_changed)
+WindSettingsPanel::Save(bool &_changed) noexcept
 {
   WindSettings &settings = CommonInterface::SetComputerSettings().wind;
   MapSettings &map_settings = CommonInterface::SetMapSettings();
 
   bool changed = false;
 
-  unsigned auto_wind_mode = settings.GetLegacyAutoWindMode();
-  if (SaveValueEnum(AutoWind, ProfileKeys::AutoWind, auto_wind_mode)) {
-    settings.SetLegacyAutoWindMode(auto_wind_mode);
+  bool auto_wind_changed = SaveValue(CIRCLING_WIND, settings.circling_wind);
+  auto_wind_changed |= SaveValue(ZIG_ZAG_WIND, settings.zig_zag_wind);
+
+  if (auto_wind_changed) {
     changed = true;
+    Profile::Set(ProfileKeys::AutoWind, settings.GetLegacyAutoWindMode());
   }
 
   changed |= SaveValue(EXTERNAL_WIND, ProfileKeys::ExternalWind,
@@ -154,27 +141,15 @@ WindSettingsPanel::Save(bool &_changed)
 }
 
 void
-WindSettingsPanel::OnAction(int id)
-{
-  switch (id) {
-  case CLEAR_MANUAL:
-    CommonInterface::SetComputerSettings().wind.manual_wind_available.Clear();
-    manual_modified = false;
-    UpdateVector();
-    break;
-  }
-}
-
-void
-WindSettingsPanel::OnModified(DataField &df)
+WindSettingsPanel::OnModified(DataField &df) noexcept
 {
   if (!edit_manual_wind)
     return;
 
   const NMEAInfo &basic = CommonInterface::Basic();
-  WindSettings &settings = CommonInterface::SetComputerSettings().wind;
 
   if (&df == &GetDataField(Speed) || &df == &GetDataField(Direction)) {
+    WindSettings &settings = CommonInterface::SetComputerSettings().wind;
     settings.manual_wind.norm = Units::ToSysWindSpeed(GetValueFloat(Speed));
     settings.manual_wind.bearing = GetValueAngle(Direction);
     settings.manual_wind_available.Update(basic.clock);
@@ -185,7 +160,7 @@ WindSettingsPanel::OnModified(DataField &df)
 }
 
 void
-WindSettingsPanel::UpdateVector()
+WindSettingsPanel::UpdateVector() noexcept
 {
   if (!edit_manual_wind)
     return;
@@ -193,7 +168,7 @@ WindSettingsPanel::UpdateVector()
   const DerivedInfo &calculated = CommonInterface::Calculated();
   const WindSettings &settings = CommonInterface::SetComputerSettings().wind;
 
-  const TCHAR *source = nullptr;
+  const char *source = nullptr;
   switch (manual_modified
           ? DerivedInfo::WindSource::MANUAL
           : calculated.wind_source) {
@@ -202,7 +177,7 @@ WindSettingsPanel::UpdateVector()
     break;
 
   case DerivedInfo::WindSource::MANUAL:
-    source = _("Manual");
+    source = C_("Status", "Manual");
     break;
 
   case DerivedInfo::WindSource::CIRCLING:
@@ -228,14 +203,14 @@ WindSettingsPanel::UpdateVector()
 
   const bool visible = settings.manual_wind_available;
   if (clear_manual_button)
-    SetRowVisible(CLEAR_MANUAL_BUTTON, visible);
+    SetRowEnabled(CLEAR_MANUAL_BUTTON, visible);
   else if (clear_manual_window != nullptr)
-    clear_manual_window->SetVisible(visible);
+    clear_manual_window->SetEnabled(visible);
 }
 
 void
-WindSettingsPanel::OnCalculatedUpdate(const MoreData &basic,
-                                      const DerivedInfo &calculated)
+WindSettingsPanel::OnCalculatedUpdate([[maybe_unused]] const MoreData &basic,
+                                      [[maybe_unused]] const DerivedInfo &calculated)
 {
   UpdateVector();
 }

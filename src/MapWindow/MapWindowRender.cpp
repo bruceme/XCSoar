@@ -1,31 +1,16 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "MapWindow.hpp"
 #include "Overlay.hpp"
 #include "Look/MapLook.hpp"
 #include "Weather/Rasp/RaspRenderer.hpp"
 #include "Weather/Rasp/RaspCache.hpp"
+#include "Weather/Rasp/RaspStore.hpp"
+#ifdef HAVE_HTTP
+#include "DataGlobals.hpp"
+#include "Weather/SkySight/SkySightClient.hpp"
+#endif
 #include "Topography/CachedTopographyRenderer.hpp"
 #include "Renderer/AircraftRenderer.hpp"
 #include "Renderer/WaveRenderer.hpp"
@@ -37,14 +22,15 @@ Copyright_License {
 #endif
 
 void
-MapWindow::RenderTrackBearing(Canvas &canvas, const PixelPoint aircraft_pos)
+MapWindow::RenderTrackBearing(Canvas &canvas,
+                              const PixelPoint aircraft_pos) noexcept
 {
   // default rendering option assumes circling is off, so ground-relative
   DrawTrackBearing(canvas, aircraft_pos, false);
 }
 
-void
-MapWindow::RenderTerrain(Canvas &canvas)
+inline void
+MapWindow::RenderTerrain(Canvas &canvas) noexcept
 {
   background.SetShadingAngle(render_projection, GetMapSettings().terrain,
                              Calculated());
@@ -52,26 +38,44 @@ MapWindow::RenderTerrain(Canvas &canvas)
 }
 
 inline void
-MapWindow::RenderRasp(Canvas &canvas)
+MapWindow::RenderRasp(Canvas &canvas) noexcept
 {
   if (rasp_store == nullptr)
     return;
 
   const WeatherUIState &state = GetUIState().weather;
-  if (rasp_renderer && state.map != (int)rasp_renderer->GetParameter()) {
+  if (rasp_renderer &&
+      (state.map < 0 ||
+       unsigned(state.map) >= rasp_store->GetItemCount() ||
+       state.map != (int)rasp_renderer->GetParameter())) {
 #ifndef ENABLE_OPENGL
-    const ScopeLock protect(mutex);
+    const std::lock_guard lock{mutex};
 #endif
 
     rasp_renderer.reset();
   }
 
-  if (state.map < 0)
+  if (state.map < 0 ||
+      unsigned(state.map) >= rasp_store->GetItemCount())
+    return;
+
+  BrokenTime auto_local_time = BrokenTime::Invalid();
+  if (state.time_auto_advance) {
+    const BrokenDateTime &utc = Basic().date_time_utc;
+    if (utc.IsPlausible()) {
+      const auto quarter = utc.ToLocal().FloorToQuarterHour();
+      auto_local_time = BrokenTime(quarter.hour, quarter.minute);
+    }
+  }
+
+  if (!rasp_store->HasSelectedTimeData(unsigned(state.map),
+                                       state.time_auto_advance,
+                                       state.time, auto_local_time))
     return;
 
   if (!rasp_renderer) {
 #ifndef ENABLE_OPENGL
-    const ScopeLock protect(mutex);
+    const std::lock_guard lock{mutex};
 #endif
     rasp_renderer.reset(new RaspRenderer(*rasp_store, state.map));
   }
@@ -83,44 +87,52 @@ MapWindow::RenderRasp(Canvas &canvas)
     rasp_renderer->Update(Calculated().date_time_local, operation);
   }
 
-  const auto &terrain_settings = GetMapSettings().terrain;
-  if (rasp_renderer->Generate(render_projection, terrain_settings))
-    rasp_renderer->Draw(canvas, render_projection);
+  const auto &map_settings = GetMapSettings();
+  if (rasp_renderer->Generate(render_projection, map_settings.terrain,
+                              map_settings.rasp_contour_density))
+    rasp_renderer->Draw(canvas, render_projection,
+                        map_settings.rasp_layer_opacity / 100.f);
 }
 
-void
-MapWindow::RenderTopography(Canvas &canvas)
+inline void
+MapWindow::RenderTopography(Canvas &canvas) noexcept
 {
   if (topography_renderer != nullptr && GetMapSettings().topography_enabled)
     topography_renderer->Draw(canvas, render_projection);
 }
 
-void
-MapWindow::RenderTopographyLabels(Canvas &canvas)
+inline void
+MapWindow::RenderTopographyLabels(Canvas &canvas) noexcept
 {
   if (topography_renderer != nullptr && GetMapSettings().topography_enabled)
     topography_renderer->DrawLabels(canvas, render_projection, label_block);
 }
 
 inline void
-MapWindow::RenderOverlays(Canvas &canvas)
+MapWindow::RenderOverlays([[maybe_unused]] Canvas &canvas) noexcept
 {
 #ifdef ENABLE_OPENGL
+#if defined(HAVE_HTTP)
+  for (const auto &i : overlay)
+    if (i)
+      i->Draw(canvas, render_projection);
+#else
   if (overlay)
     overlay->Draw(canvas, render_projection);
 #endif
+#endif
 }
 
-void
-MapWindow::RenderFinalGlideShading(Canvas &canvas)
+inline void
+MapWindow::RenderFinalGlideShading(Canvas &canvas) noexcept
 {
   if (terrain != nullptr &&
       Calculated().terrain_valid)
       DrawTerrainAbove(canvas);
 }
 
-void
-MapWindow::RenderAirspace(Canvas &canvas)
+inline void
+MapWindow::RenderAirspace(Canvas &canvas) noexcept
 {
   if (GetMapSettings().airspace.enable) {
     airspace_renderer.Draw(canvas,
@@ -133,39 +145,38 @@ MapWindow::RenderAirspace(Canvas &canvas)
                            GetMapSettings().airspace);
 
     airspace_label_renderer.Draw(canvas,
-#ifndef ENABLE_OPENGL
-                                 buffer_canvas,
-#endif
                                  render_projection,
                                  Basic(), Calculated(),
                                  GetComputerSettings().airspace,
-                                 GetMapSettings().airspace);
+                                 GetMapSettings().airspace,
+                                 &label_block);
   }
 }
 
-void
-MapWindow::RenderNOAAStations(Canvas &canvas)
+inline void
+MapWindow::RenderNOAAStations(Canvas &canvas) noexcept
 {
 #ifdef HAVE_NOAA
   if (noaa_store == nullptr)
     return;
 
-  PixelPoint pt;
   for (auto it = noaa_store->begin(), end = noaa_store->end(); it != end; ++it)
-    if (it->parsed_metar_available && it->parsed_metar.location_available &&
-        render_projection.GeoToScreenIfVisible(it->parsed_metar.location, pt))
-      look.noaa.icon.Draw(canvas, pt);
+    if (it->parsed_metar_available && it->parsed_metar.location_available)
+      if (auto pt = render_projection.GeoToScreenIfVisible(it->parsed_metar.location))
+        look.noaa.icon.Draw(canvas, *pt);
+#else
+  (void)canvas;
 #endif
 }
 
 inline void
-MapWindow::DrawWaves(Canvas &canvas)
+MapWindow::DrawWaves(Canvas &canvas) noexcept
 {
   const WaveRenderer renderer(look.wave);
 
 #ifdef HAVE_SKYLINES_TRACKING
   if (skylines_data != nullptr) {
-    ScopeLock protect(skylines_data->mutex);
+    const std::lock_guard lock{skylines_data->mutex};
     renderer.Draw(canvas, render_projection, *skylines_data);
   }
 #endif
@@ -173,8 +184,8 @@ MapWindow::DrawWaves(Canvas &canvas)
   renderer.Draw(canvas, render_projection, Calculated().wave);
 }
 
-void
-MapWindow::RenderGlide(Canvas &canvas)
+inline void
+MapWindow::RenderGlide(Canvas &canvas) noexcept
 {
   // draw red cross on glide through terrain marker
   if (Calculated().terrain_valid)
@@ -182,16 +193,24 @@ MapWindow::RenderGlide(Canvas &canvas)
 }
 
 void
-MapWindow::Render(Canvas &canvas, const PixelRect &rc)
+MapWindow::Render(Canvas &canvas, const PixelRect &rc) noexcept
 {
   const NMEAInfo &basic = Basic();
 
   // reset label over-write preventer
   label_block.reset();
 
+#ifndef ENABLE_OPENGL
+  {
+    const std::lock_guard lock{frame_projection_mutex};
+    render_projection = published_projection;
+  }
+#else
   render_projection = visible_projection;
+#endif
 
-  if (!render_projection.IsValid()) {
+  if (!render_projection.IsValid() ||
+      !render_projection.GetScreenBounds().IsValid()) {
     canvas.ClearWhite();
     return;
   }
@@ -216,6 +235,11 @@ MapWindow::Render(Canvas &canvas, const PixelRect &rc)
   draw_sw.Mark("RenderRasp");
   RenderRasp(canvas);
 
+#ifdef HAVE_HTTP
+  if (auto skysight = DataGlobals::GetSkySight())
+    skysight->Render();
+#endif
+
   draw_sw.Mark("RenderTopography");
   RenderTopography(canvas);
 
@@ -236,6 +260,11 @@ MapWindow::Render(Canvas &canvas, const PixelRect &rc)
   draw_sw.Mark("RenderAirspace");
   RenderAirspace(canvas);
 
+  //////////////////////////////////////////////// distance rings
+
+  draw_sw.Mark("DrawDistanceRings");
+  DrawDistanceRings(canvas);
+
   //////////////////////////////////////////////// task
 
   // Render task, waypoints
@@ -250,8 +279,7 @@ MapWindow::Render(Canvas &canvas, const PixelRect &rc)
 
   //////////////////////////////////////////////// aircraft level items
   // Render the snail trail
-  if (basic.location_available)
-    RenderTrail(canvas, aircraft_pos);
+  RenderTrail(canvas, aircraft_pos);
 
   DrawWaves(canvas);
 
@@ -268,35 +296,39 @@ MapWindow::Render(Canvas &canvas, const PixelRect &rc)
   draw_sw.Mark("RenderGlide");
   RenderGlide(canvas);
 
-  draw_sw.Mark("RenderMisc1");
-  // Render weather/terrain max/min values
-  DrawTaskOffTrackIndicator(canvas);
-
   // Render track bearing (projected track ground/air relative)
   draw_sw.Mark("DrawTrackBearing");
   RenderTrackBearing(canvas, aircraft_pos);
+  
+  // Render Detour cost markers
+  draw_sw.Mark("RenderMisc1");
+  DrawTaskOffTrackIndicator(canvas);
+
+  // Draw the Turn Back Marker (TBM) on the track line
+  DrawTurnBackMarker(canvas);
 
   draw_sw.Mark("RenderMisc2");
   DrawBestCruiseTrack(canvas, aircraft_pos);
 
+  /* the HUD elements stay clear of the areas covered by system UI
+     (display cutout, status bar, home indicator) */
+  const PixelRect hud_rc = GetHudRect(rc);
+
   // Draw wind vector at aircraft
   if (basic.location_available)
-    DrawWind(canvas, aircraft_pos, rc);
+    DrawWind(canvas, aircraft_pos, hud_rc);
 
   // Render compass
-  DrawCompass(canvas, rc);
+  DrawCompass(canvas, hud_rc);
 
   //////////////////////////////////////////////// traffic
   // Draw traffic
 
-#ifdef HAVE_SKYLINES_TRACKING
-  DrawSkyLinesTraffic(canvas);
-#endif
+  DrawGLinkTraffic(canvas);
 
   DrawTeammate(canvas);
 
-  if (basic.location_available)
-    DrawFLARMTraffic(canvas, aircraft_pos);
+  DrawFLARMTraffic(canvas, aircraft_pos);
 
   //////////////////////////////////////////////// own aircraft
   // Finally, draw you!

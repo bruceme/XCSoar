@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Printing.hpp"
 #include "harness_airspace.hpp"
@@ -31,10 +12,11 @@
 #include "GlideSolvers/GlidePolar.hpp"
 #include "Terrain/RasterMap.hpp"
 #include "Terrain/Loader.hpp"
-#include "OS/ConvertPathName.hpp"
-#include "OS/FileUtil.hpp"
+#include "system/ConvertPathName.hpp"
+#include "system/FileUtil.hpp"
 #include "Compatibility/path.h"
 #include "Operation/Operation.hpp"
+#include "util/PrintException.hxx"
 #include "test_debug.hpp"
 
 #include <zzip/zzip.h>
@@ -47,7 +29,7 @@ extern "C" {
 #include "tap.h"
 }
 
-#define NUM_SOL 15
+static constexpr unsigned NUM_SOL = 15;
 
 static bool
 test_route(const unsigned n_airspaces, const RasterMap& map)
@@ -56,7 +38,7 @@ test_route(const unsigned n_airspaces, const RasterMap& map)
   setup_airspaces(airspaces, map.GetMapCenter(), n_airspaces);
 
   {
-    Directory::Create(Path(_T("output/results")));
+    Directory::Create(Path("output/results"));
     std::ofstream fout("output/results/terrain.txt");
 
     unsigned nx = 100;
@@ -102,18 +84,18 @@ test_route(const unsigned n_airspaces, const RasterMap& map)
     state.altitude = loc_start.altitude;
 
     {
-      Airspaces as_route(false);
+      Airspaces as_route;
       // dummy
 
       // real one, see if items changed
       as_route.SynchroniseInRange(airspaces, vec.MidPoint(loc_start), range,
-                                  AirspacePredicateTrue());
+                                  AirspacePredicateTrue);
       int size_1 = as_route.GetSize();
       if (verbose)
         printf("# route airspace size %d\n", size_1);
 
       as_route.SynchroniseInRange(airspaces, vec.MidPoint(loc_start), 1,
-                                  AirspacePredicateTrue());
+                                  AirspacePredicateTrue);
       int size_2 = as_route.GetSize();
       if (verbose)
         printf("# route airspace size %d\n", size_2);
@@ -122,7 +104,7 @@ test_route(const unsigned n_airspaces, const RasterMap& map)
 
       // go back
       as_route.SynchroniseInRange(airspaces, vec.MidPoint(loc_end), range,
-                                  AirspacePredicateTrue());
+                                  AirspacePredicateTrue);
       int size_3 = as_route.GetSize();
       if (verbose)
         printf("# route airspace size %d\n", size_3);
@@ -131,7 +113,7 @@ test_route(const unsigned n_airspaces, const RasterMap& map)
 
       // and again
       as_route.SynchroniseInRange(airspaces, vec.MidPoint(loc_start), range,
-                                  AirspacePredicateTrue());
+                                  AirspacePredicateTrue);
       int size_4 = as_route.GetSize();
       if (verbose)
         printf("# route airspace size %d\n", size_4);
@@ -154,10 +136,10 @@ test_route(const unsigned n_airspaces, const RasterMap& map)
     route.UpdatePolar(settings, config, polar, polar, wind);
     route.SetTerrain(&map);
 
-    AirspacePredicateTrue predicate;
+    auto predicate = AirspacePredicateTrue;
 
     bool sol = false;
-    for (int i = 0; i < NUM_SOL; i++) {
+    for (unsigned i = 0; i < NUM_SOL; i++) {
       loc_end.latitude += Angle::Degrees(0.1);
       loc_end.altitude = map.GetHeight(loc_end).GetValueOr0() + 100;
       route.Synchronise(airspaces, predicate, loc_start, loc_end);
@@ -181,9 +163,8 @@ test_route(const unsigned n_airspaces, const RasterMap& map)
   return true;
 }
 
-int
-main(int argc, char** argv)
-{
+int main()
+try {
   static const char map_path[] = "tmp/map.xcm";
 
   ZZIP_DIR *dir = zzip_dir_open(map_path, nullptr);
@@ -194,11 +175,9 @@ main(int argc, char** argv)
 
   RasterMap map;
 
-  NullOperationEnvironment operation;
-  if (!LoadTerrainOverview(dir, map.GetTileCache(), operation)) {
-    fprintf(stderr, "failed to load map\n");
-    zzip_dir_close(dir);
-    return EXIT_FAILURE;
+  {
+    NullOperationEnvironment operation;
+    LoadTerrainOverview(dir, map.GetTileCache(), operation);
   }
 
   map.UpdateProjection();
@@ -214,4 +193,7 @@ main(int argc, char** argv)
   plan_tests(4 + NUM_SOL);
   ok(test_route(28, map), "route 28", 0);
   return exit_status();
+} catch (const std::runtime_error &e) {
+  PrintException(e);
+  return EXIT_FAILURE;
 }

@@ -1,32 +1,11 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef QUADRATIC_HPP
-#define QUADRATIC_HPP
+#pragma once
 
 #include "Util.hpp"
-#include "Compiler.h"
 
-#include <assert.h>
+#include <cassert>
 
 /**
  * Utility class for efficient solution of quadratic equations
@@ -43,7 +22,7 @@ public:
    * @param _b Value of b
    * @param _c Value of c
    */
-  Quadratic(const double _b, const double _c)
+  constexpr Quadratic(double _b, double _c) noexcept
     :da(2), b(_b), denom(Square(b) - 4 * _c)
   {
   }
@@ -55,7 +34,7 @@ public:
    * @param _b Value of b
    * @param _c Value of c
    */
-  Quadratic(const double _a, const double _b, const double _c)
+  constexpr Quadratic(double _a, double _b, double _c) noexcept
     :da(2 * _a), b(_b), denom(Square(b) - 2 * da * _c)
   {
   }
@@ -65,8 +44,7 @@ public:
    *
    * @return True if quadratic has at least one real solution
    */
-  gcc_pure
-  bool Check() const {
+  constexpr bool Check() const noexcept {
     if (denom < 0)
       return false;
 
@@ -81,8 +59,7 @@ public:
    *
    * @return greater x value of solutions
    */
-  gcc_pure
-  double SolutionMax() const {
+  double SolutionMax() const noexcept {
     assert(Check());
     return Solution(da > 0);
   }
@@ -92,8 +69,8 @@ public:
    *
    * @return smallest x value of solutions
    */
-  gcc_pure
-  double SolutionMin() const {
+  [[gnu::pure]]
+  double SolutionMin() const noexcept {
     assert(Check());
     return Solution(da <= 0);
   }
@@ -107,11 +84,9 @@ private:
    *
    * @return x value of solution
    */
-  gcc_pure
-  double Solution(const bool positive) const {
+  [[gnu::pure]]
+  double Solution(const bool positive) const noexcept {
     assert(Check());
     return (-b + (positive ? sqrt(denom) : -sqrt(denom))) / da;
   }
 };
-
-#endif

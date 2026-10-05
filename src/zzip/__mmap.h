@@ -1,5 +1,8 @@
-#ifndef __ZZIP_INTERNAL_MMAP_H
-#define __ZZIP_INTERNAL_MMAP_H
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
+
 #include <zzip/types.h>
 
 /*
@@ -16,7 +19,7 @@
 #if    defined ZZIP_HAVE_SYS_MMAN_H
 #include <sys/mman.h>
 #define USE_POSIX_MMAP 1
-#elif defined ZZIP_HAVE_WINBASE_H || defined WIN32
+#elif defined ZZIP_HAVE_WINBASE_H || defined _WIN32
 #include <windows.h>
 #define USE_WIN32_MMAP 1
 #else
@@ -44,8 +47,7 @@
 #ifndef MAP_FAILED
 #define MAP_FAILED 0
 #endif
-/* we (ab)use the "*user" variable to store the FileMapping handle */
-                 /* which assumes (sizeof(long) == sizeof(HANDLE)) */
+/* we had used the plugin->sys variable for (user) but not anymore */
 
 static size_t win32_getpagesize (void)
 { 
@@ -58,14 +60,14 @@ static void*  win32_mmap (long* user, int fd, zzip_off_t offs, size_t len)
 	return 0;
   {
     HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    HANDLE fileMapping = NULL;
     if (hFile)
-	*user = (int) CreateFileMapping (hFile, 0, PAGE_READONLY, 0, 0, NULL);
-    if (*user)
+	fileMapping = CreateFileMapping (hFile, 0, PAGE_READONLY, 0, 0, NULL);
+    if (fileMapping != NULL)
     {
-	char* p = 0;
-	p = MapViewOfFile(*(HANDLE*)user, FILE_MAP_READ, 0, offs, len);
-	if (p) return p + offs;
-	CloseHandle (*(HANDLE*)user); *user = 1;
+	char* p = MapViewOfFile(fileMapping, FILE_MAP_READ, 0, offs, len);
+	CloseHandle (fileMapping); *user = 1;
+	if (p) return p;
     } 
     return MAP_FAILED;
   }
@@ -73,7 +75,6 @@ static void*  win32_mmap (long* user, int fd, zzip_off_t offs, size_t len)
 static void win32_munmap (long* user, char* fd_map, size_t len)
 {
     UnmapViewOfFile (fd_map);
-    CloseHandle (*(HANDLE*)user); *user = 1;
 }
 
 #define _zzip_mmap(user, fd, offs, len) \
@@ -97,6 +98,3 @@ static void win32_munmap (long* user, char* fd_map, size_t len)
 #define _zzip_getpagesize(user) 1
 
 #endif /* USE_MMAP defines */
-
-
-#endif

@@ -1,47 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ROUGH_SPEED_HPP
-#define XCSOAR_ROUGH_SPEED_HPP
+#pragma once
 
 #include <type_traits>
 
-#include <stdint.h>
+#include <cstdint>
 
 /**
- * Store an rough speed value, when the exact value is not needed.
+ * Store a rough speed value, when the exact value is not needed.
  *
- * The accuracy is about 2mm/s. The range is 0 - 127 m/s.
+ * The accuracy is about 16 mm/s. The range is 0 - 1023 m/s.
  */
 class RoughSpeed {
   uint16_t value;
 
+  static constexpr double SCALE = 64;
+  static constexpr double MAX_MPS = 1023;
+
   static constexpr uint16_t Import(double x) {
-    return (uint16_t)(x * 512);
+    if (!(x > 0))
+      return 0;
+
+    if (x > MAX_MPS)
+      x = MAX_MPS;
+
+    return uint16_t(x * SCALE);
   }
 
   static constexpr double Export(uint16_t x) {
-    return double(x) / 512;
+    return double(x) / SCALE;
   }
 
 public:
@@ -58,6 +46,4 @@ public:
   }
 };
 
-static_assert(std::is_trivial<RoughSpeed>::value, "type is not trivial");
-
-#endif
+static_assert(std::is_trivial_v<RoughSpeed>, "type is not trivial");

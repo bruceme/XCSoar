@@ -1,43 +1,30 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_NMEA_INFO_H
-#define XCSOAR_NMEA_INFO_H
+#pragma once
 
 #include "GPSState.hpp"
-#include "NMEA/Validity.hpp"
+#include "time/Validity.hpp"
 #include "NMEA/ExternalSettings.hpp"
 #include "NMEA/Acceleration.hpp"
+#include "NMEA/Gyroscope.hpp"
 #include "NMEA/Attitude.hpp"
 #include "SwitchState.hpp"
-#include "Time/BrokenDateTime.hpp"
+#include "time/BrokenDateTime.hpp"
+#include "time/Stamp.hpp"
 #include "Geo/GeoPoint.hpp"
 #include "Atmosphere/Pressure.hpp"
 #include "Atmosphere/Temperature.hpp"
 #include "DeviceInfo.hpp"
+#include "EngineState.hpp"
 #include "FLARM/Data.hpp"
 #include "Geo/SpeedVector.hpp"
 
+#ifdef ANDROID
+#include "GliderLink/GliderLinkData.hpp"
+#endif
+
+#include <optional>
 #include <type_traits>
 
 /**
@@ -50,7 +37,7 @@ struct NMEAInfo {
    * any data.  It is used to update and check the #Validity
    * attributes in this struct.
    */
-  double clock;
+  TimeStamp clock;
 
   /**
    * Is the device alive?  This attribute gets updated each time a
@@ -65,6 +52,7 @@ struct NMEAInfo {
   GPSState gps;
 
   AccelerationState acceleration;
+  GyroscopeState gyroscope;
 
   AttitudeState attitude;
 
@@ -129,6 +117,11 @@ struct NMEAInfo {
   /** GPS altitude AMSL (m) */
   double gps_altitude;
 
+  Validity gps_ellipsoid_altitude_available;
+
+  /** GPS altitude above WGS84 ellipsoid (m) */
+  double gps_ellipsoid_altitude;
+
   /**
    * Static pressure value [Pa].
    */
@@ -181,6 +174,15 @@ struct NMEAInfo {
   Validity pressure_altitude_available;
 
   /**
+   * IGC pressure altitude - the pressure altitude value that the device
+   * uses for IGC recording (if available). This may differ from the live
+   * pressure altitude. Used for IGC file generation to match device records.
+   * @see IGCPressureAltitudeAvailable
+   */
+  double igc_pressure_altitude;
+  Validity igc_pressure_altitude_available;
+
+  /**
    * Is the barometric altitude given by a "weak" source?  This is
    * used to clear the PGRMZ barometric altitude when a FLARM is
    * detected, to switch from barometric altitude to pressure
@@ -208,7 +210,7 @@ struct NMEAInfo {
   /**
    * Global time (seconds after UTC midnight)
    */
-  double time;
+  TimeStamp time;
 
   /**
    * GPS date and time (UTC).
@@ -288,22 +290,12 @@ struct NMEAInfo {
    * Is temperature information available?
    * @see OutsideAirTemperature
    */
-  bool temperature_available;
+  Validity temperature_available;
   /**
    * Temperature of outside air (if available)
    * @see TemperatureAvailable
    */
   Temperature temperature;
-
-  /**
-   * Is heading information available?
-   */
-  Validity heading_available;
-
-  /**
-   * Magnetic Heading (if available)
-   */
-  Angle heading;
 
  /**
    * Is Magnetic Variation information available?
@@ -319,16 +311,26 @@ struct NMEAInfo {
    * Is humidity information available?
    * @see RelativeHumidity
    */
-  bool humidity_available;
+  Validity humidity_available;
   /**
    * Humidity of outside air (if available)
    * @see HumidityAvailable
    */
   double humidity;
 
+  EngineState engine;
+
   //###########
   //   Other
   //###########
+
+  Validity heart_rate_available;
+  unsigned heart_rate;
+
+  Validity blood_oxygen_available;
+
+  /** blood oxygen saturation (SpO2) [percent] */
+  unsigned blood_oxygen;
 
   Validity engine_noise_level_available;
   unsigned engine_noise_level;
@@ -353,13 +355,17 @@ struct NMEAInfo {
 
   /**
    * Information about the "secondary" device, e.g. the GPS connected
-   * "behind" the LXNAV V7.
+   * "behind" the LXNAV Vario.
    */
   DeviceInfo secondary_device;
 
   FlarmData flarm;
 
-  void UpdateClock();
+#ifdef ANDROID
+  GliderLinkData glink_data;
+#endif
+
+  void UpdateClock() noexcept;
 
   /**
    * Returns a #BrokenDate referring to the given time stamp (all
@@ -368,10 +374,11 @@ struct NMEAInfo {
    *
    * @param other_time the time stamp (see attribute #time)
    */
-  gcc_pure
-  BrokenDateTime GetDateTimeAt(double other_time) const;
+  [[gnu::pure]]
+  BrokenDateTime GetDateTimeAt(TimeStamp other_time) const noexcept;
 
-  bool MovementDetected() const {
+  [[nodiscard]]
+  constexpr bool MovementDetected() const noexcept {
     return ground_speed_available && ground_speed > 2;
   }
 
@@ -380,21 +387,23 @@ struct NMEAInfo {
    * used during startup to move the glider symbol to the home
    * waypoint.
    */
-  void SetFakeLocation(const GeoPoint &_location, const double _altitude) {
+  constexpr void SetFakeLocation(const GeoPoint &_location,
+                                 double _altitude) noexcept {
     location = _location;
     location_available.Clear();
     gps_altitude = _altitude;
     gps_altitude_available.Clear();
+    gps_ellipsoid_altitude_available.Clear();
   }
 
-  void ProvideTime(double time);
-  void ProvideDate(const BrokenDate &date);
+  void ProvideTime(TimeStamp time) noexcept;
+  void ProvideDate(const BrokenDate &date) noexcept;
 
   /**
    * Provide a "true" barometric altitude, but only use it if the
    * previous altitude was not present or the same/lower priority.
    */
-  void ProvideBaroAltitudeTrue(double value) {
+  constexpr void ProvideBaroAltitudeTrue(double value) noexcept {
     baro_altitude = value;
     baro_altitude_weak = false;
     baro_altitude_available.Update(clock);
@@ -404,7 +413,7 @@ struct NMEAInfo {
    * Same as ProvideBaroAltitudeTrue(), but don't overwrite a "strong"
    * value.
    */
-  void ProvideWeakBaroAltitude(double value) {
+  constexpr void ProvideWeakBaroAltitude(double value) noexcept {
     if (baro_altitude_available && !baro_altitude_weak)
       /* don't overwrite "strong" value */
       return;
@@ -417,7 +426,7 @@ struct NMEAInfo {
   /**
    * Clear the barometric altitude value if it is "weak".
    */
-  void ClearWeakBaroAltitude() {
+  constexpr void ClearWeakBaroAltitude() noexcept {
     if (baro_altitude_available && baro_altitude_weak)
       baro_altitude_available.Clear();
   }
@@ -426,7 +435,13 @@ struct NMEAInfo {
    * Provide pressure altitude above 1013 hPa, but only use it if
    * the previous altitude was not present or the same/lower priority.
    */
-  void ProvidePressureAltitude(double value) {
+  constexpr void ProvidePressureAltitude(double value) noexcept {
+    /* Replacing weak pressure (e.g. FLARM $PGRMZ) with strong pressure clears
+       the FLARM igc mirror so IGCFix does not prefer stale igc_pressure_altitude.
+       Logger igc from another sentence (e.g. $PLXVS) can be applied after. */
+    if (pressure_altitude_available && pressure_altitude_weak)
+      igc_pressure_altitude_available.Clear();
+
     pressure_altitude = value;
     pressure_altitude_weak = false;
     pressure_altitude_available.Update(clock);
@@ -436,7 +451,7 @@ struct NMEAInfo {
    * Same as ProvidePressureAltitude(), but don't overwrite a "strong"
    * value.
    */
-  void ProvideWeakPressureAltitude(double value) {
+  constexpr void ProvideWeakPressureAltitude(double value) noexcept {
     if (pressure_altitude_available && !pressure_altitude_weak)
       /* don't overwrite "strong" value */
       return;
@@ -449,7 +464,7 @@ struct NMEAInfo {
   /**
    * Clear the pressure altitude value if it is "weak".
    */
-  void ClearWeakPressureAltitude() {
+  constexpr void ClearWeakPressureAltitude() noexcept {
     if (pressure_altitude_available && pressure_altitude_weak)
       pressure_altitude_available.Clear();
   }
@@ -459,7 +474,7 @@ struct NMEAInfo {
    * only use it if the previous altitude was not present or the
    * same/lower priority.
    */
-  void ProvideStaticPressure(AtmosphericPressure value) {
+  constexpr void ProvideStaticPressure(AtmosphericPressure value) noexcept {
     static_pressure = value;
     static_pressure_available.Update(clock);
   }
@@ -469,7 +484,7 @@ struct NMEAInfo {
    * Use only to compute indicated airspeed when static pressure is known.
    * When both pitot- and dynamic pressure are available use dynamic.
    */
-  void ProvideDynamicPressure(AtmosphericPressure value) {
+  constexpr void ProvideDynamicPressure(AtmosphericPressure value) noexcept {
     dyn_pressure = value;
     dyn_pressure_available.Update(clock);
   }
@@ -479,7 +494,7 @@ struct NMEAInfo {
    * when static pressure is known.
    * Value already includes calibration data.
    */
-  void ProvidePitotPressure(AtmosphericPressure value) {
+  constexpr void ProvidePitotPressure(AtmosphericPressure value) noexcept {
     pitot_pressure = value;
     pitot_pressure_available.Update(clock);
   }
@@ -492,27 +507,40 @@ struct NMEAInfo {
    *       offset between the pitot- and the static pressure sensor in hPa (zero).
    *       temperature sensor
    */
-  void ProvideSensorCalibration(double value, double offset) {
+  constexpr void ProvideSensorCalibration(double value, double offset) noexcept {
     sensor_calibration_factor = value;
     sensor_calibration_offset = offset;
     sensor_calibration_available.Update(clock);
   }
 
   /**
-   * Returns the pressure altitude, and falls back to the barometric
-   * altitude or the GPS altitude.  The "first" element is false if no
-   * altitude is available.  The "second" element contains the
-   * altitude value [m] if "first" is true.
+   * Returns the aircraft location or GeoPoint::Invalid() if we don't
+   * have a location.
    */
-  gcc_pure
-  std::pair<bool, double> GetAnyAltitude() const {
-    return pressure_altitude_available
-      ? std::make_pair(true, pressure_altitude)
-      : (baro_altitude_available
-         ? std::make_pair(true, baro_altitude)
-         : (gps_altitude_available
-            ? std::make_pair(true, gps_altitude)
-            : std::make_pair(false, 0.)));
+  [[nodiscard]]
+  constexpr GeoPoint GetLocationOrInvalid() const noexcept {
+    return location_available
+      ? location
+      : GeoPoint::Invalid();
+  }
+
+  /**
+   * Returns the pressure altitude, and falls back to the barometric
+   * altitude or the GPS altitude.  Returns `std::nullopt` if none is
+   * available.
+   */
+  [[nodiscard]]
+  constexpr std::optional<double> GetAnyAltitude() const noexcept {
+    if (pressure_altitude_available)
+      return pressure_altitude;
+
+    if (baro_altitude_available)
+      return baro_altitude;
+
+    if (gps_altitude_available)
+      return gps_altitude;
+
+    return std::nullopt;
   }
 
   /**
@@ -520,7 +548,7 @@ struct NMEAInfo {
    * [m/s].  This is used by device drivers when it is not documented
    * whether the airspeed variable is TAS or IAS.
    */
-  void ProvideBothAirspeeds(double as) {
+  constexpr void ProvideBothAirspeeds(double as) noexcept {
     indicated_airspeed = true_airspeed = as;
     airspeed_available.Update(clock);
     airspeed_real = true;
@@ -530,7 +558,7 @@ struct NMEAInfo {
    * Set both true airspeed and indicated airspeed to two different
    * values [m/s].
    */
-  void ProvideBothAirspeeds(double ias, double tas) {
+  constexpr void ProvideBothAirspeeds(double ias, double tas) noexcept {
     indicated_airspeed = ias;
     true_airspeed = tas;
     airspeed_available.Update(clock);
@@ -541,30 +569,31 @@ struct NMEAInfo {
    * Set the true airspeed [m/s] and derive the indicated airspeed
    * from it, using the specified altitude [m].
    */
-  void ProvideTrueAirspeedWithAltitude(double tas, double altitude);
+  void ProvideTrueAirspeedWithAltitude(double tas, double altitude) noexcept;
 
   /**
    * Set the indicated airspeed [m/s] and derive the true airspeed
    * from it, using the specified altitude [m].
    */
-  void ProvideIndicatedAirspeedWithAltitude(double ias, double altitude);
+  void ProvideIndicatedAirspeedWithAltitude(double ias,
+                                            double altitude) noexcept;
 
   /**
    * Set the true airspeed [m/s] and derive the indicated airspeed
    * from it, using the current altitude.
    */
-  void ProvideTrueAirspeed(double tas);
+  void ProvideTrueAirspeed(double tas) noexcept;
 
   /**
    * Set the indicated airspeed [m/s] and derive the true airspeed
    * from it, using the current altitude.
    */
-  void ProvideIndicatedAirspeed(double ias);
+  void ProvideIndicatedAirspeed(double ias) noexcept;
 
   /**
    * Set the gross, non-compensated, plain-old vertical speed vario value [m/s].
    */
-  void ProvideNoncompVario(double value) {
+  constexpr void ProvideNoncompVario(double value) noexcept {
     noncomp_vario = value;
     noncomp_vario_available.Update(clock);
   }
@@ -572,7 +601,7 @@ struct NMEAInfo {
   /**
    * Set the barometric TE vario value [m/s].
    */
-  void ProvideTotalEnergyVario(double value) {
+  constexpr void ProvideTotalEnergyVario(double value) noexcept {
     total_energy_vario = value;
     total_energy_vario_available.Update(clock);
   }
@@ -580,7 +609,7 @@ struct NMEAInfo {
   /**
    * Set the barometric netto vario value [m/s].
    */
-  void ProvideNettoVario(double value) {
+  constexpr void ProvideNettoVario(double value) noexcept {
     netto_vario = value;
     netto_vario_available.Update(clock);
   }
@@ -588,7 +617,7 @@ struct NMEAInfo {
   /**
    * Set the external wind value.
    */
-  void ProvideExternalWind(const SpeedVector &value) {
+  constexpr void ProvideExternalWind(const SpeedVector &value) noexcept {
     external_wind = value;
     external_wind_available.Update(clock);
   }
@@ -596,7 +625,7 @@ struct NMEAInfo {
   /**
    * Clears all information, start with tabula rasa.
    */
-  void Reset();
+  void Reset() noexcept;
 
   /**
    * Check the expiry time of the device connection with the wall
@@ -604,14 +633,14 @@ struct NMEAInfo {
    * GPS time cannot be used here, because a disconnected device would
    * not update its GPS time.
    */
-  void ExpireWallClock();
+  void ExpireWallClock() noexcept;
 
   /**
    * Check expiry times of all attributes which have a time stamp
    * associated with them.  This should be called after the GPS time
    * stamp has been updated.
    */
-  void Expire();
+  void Expire() noexcept;
 
   /**
    * Adds data from the specified object, unless already present in
@@ -620,9 +649,7 @@ struct NMEAInfo {
    * Note that this does not copy calculated values which are managed
    * outside of the NMEA parser.
    */
-  void Complement(const NMEAInfo &add);
+  void Complement(const NMEAInfo &add) noexcept;
 };
 
 static_assert(std::is_trivial<NMEAInfo>::value, "type is not trivial");
-
-#endif

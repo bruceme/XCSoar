@@ -67,14 +67,19 @@
  * $Id$
  */
 
-#ifndef JP2_COD_H
-#define JP2_COD_H
+#pragma once
 
 /******************************************************************************\
 * Includes.
 \******************************************************************************/
 
 #include "jasper/jas_types.h"
+#include "jasper/jas_stream.h"
+#include "jasper/jas_image.h"
+
+#ifdef JAS_ENABLE_DUMP
+#include <stdio.h>
+#endif
 
 /******************************************************************************\
 * Macros.
@@ -174,7 +179,7 @@ typedef struct {
 	uint_fast8_t approx;
 	uint_fast32_t csid;
 	uint_fast8_t *iccp;
-	int iccplen;
+	size_t iccplen;
 	/* XXX - Someday we ought to add ICC profile data here. */
 } jp2_colr_t;
 
@@ -265,9 +270,9 @@ typedef struct jp2_boxops_s {
 	void (*init)(jp2_box_t *box);
 	void (*destroy)(jp2_box_t *box);
 	int (*getdata)(jp2_box_t *box, jas_stream_t *in);
-#ifdef JASPER_DISABLED
-	int (*putdata)(jp2_box_t *box, jas_stream_t *out);
-#endif /* JASPER_DISABLED */
+#ifdef JAS_ENABLE_ENCODER
+	int (*putdata)(const jp2_box_t *box, jas_stream_t *out);
+#endif
 } jp2_boxops_t;
 
 /******************************************************************************\
@@ -276,8 +281,8 @@ typedef struct jp2_boxops_s {
 
 typedef struct jp2_boxinfo_s {
 	int type;
-	const char *name;
 	int flags;
+	const char *name;
 	jp2_boxops_t ops;
 } jp2_boxinfo_t;
 
@@ -285,21 +290,31 @@ typedef struct jp2_boxinfo_s {
 * Box class.
 \******************************************************************************/
 
+#ifdef JAS_ENABLE_ENCODER
 jp2_box_t *jp2_box_create(int type);
+#endif
+
 void jp2_box_destroy(jp2_box_t *box);
 jp2_box_t *jp2_box_get(jas_stream_t *in);
-int jp2_box_put(jp2_box_t *box, jas_stream_t *out);
 
-#define JP2_DTYPETOBPC(dtype) \
-  ((JAS_IMAGE_CDT_GETSGND(dtype) << 7) | (JAS_IMAGE_CDT_GETPREC(dtype) - 1))
-#define	JP2_BPCTODTYPE(bpc) \
-  (JAS_IMAGE_CDT_SETSGND(bpc >> 7) | JAS_IMAGE_CDT_SETPREC((bpc & 0x7f) + 1))
+#ifdef JAS_ENABLE_ENCODER
+int jp2_box_put(jp2_box_t *box, jas_stream_t *out);
+#endif
+
+JAS_ATTRIBUTE_CONST
+static inline uint_least8_t JP2_DTYPETOBPC(uint_least8_t dtype)
+{
+	return (JAS_IMAGE_CDT_GETSGND(dtype) << 7) | (JAS_IMAGE_CDT_GETPREC(dtype) - 1);
+}
+
+JAS_ATTRIBUTE_CONST
+static inline uint_least8_t JP2_BPCTODTYPE(uint_least8_t bpc)
+{
+	return JAS_IMAGE_CDT_SETSGND(bpc >> 7) | JAS_IMAGE_CDT_SETPREC((bpc & 0x7f) + 1);
+}
 
 #define ICC_CS_RGB	0x52474220
 #define ICC_CS_YCBCR	0x59436272
 #define ICC_CS_GRAY	0x47524159
 
 const jp2_cdefchan_t *jp2_cdef_lookup(jp2_cdef_t *cdef, int channo);
-
-
-#endif

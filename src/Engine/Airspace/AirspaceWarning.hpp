@@ -1,35 +1,16 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef AIRSPACE_WARNING_HPP
-#define AIRSPACE_WARNING_HPP
+#pragma once
 
 #include "AirspaceInterceptSolution.hpp"
-#include "Compiler.h"
+#include "Ptr.hpp"
 
-#include <stdint.h>
+#include <chrono>
+#include <cstdint>
 
 #ifdef DO_PRINT
-#include <iostream>
+#include <iosfwd>
 #endif
 
 class AbstractAirspace;
@@ -38,6 +19,8 @@ class AbstractAirspace;
  * Class to hold information about active airspace warnings
  */
 class AirspaceWarning {
+  using Duration = std::chrono::duration<unsigned>;
+
 public:
 
   /**
@@ -52,19 +35,19 @@ public:
   };
 
 private:
-  const AbstractAirspace &airspace;
-  State state;
-  State state_last;
-  AirspaceInterceptSolution solution;
+  const ConstAirspacePtr airspace;
+  State state = WARNING_CLEAR;
+  State state_last = WARNING_CLEAR;
+  AirspaceInterceptSolution solution = AirspaceInterceptSolution::Invalid();
 
-  unsigned acktime_warning;
-  unsigned acktime_inside;
-  unsigned debounce_time;
-  bool ack_day;
-  bool expired;
-  bool expired_last;
+  Duration acktime_warning{};
+  Duration acktime_inside{};
+  Duration debounce_time = std::chrono::minutes{1};
+  bool ack_day = false;
+  bool expired = true;
+  bool expired_last = true;
 
-  static constexpr unsigned null_acktime = -1;
+  static constexpr auto null_acktime = Duration::max();
 
 public:
   /**
@@ -72,12 +55,16 @@ public:
    *
    * @param the_airspace Airspace that this object will manage warnings for
    */
-  explicit AirspaceWarning(const AbstractAirspace &the_airspace);
+  template<typename T>
+  explicit AirspaceWarning(T &&_airspace) noexcept
+    :airspace(std::forward<T>(_airspace)) {}
+
+  AirspaceWarning(const AirspaceWarning &) noexcept = default;
 
   /**
    * Save warning state prior to performing update
    */
-  void SaveState();
+  void SaveState() noexcept;
 
   /**
    * Update warning state and solution vector
@@ -87,7 +74,7 @@ public:
    * otherwise to inside)
    */
   void UpdateSolution(const State state,
-                      const AirspaceInterceptSolution &_solution);
+                      const AirspaceInterceptSolution &_solution) noexcept;
 
   /**
    * Determine whether accepting a warning of the supplied state
@@ -95,8 +82,8 @@ public:
    *
    * @param state New warning state
    */
-  gcc_pure
-  bool IsStateAccepted(const State _state) const {
+  [[gnu::pure]]
+  bool IsStateAccepted(const State _state) const noexcept {
     return _state >= state;
   }
 
@@ -106,15 +93,19 @@ public:
    *
    * @return True if state upgraded/downgraded
    */
-  gcc_pure
-  bool ChangedState() const;
+  [[gnu::pure]]
+  bool ChangedState() const noexcept;
 
   /**
    * Access airspace managed by this object
    *
    * @return Airspace
    */
-  const AbstractAirspace &GetAirspace() const {
+  const AbstractAirspace &GetAirspace() const noexcept {
+    return *airspace;
+  }
+
+  ConstAirspacePtr GetAirspacePtr() const noexcept {
     return airspace;
   }
 
@@ -123,8 +114,36 @@ public:
    *
    * @return Warning state
    */
-  State GetWarningState() const {
+  State GetWarningState() const noexcept {
     return state;
+  }
+
+  /**
+   * Is this a warning?
+   *
+   * Some instances are not actually warnings, but
+   * how XCSoar remembers that an airspace is "ACKed" (but not
+   * currently nearby).
+   *
+   * Note that this method returns true for "ACKed" warnings.
+   */
+  bool IsWarning() const noexcept {
+    return state > WARNING_CLEAR;
+  }
+
+  /**
+   * Note that this method returns true for "ACKed" inside warnings.
+   */
+  bool IsInside() const noexcept {
+    return state == WARNING_INSIDE;
+  }
+
+  /**
+   * Is this warning currently active, i.e. it has no valid "ACK"?
+   * This implies that IsWarning() is true.
+   */
+  bool IsActive() const noexcept {
+    return expired;
   }
 
   /**
@@ -136,14 +155,14 @@ public:
    *
    * @return True if warning is still active
    */
-  bool WarningLive(const unsigned ack_time, const unsigned dt);
+  bool WarningLive(const Duration ack_time, const Duration dt) noexcept;
 
   /**
    * Access solution (nearest to enter, if outside, or to exit, if inside)
    *
    * @return Reference to solution
    */
-  const AirspaceInterceptSolution &GetSolution() const {
+  const AirspaceInterceptSolution &GetSolution() const noexcept {
     return solution;
   }
 
@@ -152,45 +171,55 @@ public:
    *
    * @return True if acknowledgement is expired
    */
-  gcc_pure
-  bool IsAckExpired() const;
+  [[gnu::pure]]
+  bool IsAckExpired() const noexcept;
 
   /**
    * Determine if acknowledgement is acknowledged for whole day
    *
    * @return True if acknowledged
    */
-  gcc_pure
-  bool GetAckDay() const {
+  [[gnu::pure]]
+  bool GetAckDay() const noexcept {
     return ack_day;
+  }
+
+  [[gnu::pure]]
+  bool IsWarningAcknowledged() const noexcept {
+    return acktime_warning == null_acktime || acktime_warning > Duration{};
+  }
+
+  [[gnu::pure]]
+  bool IsInsideAcknowledged() const noexcept {
+    return acktime_inside == null_acktime || acktime_inside > Duration{};
   }
 
   /**
    * Acknowledge an airspace warning or airspace inside (depending on
    * the state).
    */
-  void Acknowledge();
+  void Acknowledge() noexcept;
 
   /**
    * Acknowledge an airspace warning
    *
    * @param set Whether to set or cancel acknowledgement
    */
-  void AcknowledgeWarning(const bool set=true);
+  void AcknowledgeWarning(const bool set=true) noexcept;
 
   /**
    * Acknowledge an airspace inside
    *
    * @param set Whether to set or cancel acknowledgement
    */
-  void AcknowledgeInside(const bool set=true);
+  void AcknowledgeInside(const bool set=true) noexcept;
 
   /**
    * Acknowledge all warnings for airspace for whole day
    *
    * @param set Whether to set or cancel acknowledgement
    */
-  void AcknowledgeDay(const bool set=true) {
+  void AcknowledgeDay(const bool set=true) noexcept {
     ack_day = set;
   }
 
@@ -199,8 +228,8 @@ public:
    *
    * @return True if this is more severe than that
    */
-  gcc_pure
-  bool operator<(const AirspaceWarning &that) const;
+  [[gnu::pure]]
+  bool operator<(const AirspaceWarning &that) const noexcept;
 
 #ifdef DO_PRINT
 public:
@@ -208,5 +237,3 @@ public:
                                   const AirspaceWarning &aw);
 #endif
 };
-
-#endif

@@ -1,41 +1,20 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TAB_WIDGET_HPP
-#define XCSOAR_TAB_WIDGET_HPP
+#pragma once
 
 #include "PagerWidget.hpp"
+#include "Form/TabHandler.hpp"
 
-#include <assert.h>
-#include <tchar.h>
-
+#include <cassert>
+#include <memory>
 class MaskedIcon;
 class TabDisplay;
 
 /**
  * A #PagerWidget that navigates with a #TabDisplay.
  */
-class TabWidget : public PagerWidget {
+class TabWidget : public PagerWidget, TabHandler {
 public:
   enum class Orientation {
     AUTO,
@@ -49,10 +28,11 @@ private:
 
     bool vertical;
 
+    [[nodiscard]]
     Layout(Orientation orientation, PixelRect rc,
-           const TabDisplay &td, const Widget *e);
+           const TabDisplay &td, const Widget *e) noexcept;
 
-    static bool IsVertical(Orientation orientation, PixelRect rc) {
+    static constexpr bool IsVertical(Orientation orientation, PixelRect rc) noexcept {
       switch (orientation) {
       case Orientation::AUTO:
         break;
@@ -70,38 +50,38 @@ private:
 
   const Orientation orientation;
 
-  TabDisplay *tab_display;
+  TabDisplay *tab_display = nullptr;
 
   /**
    * An optional #Widget that is shown at the corner right or below
    * the tabs.
    */
-  Widget *extra;
+  std::unique_ptr<Widget> extra;
 
   PixelRect extra_position;
 
-  bool large_extra;
+  bool large_extra = false;
 
 public:
   explicit TabWidget(Orientation _orientation=Orientation::AUTO,
-                     Widget *_extra=nullptr)
-    :orientation(_orientation), tab_display(nullptr),
-     extra(_extra), large_extra(false) {}
+                     std::unique_ptr<Widget> &&_extra=nullptr) noexcept
+    :orientation(_orientation),
+     extra(std::move(_extra)) {}
 
-  ~TabWidget() override;
+  ~TabWidget() noexcept override;
 
   /**
    * Must be called before Initialise().
    */
-  void SetExtra(Widget *_extra) {
+  void SetExtra(std::unique_ptr<Widget> &&_extra) noexcept {
     assert(extra == nullptr);
     assert(_extra != nullptr);
 
-    extra = _extra;
+    extra = std::move(_extra);
     large_extra = false;
   }
 
-  Widget &GetExtra() {
+  Widget &GetExtra() noexcept {
     assert(extra != nullptr);
 
     return *extra;
@@ -110,9 +90,9 @@ public:
   /**
    * Make the "extra" Widget large, as if it were a page.
    */
-  void LargeExtra();
+  void LargeExtra() noexcept;
 
-  const PixelRect &GetEffectiveExtraPosition() const {
+  const PixelRect &GetEffectiveExtraPosition() const noexcept {
     assert(extra != nullptr);
 
     return large_extra
@@ -123,40 +103,51 @@ public:
   /**
    * Restore the "extra" widget to regular size.
    */
-  void RestoreExtra();
+  void RestoreExtra() noexcept;
 
-  void ToggleLargeExtra() {
+  void ToggleLargeExtra() noexcept {
     if (large_extra)
       RestoreExtra();
     else
       LargeExtra();
   }
 
-  void AddTab(Widget *widget, const TCHAR *caption,
-              const MaskedIcon *icon=nullptr);
+  void AddTab(std::unique_ptr<Widget> widget, const char *caption,
+              const MaskedIcon *icon=nullptr) noexcept;
 
-  gcc_pure
-  const TCHAR *GetButtonCaption(unsigned i) const;
+  [[gnu::pure]]
+  const char *GetButtonCaption(unsigned i) const noexcept;
 
-  bool ClickPage(unsigned i);
-  bool NextPage();
-  bool PreviousPage();
+  /**
+   * Preferred size for the current page plus the tab strip.  Unlike
+   * GetMaximumSize(), this does not grow to the tallest page, so a
+   * short tab (e.g. Altitude Simulator) does not reserve space for a
+   * taller sibling (Setup).
+   */
+  [[gnu::pure]]
+  PixelSize GetCurrentMaximumSize() const noexcept;
 
+public:
   /* virtual methods from class Widget */
-  PixelSize GetMinimumSize() const override;
-  PixelSize GetMaximumSize() const override;
-  void Initialise(ContainerWindow &parent, const PixelRect &rc) override;
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  void Unprepare() override;
-  void Show(const PixelRect &rc) override;
-  void Hide() override;
-  void Move(const PixelRect &rc) override;
-  bool SetFocus() override;
-  bool KeyPress(unsigned key_code) override;
+  PixelSize GetMinimumSize() const noexcept override;
+  PixelSize GetMaximumSize() const noexcept override;
+  void Initialise(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  void Unprepare() noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
+  void Hide() noexcept override;
+  void Move(const PixelRect &rc) noexcept override;
+  bool SetFocus() noexcept override;
+  bool HasFocus() const noexcept override;
+  bool KeyPress(unsigned key_code) noexcept override;
 
 protected:
   /* virtual methods from class PagerWidget */
-  void OnPageFlipped() override;
-};
+  void OnPageFlipped() noexcept override;
 
-#endif
+private:
+  /* virtual methods from class TabHandler */
+  bool ClickPage(unsigned i) noexcept override;
+  bool NextPage() noexcept override;
+  bool PreviousPage() noexcept override;
+};

@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_COMPUTER_SETTINGS_HPP
-#define XCSOAR_COMPUTER_SETTINGS_HPP
+#pragma once
 
 #include "Geo/GeoPoint.hpp"
 #include "Engine/GlideSolvers/GlidePolar.hpp"
@@ -32,19 +11,48 @@ Copyright_License {
 #include "Task/TaskBehaviour.hpp"
 #include "Tracking/TrackingSettings.hpp"
 #include "Weather/Settings.hpp"
-#include "NMEA/Validity.hpp"
+#include "time/Validity.hpp"
 #include "Logger/Settings.hpp"
 #include "Airspace/AirspaceComputerSettings.hpp"
 #include "TeamCode/Settings.hpp"
 #include "Plane/Plane.hpp"
 #include "Wind/Settings.hpp"
 #include "WaveSettings.hpp"
+#include "Radio/RadioFrequency.hpp"
+#include "Radio/TransponderCode.hpp"
+#include "Radio/TransponderMode.hpp"
+#include "net/client/WeGlide/Settings.hpp"
+#include "util/StaticString.hxx"
 
+#include <cstdint>
 #include <type_traits>
 
-#include <stdint.h>
-
 struct Waypoint;
+
+/**
+ * Where does XCSoar get the UTC offset from?
+ */
+enum class LocalTimeSource : uint8_t {
+  /**
+   * Follow the time zone which is configured in the operating system.
+   * That is the right choice wherever the operating system knows its
+   * own time zone, but not on Kobo, where the clock runs in UTC and
+   * there is no time zone setting at all.
+   */
+  AUTOMATIC,
+
+  /**
+   * Use the time zone selected by the user.  Unlike a UTC offset, a
+   * time zone carries the daylight saving time rules, which means
+   * XCSoar can follow the transitions on its own.
+   */
+  TIME_ZONE,
+
+  /**
+   * Use the fixed UTC offset entered by the user.
+   */
+  MANUAL_UTC_OFFSET,
+};
 
 // control of calculations, these only changed by user interface
 // but are used read-only by calculations
@@ -109,19 +117,61 @@ struct PlacesOfInterestSettings {
   GeoPoint home_location;
 
   /**
-   * The reference location for the "ATC radial" InfoBox.
+   * The reference location & declination for the "ATC radial" InfoBox.
    */
   GeoPoint atc_reference;
+  Angle magnetic_declination;
+
+  /**
+   * elevation of home waypoint is available
+   */
+  bool home_elevation_available;
+
+  /**
+   * elevation (if available) of home waypoint
+   */
+  double home_elevation;
 
   void SetDefaults() {
     ClearHome();
     atc_reference.SetInvalid();
+    magnetic_declination = Angle::Zero();
   }
 
   void ClearHome();
   void SetHome(const Waypoint &wp);
 };
 
+/**
+ * Options for radio remote control
+ */
+struct RadioSettings {
+  RadioFrequency active_frequency;
+  RadioFrequency standby_frequency;
+
+  StaticString<32> active_name;
+  StaticString<32> standby_name;
+
+  void SetDefaults() {
+    active_frequency.Clear();
+    standby_frequency.Clear();
+    active_name.clear();
+    standby_name.clear();
+  }
+};
+
+/**
+ * Options for transponder remote control
+ */
+struct TransponderSettings {
+  TransponderCode transponder_code;
+  TransponderMode transponder_mode;
+
+  void SetDefaults() {
+    transponder_code.Clear();
+    transponder_mode.Clear();
+  }
+};
 
 /**
  * Options for glide computer features
@@ -148,9 +198,13 @@ struct FeaturesSettings {
 
 struct CirclingSettings {
   bool external_trigger_cruise_enabled;
+  FloatDuration cruise_to_circling_mode_switch_threshold;
+  FloatDuration circling_to_cruise_mode_switch_threshold;
 
   void SetDefaults() {
     external_trigger_cruise_enabled = false;
+    cruise_to_circling_mode_switch_threshold = std::chrono::seconds{15};
+    circling_to_cruise_mode_switch_threshold = std::chrono::seconds{10};
   }
 };
 
@@ -183,8 +237,33 @@ struct ComputerSettings {
   /** Update system time from GPS time */
   bool set_system_time_from_gps;
 
-  /** local time adjustment (in seconds) */
+  /** where does the UTC offset come from? */
+  LocalTimeSource local_time_source;
+
+  /**
+   * The IANA id of the time zone (e.g. "Europe/Berlin"), used by
+   * #LocalTimeSource::TIME_ZONE.
+   */
+  StaticString<64> time_zone;
+
+  /**
+   * The local time adjustment [seconds] which is currently in effect.
+   * Except with #LocalTimeSource::MANUAL_UTC_OFFSET, where it is the
+   * value the user entered, it is derived from #local_time_source and
+   * updated regularly.
+   */
   RoughTimeDelta utc_offset;
+
+  /**
+   * Determine the UTC offset which is currently in effect according to
+   * #local_time_source.  With #LocalTimeSource::MANUAL_UTC_OFFSET, this
+   * is #utc_offset.
+   *
+   * The return value is not constant: it depends on the current time,
+   * and it changes at daylight saving time transitions.  Therefore this
+   * is not a pure function and its result must not be cached.
+   */
+  RoughTimeDelta GetCurrentUTCOffset() const noexcept;
 
   /**
    * The forecasted maximum ground temperature [Kelvin].
@@ -206,17 +285,17 @@ struct ComputerSettings {
 
   LoggerSettings logger;
 
+  WeGlideSettings weglide;
+
 #ifdef HAVE_TRACKING
   TrackingSettings tracking;
 #endif
 
   WeatherSettings weather;
 
+  RadioSettings radio;
+
+  TransponderSettings transponder;
+
   void SetDefaults();
 };
-
-static_assert(std::is_trivial<ComputerSettings>::value,
-              "type is not trivial");
-
-#endif
-

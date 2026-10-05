@@ -1,34 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "MapOverlayWidget.hpp"
+#include "Dialogs/CoFunctionDialog.hpp"
 #include "Dialogs/Error.hpp"
-#include "Dialogs/JobDialog.hpp"
 #include "UIGlobals.hpp"
-#include "Screen/Bitmap.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Bitmap.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Form/ButtonPanel.hpp"
-#include "Form/ActionListener.hpp"
 #include "Widget/ButtonPanelWidget.hpp"
 #include "Widget/TwoWidgets.hpp"
 #include "Widget/TextListWidget.hpp"
@@ -37,18 +16,27 @@ Copyright_License {
 #include "MapWindow/GlueMapWindow.hpp"
 #include "Language/Language.hpp"
 #include "Weather/PCMet/Overlays.hpp"
+#include "Weather/OPERA/Radar.hpp"
+#include "Weather/EUMETView/Satellite.hpp"
+#include "Weather/EUMETView/SatellitePageOverlay.hpp"
+#include "Geo/GeoBounds.hpp"
 #include "Interface.hpp"
 #include "LocalPath.hpp"
-#include "OS/Path.hpp"
-#include "OS/FileUtil.hpp"
-#include "Util/StaticString.hxx"
-#include "Util/StringAPI.hxx"
-#include "Util/StringCompare.hxx"
+#include "Operation/PluggableOperationEnvironment.hpp"
+#include "co/Task.hxx"
+#include "net/http/Init.hpp"
+#include "system/Path.hpp"
+#include "system/FileUtil.hpp"
+#include "util/StaticString.hxx"
+#include "util/StringAPI.hxx"
+#include "util/StringCompare.hxx"
 
+#include <algorithm>
+#include <optional>
 #include <vector>
 
 class WeatherMapOverlayListWidget final
-  : public TextListWidget, ActionListener {
+  : public TextListWidget {
 
   enum Buttons {
     USE,
@@ -62,11 +50,44 @@ class WeatherMapOverlayListWidget final
 
     std::unique_ptr<PCMet::OverlayInfo> pc_met;
 
+    /**
+     * Set for the radar composite, which is downloaded on demand for
+     * the currently visible map area.  #radar_bounds is the area the
+     * cached image covers.
+     */
+    bool radar = false;
+    GeoBounds radar_bounds = GeoBounds::Invalid();
+
+    /**
+     * Index into EUMETView::GetLayers() for a satellite entry, or -1.
+     *
+     * The satellite imagery is not a single bitmap like everything
+     * else in this list: it is a block of tiles that fills in around
+     * the aircraft.  Rather than fetch it a second way here, the
+     * entry switches on the very same machinery a satellite page
+     * uses, and the tiles then arrive in the background.
+     */
+    int satellite_layer = -1;
+
     explicit Item(PCMet::OverlayInfo &&_pc_met)
       :name(_pc_met.label.c_str()), path(_pc_met.path.c_str()),
        pc_met(new PCMet::OverlayInfo(std::move(_pc_met))) {}
 
-    Item(const TCHAR *_name, Path _path)
+    struct Radar {};
+
+    explicit Item(Radar)
+      :name(gettext(N_("Radar (EUMETNET OPERA)"))), radar(true) {}
+
+    struct Satellite { int layer; };
+
+    explicit Item(Satellite s)
+      :satellite_layer(s.layer) {
+      name.Format("%s (%s)",
+                  gettext(EUMETView::GetLayer(s.layer).label),
+                  _("Satellite"));
+    }
+
+    Item(const char *_name, Path _path)
       :name(_name), path(_path) {}
 
     bool operator<(const Item &other) const {
@@ -97,7 +118,7 @@ public:
   void CreateButtons(ButtonPanel &buttons);
 
 private:
-  int FindItemByName(const TCHAR *name) const {
+  int FindItemByName(const char *name) const {
     unsigned i = 0;
     for (const auto &item : items) {
       if (item.name == name)
@@ -109,6 +130,17 @@ private:
   }
 
   int FindActiveIndex() const {
+    if (const int layer = EUMETView::GetActiveLayer(); layer >= 0) {
+      /* the satellite block is many overlays carrying an attribution
+         label, so it cannot be found by matching a bitmap's name */
+      unsigned i = 0;
+      for (const auto &item : items) {
+        if (item.satellite_layer == layer)
+          return int(i);
+        ++i;
+      }
+    }
+
     const auto *map = UIGlobals::GetMap();
     if (map == nullptr)
       return -1;
@@ -137,7 +169,7 @@ private:
 
     preview_bitmap.Reset();
     try {
-      if (path.IsNull() || !preview_bitmap.LoadFile(path))
+      if (path == nullptr || !preview_bitmap.LoadFile(path))
         return;
     } catch (const std::exception &e) {
       return;
@@ -157,7 +189,7 @@ private:
 
 protected:
   /* virtual methods from Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override {
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override {
     CreateButtons(buttons_widget->GetButtonPanel());
     TextListWidget::Prepare(parent, rc);
     UpdateList();
@@ -167,45 +199,65 @@ protected:
       GetList().SetCursorIndex(active_index);
   }
 
-  void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     TextListWidget::Show(rc);
     UpdatePreview();
   }
 
   /* virtual methods from TextListWidget */
-  const TCHAR *GetRowText(unsigned i) const override {
+  const char *GetRowText(unsigned i) const noexcept override {
     return items[i].name.c_str();
   }
 
   /* virtual methods from ListItemRenderer */
-  void OnPaintItem(Canvas &canvas, PixelRect rc, unsigned i) override {
+  void OnPaintItem(Canvas &canvas, PixelRect rc,
+                   unsigned i) noexcept override {
     if (int(i) == active_index) {
-      rc.left = row_renderer.DrawColumn(canvas, rc, _T(" > "));
-      rc.right = row_renderer.DrawRightColumn(canvas, rc, _T(" < "));
+      rc.left = row_renderer.DrawColumn(canvas, rc, " > ");
+      rc.right = row_renderer.DrawRightColumn(canvas, rc, " < ");
     }
+
+    if (const int layer = items[i].satellite_layer;
+        layer >= 0 && EUMETView::IsLayerEmpty(layer))
+      /* the server answered but the product had nothing to draw here:
+         say so, rather than leaving an empty map to be read as a slow
+         download */
+      rc.right = row_renderer.DrawRightColumn(canvas, rc, _("no data"));
 
     TextListWidget::OnPaintItem(canvas, rc, i);
   }
 
   /* virtual methods from ListCursorHandler */
-  virtual void OnCursorMoved(unsigned i) override {
+  void OnCursorMoved(unsigned i) noexcept override {
     UpdatePreview(items[i].path);
   }
 
-  virtual bool CanActivateItem(unsigned i) const override {
+  bool CanActivateItem([[maybe_unused]] unsigned i) const noexcept override {
     return true;
   }
 
-  virtual void OnActivateItem(unsigned i) override {
+  void OnActivateItem(unsigned i) noexcept override {
     UseClicked(i);
   }
 
 private:
-  void SetOverlay(Path path, const TCHAR *label=nullptr);
+  void SetOverlay(Path path, const char *label=nullptr);
+  void SetOverlay(Path path, const GeoBounds &bounds,
+                  const char *label);
+
+  /**
+   * Download the radar composite for the area the map currently shows.
+   *
+   * @return false if the download failed or was cancelled
+   */
+  bool DownloadRadar(Item &item);
 
   void UseClicked(unsigned i);
 
   void DisableClicked() {
+    if (EUMETView::GetActiveLayer() >= 0)
+      EUMETView::DeactivatePageOverlay();
+
     auto *map = UIGlobals::GetMap();
     if (map != nullptr)
       map->SetOverlay(nullptr);
@@ -214,17 +266,17 @@ private:
   }
 
   void UpdateClicked();
-
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override;
 };
 
 void
 WeatherMapOverlayListWidget::CreateButtons(ButtonPanel &buttons)
 {
-  use_button = buttons.Add(_("Use"), *this, USE);
-  disable_button = buttons.Add(_("Disable"), *this, DISABLE);
-  update_button = buttons.Add(_("Update"), *this, UPDATE);
+  use_button = buttons.Add(_("Use"), [this](){
+    UseClicked(GetList().GetCursorIndex());
+  });
+
+  disable_button = buttons.Add(_("Disable"), [this](){ DisableClicked(); });
+  update_button = buttons.Add(_("Update"), [this](){ UpdateClicked(); });
 }
 
 void
@@ -237,6 +289,14 @@ WeatherMapOverlayListWidget::UpdateList()
     for (auto &i : PCMet::CollectOverlays())
       items.emplace_back(std::move(i));
 
+  /* the radar composite is open data and needs no account, so it is
+     always offered */
+  items.emplace_back(Item::Radar{});
+
+  /* so is the satellite imagery, one entry per product */
+  for (std::size_t i = 0; i < EUMETView::GetLayers().size(); ++i)
+    items.emplace_back(Item::Satellite{int(i)});
+
   struct Visitor : public File::Visitor {
     std::vector<Item> &items;
 
@@ -247,10 +307,10 @@ WeatherMapOverlayListWidget::UpdateList()
     }
   } visitor(items);
 
-  const auto weather_path = LocalPath(_T("weather"));
-  const auto overlay_path = AllocatedPath::Build(weather_path, _T("overlay"));
-  Directory::VisitSpecificFiles(overlay_path, _T("*.tif"), visitor);
-  Directory::VisitSpecificFiles(overlay_path, _T("*.tiff"), visitor);
+  const auto weather_path = LocalPath("weather");
+  const auto overlay_path = AllocatedPath::Build(weather_path, "overlay");
+  Directory::VisitSpecificFiles(overlay_path, "*.tif", visitor);
+  Directory::VisitSpecificFiles(overlay_path, "*.tiff", visitor);
 
   const unsigned n = items.size();
 
@@ -263,7 +323,14 @@ WeatherMapOverlayListWidget::UpdateList()
 
   const bool empty = items.empty();
   use_button->SetEnabled(!empty);
-  update_button->SetEnabled(pc_met_settings.ftp_credentials.IsDefined());
+
+  /* "Update" re-downloads; that is possible for the pc_met overlays
+     only with credentials, but always for the radar composite */
+  const bool can_update = pc_met_settings.ftp_credentials.IsDefined() ||
+    std::any_of(items.begin(), items.end(), [](const Item &i){
+      return i.radar;
+    });
+  update_button->SetEnabled(can_update);
 
   UpdateActiveIndex();
 }
@@ -272,7 +339,7 @@ WeatherMapOverlayListWidget::UpdateList()
  * Set up reasonable defaults for the given overlay.
  */
 static void
-SetupOverlay(MapOverlayBitmap &bmp, Path::const_pointer_type name)
+SetupOverlay(MapOverlayBitmap &bmp, Path::const_pointer name)
 {
   /* File name convention according to DWD paper:
    *
@@ -292,7 +359,7 @@ SetupOverlay(MapOverlayBitmap &bmp, Path::const_pointer_type name)
   /* configure a default, just in case this overlay type is unknown */
   bmp.SetAlpha(0.5);
 
-  if (StringStartsWithIgnoreCase(name, _T("nb_"))) {
+  if (StringStartsWithIgnoreCase(name, "nb_")) {
     name += 3;
 
     /* skip "model", go to "met" */
@@ -300,21 +367,21 @@ SetupOverlay(MapOverlayBitmap &bmp, Path::const_pointer_type name)
     if (underscore != nullptr) {
       name = underscore + 1;
 
-      if (StringStartsWithIgnoreCase(name, _T("ome_"))) {
+      if (StringStartsWithIgnoreCase(name, "ome_")) {
         /* vertical wind */
         bmp.SetAlpha(0.5);
-      } else if (StringStartsWithIgnoreCase(name, _T("w_"))) {
+      } else if (StringStartsWithIgnoreCase(name, "w_")) {
         /* horizontal wind */
         bmp.SetAlpha(0.7);
       }
     }
-  } else if (StringStartsWithIgnoreCase(name, _T("sat_"))) {
+  } else if (StringStartsWithIgnoreCase(name, "sat_")) {
     bmp.IgnoreBitmapAlpha();
     bmp.SetAlpha(0.9);
-  } else if (StringStartsWithIgnoreCase(name, _T("pg_"))) {
+  } else if (StringStartsWithIgnoreCase(name, "pg_")) {
     /* precipitation */
     bmp.SetAlpha(0.4);
-  } else if (StringStartsWithIgnoreCase(name, _T("Vertikalwind"))) {
+  } else if (StringStartsWithIgnoreCase(name, "Vertikalwind")) {
     /* name of a draft file I got from DWD */
     // TODO: remove obsolete prefix
     bmp.IgnoreBitmapAlpha();
@@ -323,7 +390,7 @@ SetupOverlay(MapOverlayBitmap &bmp, Path::const_pointer_type name)
 }
 
 void
-WeatherMapOverlayListWidget::SetOverlay(Path path, const TCHAR *label)
+WeatherMapOverlayListWidget::SetOverlay(Path path, const char *label)
 {
   auto *map = UIGlobals::GetMap();
   if (map == nullptr)
@@ -332,8 +399,8 @@ WeatherMapOverlayListWidget::SetOverlay(Path path, const TCHAR *label)
   std::unique_ptr<MapOverlayBitmap> bmp;
   try {
     bmp.reset(new MapOverlayBitmap(path));
-  } catch (const std::exception &e) {
-    ShowError(e, _("Weather"));
+  } catch (...) {
+    ShowError(std::current_exception(), _("Weather"));
     return;
   }
 
@@ -347,6 +414,79 @@ WeatherMapOverlayListWidget::SetOverlay(Path path, const TCHAR *label)
   UpdateActiveIndex();
 }
 
+bool
+WeatherMapOverlayListWidget::DownloadRadar(Item &item)
+{
+  const auto *map = UIGlobals::GetMap();
+  if (map == nullptr)
+    return false;
+
+  const auto &projection = map->VisibleProjection();
+  const auto bounds = projection.GetScreenBounds();
+  if (!bounds.IsValid())
+    return false;
+
+  const auto size = projection.GetScreenSize();
+
+  try {
+    PluggableOperationEnvironment env;
+
+    auto path = ShowCoFunctionDialog(UIGlobals::GetMainWindow(),
+                                     UIGlobals::GetDialogLook(),
+                                     _("Download"),
+                                     OPERA::DownloadArea(bounds,
+                                                         size.width,
+                                                         size.height,
+                                                         *Net::curl, env),
+                                     &env);
+    if (!path)
+      return false;
+
+    item.path = std::move(*path);
+    item.radar_bounds = bounds;
+    UpdatePreview(item.path);
+    return true;
+  } catch (...) {
+    ShowError(std::current_exception(), _("Weather"));
+    return false;
+  }
+}
+
+/**
+ * Install an image whose extent is known from the request rather
+ * than from the file, which is how the radar composite arrives.
+ */
+void
+WeatherMapOverlayListWidget::SetOverlay(Path path, const GeoBounds &bounds,
+                                        const char *label)
+{
+  auto *map = UIGlobals::GetMap();
+  if (map == nullptr || !bounds.IsValid())
+    return;
+
+  Bitmap bitmap;
+  try {
+    if (!bitmap.LoadFile(path))
+      return;
+  } catch (...) {
+    ShowError(std::current_exception(), _("Weather"));
+    return;
+  }
+
+  auto bmp = std::make_unique<MapOverlayBitmap>(std::move(bitmap),
+                                                GeoQuadrilateral{
+                                                  bounds.GetNorthWest(),
+                                                  bounds.GetNorthEast(),
+                                                  bounds.GetSouthWest(),
+                                                  bounds.GetSouthEast(),
+                                                },
+                                                label);
+  bmp->SetAlpha(0.6);
+  map->SetOverlay(std::move(bmp));
+
+  UpdateActiveIndex();
+}
+
 void
 WeatherMapOverlayListWidget::UseClicked(unsigned i)
 {
@@ -355,26 +495,53 @@ WeatherMapOverlayListWidget::UseClicked(unsigned i)
     return;
   }
 
-  const TCHAR *label = nullptr;
+  const char *label = nullptr;
   auto &item = items[i];
-  if (item.pc_met) {
+
+  if (EUMETView::GetActiveLayer() >= 0 && item.satellite_layer < 0)
+    /* every other entry installs a single bitmap into the first
+       overlay slot, which would leave the other twenty-four tiles of
+       a satellite block standing underneath it */
+    EUMETView::DeactivatePageOverlay();
+
+  if (item.satellite_layer >= 0) {
+    /* no modal download: the block fills in around the aircraft in
+       the background, nearest tile first, exactly as on a page */
+    EUMETView::ActivatePageOverlay(item.satellite_layer);
+    UpdateActiveIndex();
+    return;
+  } else if (item.radar) {
+    /* unlike the other entries this is fetched for the visible area,
+       so it is downloaded again even if we already have a file */
+    if (!DownloadRadar(item))
+      return;
+
+    SetOverlay(item.path, item.radar_bounds, item.name.c_str());
+    return;
+  } else if (item.pc_met) {
     const auto &info = *item.pc_met;
     label = info.label.c_str();
-    if (item.path.IsNull()) {
+    if (item.path == nullptr) {
       const auto &settings = CommonInterface::GetComputerSettings().weather.pcmet;
 
-      DialogJobRunner runner(UIGlobals::GetMainWindow(),
-                             UIGlobals::GetDialogLook(),
-                             _("Download"), true);
-
       try {
-        auto overlay = PCMet::DownloadOverlay(info,
-                                              BrokenDateTime::NowUTC(),
-                                              settings, runner);
-        item.path = AllocatedPath(overlay.path.c_str());
+        PluggableOperationEnvironment env;
+
+        auto overlay = ShowCoFunctionDialog(UIGlobals::GetMainWindow(),
+                                            UIGlobals::GetDialogLook(),
+                                            _("Download"),
+                                            PCMet::DownloadOverlay(info,
+                                                                   BrokenDateTime::NowUTC(),
+                                                                   settings, *Net::curl,
+                                                                   env),
+                                            &env);
+        if (!overlay)
+          return;
+
+        item.path = std::move(overlay->path);
         UpdatePreview(item.path);
-      } catch (const std::exception &exception) {
-        ShowError(exception, _T("pc_met"));
+      } catch (...) {
+        ShowError(std::current_exception(), "Flugwetter");
       }
     }
   }
@@ -386,21 +553,37 @@ void
 WeatherMapOverlayListWidget::UpdateClicked()
 {
   const auto &settings = CommonInterface::GetComputerSettings().weather.pcmet;
-  DialogJobRunner runner(UIGlobals::GetMainWindow(),
-                         UIGlobals::GetDialogLook(),
-                         _("Download"), true);
   BrokenDateTime now = BrokenDateTime::NowUTC();
   int i = 0;
   for (auto &item : items) {
-    if (item.pc_met) {
+    if (item.satellite_layer >= 0) {
+      if (i == active_index)
+        /* a no-op unless a newer frame is due or a tile is missing */
+        EUMETView::ActivatePageOverlay(item.satellite_layer);
+    } else if (item.radar) {
+      if (i == active_index && DownloadRadar(item))
+        SetOverlay(item.path, item.radar_bounds, item.name.c_str());
+    } else if (item.pc_met) {
       try {
         const auto &info = *item.pc_met;
-        auto overlay = PCMet::DownloadOverlay(info, now, settings, runner);
+
+        PluggableOperationEnvironment env;
+
+        auto overlay = ShowCoFunctionDialog(UIGlobals::GetMainWindow(),
+                                            UIGlobals::GetDialogLook(),
+                                            _("Download"),
+                                            PCMet::DownloadOverlay(info, now,
+                                                                   settings, *Net::curl,
+                                                                   env),
+                                            &env);
+        if (!overlay)
+          return;
+
         if (i == active_index)
-          SetOverlay(overlay.path, info.label.c_str());
-        item.path = AllocatedPath(overlay.path.c_str());
-      } catch (const std::exception &exception) {
-        ShowError(exception, _T("pc_met"));
+          SetOverlay(overlay->path, info.label.c_str());
+        item.path = std::move(overlay->path);
+      } catch (...) {
+        ShowError(std::current_exception(), "Flugwetter");
         break;
       }
     }
@@ -409,33 +592,19 @@ WeatherMapOverlayListWidget::UpdateClicked()
   UpdatePreview();
 }
 
-void
-WeatherMapOverlayListWidget::OnAction(int id)
-{
-  switch ((Buttons)id) {
-  case USE:
-    UseClicked(GetList().GetCursorIndex());
-    break;
-
-  case DISABLE:
-    DisableClicked();
-    break;
-
-  case UPDATE:
-    UpdateClicked();
-    break;
-  }
-}
-
-Widget *
+std::unique_ptr<Widget>
 CreateWeatherMapOverlayWidget()
 {
-  auto *list = new WeatherMapOverlayListWidget();
-  auto *view = new ViewImageWidget();
-  auto *two = new TwoWidgets(list, view, false);
-  auto *buttons = new ButtonPanelWidget(two,
+  auto two = std::make_unique<TwoWidgets>(std::make_unique<WeatherMapOverlayListWidget>(),
+                                          std::make_unique<ViewImageWidget>(),
+                                          false);
+  auto &list = (WeatherMapOverlayListWidget &)two->GetFirst();
+  auto &view = (ViewImageWidget &)two->GetSecond();
+
+  auto buttons =
+    std::make_unique<ButtonPanelWidget>(std::move(two),
                                         ButtonPanelWidget::Alignment::BOTTOM);
-  list->SetPreview(*view);
-  list->SetButtonPanel(*buttons);
+  list.SetPreview(view);
+  list.SetButtonPanel(*buttons);
   return buttons;
 }

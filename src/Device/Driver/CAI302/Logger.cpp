@@ -1,34 +1,14 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Protocol.hpp"
 #include "Device/RecordedFlight.hpp"
 #include "Operation/Operation.hpp"
-#include "OS/ByteOrder.hpp"
-#include "OS/Path.hpp"
-#include "IO/FileOutputStream.hxx"
-#include "IO/BufferedOutputStream.hxx"
+#include "util/ByteOrder.hxx"
+#include "system/Path.hpp"
+#include "io/FileOutputStream.hxx"
+#include "io/BufferedOutputStream.hxx"
 
 #include <memory>
 
@@ -81,7 +61,7 @@ ReadFlightListInner(Port &port, RecordedFlightList &flight_list,
     env.SetProgressPosition(i);
   }
 
-  return !flight_list.empty() && !env.IsCancelled();
+  return !flight_list.empty();
 }
 
 bool
@@ -91,19 +71,21 @@ CAI302Device::ReadFlightList(RecordedFlightList &flight_list,
   if (!EnableBulkMode(env))
     return false;
 
-  if (!UploadMode(env)) {
+  try {
+    UploadMode(env);
+    bool success = ReadFlightListInner(port, flight_list, env);
     DisableBulkMode(env);
-    return false;
-  }
-
-  if (!ReadFlightListInner(port, flight_list, env)) {
+    return success;
+  } catch (...) {
     mode = Mode::UNKNOWN;
-    DisableBulkMode(env);
-    return false;
-  }
 
-  DisableBulkMode(env);
-  return true;
+    try {
+      DisableBulkMode(env);
+    } catch (...) {
+    }
+
+    throw;
+  }
 }
 
 static bool
@@ -116,8 +98,7 @@ DownloadFlightInner(Port &port, const RecordedFlightInfo &flight,
   BufferedOutputStream os(fos);
 
   CAI302::FileASCII file_ascii;
-  if (!UploadFileASCII(port, flight.internal.cai302, file_ascii, env) ||
-      env.IsCancelled())
+  if (!UploadFileASCII(port, flight.internal.cai302, file_ascii, env))
     return false;
 
   unsigned bytes_per_block = file_ascii.bytes_per_block;
@@ -125,15 +106,16 @@ DownloadFlightInner(Port &port, const RecordedFlightInfo &flight,
   env.SetProgressRange(num_blocks);
 
   unsigned allocated_size = sizeof(CAI302::FileData) + bytes_per_block;
-  std::unique_ptr<uint8_t> allocated(new uint8_t[allocated_size]);
+  std::unique_ptr<uint8_t[]> allocated(new uint8_t[allocated_size]);
   // TODO: alignment?
   CAI302::FileData *header = (CAI302::FileData *)(void *)allocated.get();
-  void *data = header + 1;
+  const std::byte *data = reinterpret_cast<const std::byte *>(header + 1);
 
   unsigned current_block = 0;
+  unsigned bytes_written = 0;
   unsigned valid_bytes;
   do {
-    int i = UploadFileData(port, true, header, allocated_size, env);
+    int i = CAI302::UploadFileData(port, true, {(std::byte *)header, allocated_size}, env);
     if (i < (int)sizeof(*header))
       return false;
 
@@ -143,7 +125,9 @@ DownloadFlightInner(Port &port, const RecordedFlightInfo &flight,
     if ((unsigned)i < valid_bytes)
       return false;
 
-    os.Write(data, valid_bytes);
+    os.Write({data, valid_bytes});
+    bytes_written += valid_bytes;
+    env.SetProgressBytes(bytes_written);
 
     env.SetProgressPosition(current_block++);
   } while (valid_bytes == bytes_per_block);
@@ -158,7 +142,7 @@ DownloadFlightInner(Port &port, const RecordedFlightInfo &flight,
   if (valid_bytes > sizeof(signature.signature))
     return false;
 
-  os.Write(signature.signature, valid_bytes);
+  os.Write(std::as_bytes(std::span{signature.signature, valid_bytes}));
 
   os.Flush();
   fos.Commit();
@@ -176,26 +160,19 @@ CAI302Device::DownloadFlight(const RecordedFlightInfo &flight,
   if (!EnableBulkMode(env))
     return false;
 
-  if (!UploadMode(env)) {
-    DisableBulkMode(env);
-    return false;
-  }
-
   try {
-    if (!DownloadFlightInner(port, flight, path, env)) {
-      mode = Mode::UNKNOWN;
-      DisableBulkMode(env);
-      return false;
-    }
+    UploadMode(env);
+    bool success = DownloadFlightInner(port, flight, path, env);
+    DisableBulkMode(env);
+    return success;
   } catch (...) {
     mode = Mode::UNKNOWN;
+
     try {
       DisableBulkMode(env);
     } catch (...) {
     }
+
     throw;
   }
-
-  DisableBulkMode(env);
-  return true;
 }

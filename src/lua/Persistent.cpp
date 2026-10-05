@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#include "Persistent.hpp"
+#include "Util.hxx"
+
+extern "C" {
+#include <lua.h>
+}
+
+static constexpr char persistent_table[] = "xcsoar.persistent_table";
+static constexpr char persistent_callback[] = "xcsoar.persistent_callback";
+
+void
+Lua::InitPersistent(lua_State *L)
+{
+  lua_newtable(L);
+  lua_setfield(L, LUA_REGISTRYINDEX, persistent_table);
+}
+
+void
+Lua::SetPersistentCallback(lua_State *L, PersistentCallback callback)
+{
+  Lua::SetRegistry(L, persistent_callback,
+                   Lua::LightUserData((void *)callback));
+}
+
+[[gnu::pure]]
+static Lua::PersistentCallback
+GetPersistentCallback(lua_State *L)
+{
+  return (Lua::PersistentCallback)
+    Lua::GetRegistryLightUserData(L, persistent_callback);
+}
+
+bool
+Lua::IsPersistent(lua_State *L)
+{
+  bool result = false;
+
+  lua_getfield(L, LUA_REGISTRYINDEX, persistent_table);
+  if (!lua_isnil(L, -1)) {
+    lua_pushnil(L);
+    if (lua_next(L, -2)) {
+      lua_pop(L, 2); // pop key, value
+      result = true;
+    }
+  }
+
+  lua_pop(L, 1); // pop table
+  return result;
+}
+
+void
+Lua::AddPersistent(lua_State *L, void *p)
+{
+  lua_getfield(L, LUA_REGISTRYINDEX, persistent_table);
+  if (!lua_isnil(L, -1)) {
+    SetTable(L, RelativeStackIndex{-1}, LightUserData(p), true);
+  }
+
+  lua_pop(L, 1); // pop table
+}
+
+void
+Lua::RemovePersistent(lua_State *L, void *p)
+{
+  lua_getfield(L, LUA_REGISTRYINDEX, persistent_table);
+
+  if (!lua_isnil(L, -1)) {
+    SetTable(L, RelativeStackIndex{-1}, LightUserData(p), nullptr);
+  }
+
+  lua_pop(L, 1); // pop table
+}
+
+void
+Lua::CheckPersistent(lua_State *L)
+{
+  auto callback = GetPersistentCallback(L);
+  if (callback == nullptr)
+    return;
+
+  lua_getfield(L, LUA_REGISTRYINDEX, persistent_table);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1); // pop nil
+    return;
+  }
+
+  lua_pushnil(L);
+  if (lua_next(L, -2)) {
+    lua_pop(L, 3); // pop value, key, table
+    return;
+  }
+
+  lua_pop(L, 1); // pop table (lua_next() has popped the key)
+
+  /* A Lua call further up the C stack is still running when this
+     callback was reached from a nested event loop. Thus make sure 
+     closing the state is left to the outermost call, 
+     which will check again when it returns. */
+  lua_Debug ar;
+  if (lua_getstack(L, 0, &ar))
+    return;
+
+  /* this may close the lua_State (see Lua::AddBackground()), so
+     nothing may touch L after this call */
+  callback(L);
+}

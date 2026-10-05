@@ -1,34 +1,71 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DataGlobals.hpp"
+#include "Profile/Current.hpp"
+#include "Profile/Profile.hpp"
+#include "Terrain/RasterTerrain.hpp"
+#include "Waypoint/WaypointGlue.hpp"
+#include "Waypoint/Waypoints.hpp"
 #include "Weather/Rasp/RaspStore.hpp"
-#include "UIGlobals.hpp"
+#ifdef HAVE_HTTP
+#include "Weather/SkySight/SkySightClient.hpp"
+#endif
 #include "MapWindow/GlueMapWindow.hpp"
+#include "Computer/GlideComputer.hpp"
+#include "UIGlobals.hpp"
 #include "Interface.hpp"
+#include "ActionInterface.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
+#include "DataComponents.hpp"
+#include "MainWindow.hpp"
+#include "PageActions.hpp"
+#include "Protection.hpp" // for global_running
+#include "LogFile.hpp"
+
+#ifdef HAVE_HTTP
+static std::shared_ptr<SkySightClient> sky_sight;
+#endif
+
+void
+DataGlobals::UnsetTerrain() noexcept
+{
+  auto &main_window = *CommonInterface::main_window;
+
+  /* just in case the bottom widget uses the old terrain object
+     (e.g. the cross section) */
+  main_window.SetBottomWidget(nullptr);
+
+  main_window.SetTerrain(nullptr);
+
+  if (backend_components->glide_computer)
+    backend_components->glide_computer->SetTerrain(nullptr);
+
+  data_components->terrain.reset();
+}
+
+void
+DataGlobals::SetTerrain(std::unique_ptr<RasterTerrain> _terrain) noexcept
+{
+  assert(!data_components->terrain);
+
+  auto &main_window = *CommonInterface::main_window;
+
+  data_components->terrain = std::move(_terrain);
+  main_window.SetTerrain(data_components->terrain.get());
+
+  if (backend_components->glide_computer)
+    backend_components->glide_computer->SetTerrain(data_components->terrain.get());
+
+  /* re-create the bottom widget if it was deleted by
+     UnsetTerrain() */
+  if (global_running)
+    PageActions::ScheduleUpdate();
+}
 
 std::shared_ptr<RaspStore>
-DataGlobals::GetRasp()
+DataGlobals::GetRasp() noexcept
 {
   auto *map = UIGlobals::GetMap();
   return map != nullptr
@@ -37,7 +74,7 @@ DataGlobals::GetRasp()
 }
 
 void
-DataGlobals::SetRasp(std::shared_ptr<RaspStore> rasp)
+DataGlobals::SetRasp(std::shared_ptr<RaspStore> rasp) noexcept
 {
   auto &state = CommonInterface::SetUIState().weather;
   if (state.map >= int(rasp->GetItemCount()))
@@ -46,4 +83,38 @@ DataGlobals::SetRasp(std::shared_ptr<RaspStore> rasp)
   auto *map = UIGlobals::GetMap();
   if (map != nullptr)
     map->SetRasp(std::move(rasp));
+}
+
+#ifdef HAVE_HTTP
+std::shared_ptr<SkySightClient>
+DataGlobals::GetSkySight() noexcept
+{
+  return sky_sight;
+}
+
+void
+DataGlobals::SetSkySight(std::shared_ptr<SkySightClient> skysight) noexcept
+{
+  sky_sight = std::move(skysight);
+}
+#endif
+
+void
+DataGlobals::UpdateHome(bool reset) noexcept
+{
+  if (data_components->waypoints->IsEmpty()) {
+    LogString("UpdateHome: waypoints not loaded yet, skipping");
+    return;
+  }
+
+  auto &settings = CommonInterface::SetComputerSettings();
+  WaypointGlue::SetHome(*data_components->waypoints,
+                        settings.poi, settings.team_code,
+                        reset);
+  ActionInterface::SetStartupLocation();
+  WaypointGlue::SaveHome(Profile::map,
+                         CommonInterface::GetComputerSettings().poi,
+                         CommonInterface::GetComputerSettings().team_code);
+
+  Profile::Save();
 }

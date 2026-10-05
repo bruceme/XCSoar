@@ -1,37 +1,80 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FILE_TYPE_HPP
-#define XCSOAR_FILE_TYPE_HPP
-
-#include <stdint.h>
+#include <cstdint>
 
 enum class FileType : uint8_t {
   UNKNOWN,
   AIRSPACE,
+  RASP,     // RASP before WAYPOINT, so "-rasp.dat" overrides ".dat"
   WAYPOINT,
+  WAYPOINTDETAILS,
   MAP,
   FLARMNET,
+  FLARMDB,
+  IGC,
+  NMEA,
+  TASK,
+  CHECKLIST,
+  PROFILE,
+  PLANE,
+  XCI,
+  LUA,
+  COUNT,
 };
 
-#endif
+class AllocatedPath;
+
+AllocatedPath GetFileTypeDefaultDir(const FileType file_type);
+
+/**
+ * Return NUL-separated list of file glob patterns for the given
+ * type (e.g. "*.openair\0*.txt\0*.air\0*.sua\0").  The list is terminated by
+ * an empty pattern.
+ */
+const char *GetFileTypePatterns(const FileType file_type) noexcept;
+
+/**
+ * Check whether a filename matches an exact (non-wildcard) pattern
+ * for any #FileType.  Returns that type, or FileType::UNKNOWN if
+ * no exact match exists.
+ */
+[[gnu::pure]]
+FileType SpecialFilenameType(const char *filename) noexcept;
+
+/**
+ * Check whether a filename matches any of the glob patterns
+ * for the given #FileType.
+ */
+[[gnu::pure]]
+bool FilenameMatchesFileType(const char *filename,
+                             FileType file_type) noexcept;
+
+/**
+ * Classify a filename for typed layout placement.  Unlike
+ * DetectFileTypeByFilename(), this only returns types with an actual
+ * managed subdirectory.
+ */
+[[gnu::pure]]
+FileType ClassifyDataFilename(const char *filename) noexcept;
+
+/**
+ * Return the layout subdirectory for a filename, or nullptr if this
+ * filename should remain in the data root.
+ */
+[[gnu::pure]]
+AllocatedPath GetLayoutSubdirForFilename(const char *filename) noexcept;
+
+[[gnu::pure]]
+bool IsCacheLayoutFilename(const char *filename) noexcept;
+
+/**
+ * Detect the unique #FileType for a filename.
+ *
+ * Exact-match patterns win.  If multiple wildcard-only file types
+ * match, then FileType::UNKNOWN is returned.
+ */
+[[gnu::pure]]
+FileType DetectFileTypeByFilename(const char *filename) noexcept;

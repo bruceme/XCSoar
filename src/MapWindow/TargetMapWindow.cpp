@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TargetMapWindow.hpp"
 #include "Topography/TopographyRenderer.hpp"
@@ -38,31 +18,31 @@ Copyright_License {
 #include "Engine/Task/ObservationZones/CylinderZone.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scissor.hpp"
+#include "ui/canvas/opengl/Scissor.hpp"
 #else
-#include "Screen/WindowCanvas.hpp"
+#include "ui/canvas/WindowCanvas.hpp"
 #endif
 
 static const ComputerSettings &
-GetComputerSettings()
+GetComputerSettings() noexcept
 {
   return CommonInterface::GetComputerSettings();
 }
 
 static const MapSettings &
-GetMapSettings()
+GetMapSettings() noexcept
 {
   return CommonInterface::GetMapSettings();
 }
 
 static const MoreData &
-Basic()
+Basic() noexcept
 {
   return CommonInterface::Basic();
 }
 
 static const DerivedInfo &
-Calculated()
+Calculated() noexcept
 {
   return CommonInterface::Calculated();
 }
@@ -76,7 +56,7 @@ TargetMapWindow::TargetMapWindow(const WaypointLook &waypoint_look,
                                  const TaskLook &_task_look,
                                  const AircraftLook &_aircraft_look,
                                  const TopographyLook &_topography_look,
-                                 const OverlayLook &_overlay_look)
+                                 const OverlayLook &_overlay_look) noexcept
   :task_look(_task_look),
    aircraft_look(_aircraft_look),
    topography_look(_topography_look),
@@ -87,7 +67,7 @@ TargetMapWindow::TargetMapWindow(const WaypointLook &waypoint_look,
 {
 }
 
-TargetMapWindow::~TargetMapWindow()
+TargetMapWindow::~TargetMapWindow() noexcept
 {
   Destroy();
 
@@ -96,37 +76,37 @@ TargetMapWindow::~TargetMapWindow()
 
 void
 TargetMapWindow::Create(ContainerWindow &parent, PixelRect rc,
-                        WindowStyle style)
+                        WindowStyle style) noexcept
 {
   projection.SetScale(0.01);
 
   BufferWindow::Create(parent, rc, style);
 }
 
-void
-TargetMapWindow::RenderTerrain(Canvas &canvas)
+inline void
+TargetMapWindow::RenderTerrain(Canvas &canvas) noexcept
 {
   background.SetShadingAngle(projection, GetMapSettings().terrain,
                              Calculated());
   background.Draw(canvas, projection, GetMapSettings().terrain);
 }
 
-void
-TargetMapWindow::RenderTopography(Canvas &canvas)
+inline void
+TargetMapWindow::RenderTopography(Canvas &canvas) noexcept
 {
   if (topography_renderer != nullptr && GetMapSettings().topography_enabled)
     topography_renderer->Draw(canvas, projection);
 }
 
-void
-TargetMapWindow::RenderTopographyLabels(Canvas &canvas)
+inline void
+TargetMapWindow::RenderTopographyLabels(Canvas &canvas) noexcept
 {
   if (topography_renderer != nullptr && GetMapSettings().topography_enabled)
     topography_renderer->DrawLabels(canvas, projection, label_block);
 }
 
-void
-TargetMapWindow::RenderAirspace(Canvas &canvas)
+inline void
+TargetMapWindow::RenderAirspace(Canvas &canvas) noexcept
 {
   if (GetMapSettings().airspace.enable)
     airspace_renderer.Draw(canvas,
@@ -139,15 +119,15 @@ TargetMapWindow::RenderAirspace(Canvas &canvas)
                            GetMapSettings().airspace);
 }
 
-void
-TargetMapWindow::DrawTask(Canvas &canvas)
+inline void
+TargetMapWindow::DrawTask(Canvas &canvas) noexcept
 {
   if (task == nullptr)
     return;
 
   ProtectedTaskManager::Lease task_manager(*task);
   const AbstractTask *task = task_manager->GetActiveTask();
-  if (task && task->CheckTask()) {
+  if (task && !IsError(task->CheckTask())) {
     OZRenderer ozv(task_look, airspace_renderer.GetLook(),
                    GetMapSettings().airspace);
     TaskPointRenderer tpv(canvas, projection, task_look,
@@ -155,23 +135,23 @@ TargetMapWindow::DrawTask(Canvas &canvas)
                              which may be invalid at this point, but it
                              will be used only if active, so it's ok */
                           task_manager->GetOrderedTask().GetTaskProjection(),
-                          ozv, false, TaskPointRenderer::ALL,
-                          Basic().location_available
-                          ? Basic().location : GeoPoint::Invalid());
+                          ozv, false,
+                          TaskPointRenderer::TargetVisibility::ALL,
+                          Basic().GetLocationOrInvalid());
     tpv.SetTaskFinished(Calculated().task_stats.task_finished);
     TaskRenderer dv(tpv, projection.GetScreenBounds());
     dv.Draw(*task);
   }
 }
 
-void
-TargetMapWindow::DrawWaypoints(Canvas &canvas)
+inline void
+TargetMapWindow::DrawWaypoints(Canvas &canvas) noexcept
 {
   const MapSettings &settings_map = GetMapSettings();
   WaypointRendererSettings settings = settings_map.waypoint;
   settings.display_text_type = WaypointRendererSettings::DisplayTextType::NAME;
 
-  way_point_renderer.render(canvas, label_block,
+  way_point_renderer.Render(canvas, label_block,
                             projection, settings,
                             GetComputerSettings().polar,
                             GetComputerSettings().task,
@@ -179,19 +159,20 @@ TargetMapWindow::DrawWaypoints(Canvas &canvas)
                             task, nullptr);
 }
 
-void
-TargetMapWindow::RenderTrail(Canvas &canvas)
+inline void
+TargetMapWindow::RenderTrail(Canvas &canvas) noexcept
 {
   if (glide_computer == nullptr)
     return;
 
-  unsigned min_time = std::max(0, (int)Basic().time - 600);
+  const auto min_time = std::max(Basic().time - std::chrono::minutes{10},
+                                 TimeStamp{});
   trail_renderer.Draw(canvas, glide_computer->GetTraceComputer(),
                       projection, min_time);
 }
 
 void
-TargetMapWindow::OnPaintBuffer(Canvas &canvas)
+TargetMapWindow::OnPaintBuffer(Canvas &canvas) noexcept
 {
 #ifdef ENABLE_OPENGL
   /* enable clipping */
@@ -236,7 +217,7 @@ TargetMapWindow::OnPaintBuffer(Canvas &canvas)
 }
 
 void
-TargetMapWindow::OnPaint(Canvas &canvas)
+TargetMapWindow::OnPaint(Canvas &canvas) noexcept
 {
   BufferWindow::OnPaint(canvas);
 
@@ -253,13 +234,13 @@ TargetMapWindow::OnPaint(Canvas &canvas)
 }
 
 void
-TargetMapWindow::SetTerrain(RasterTerrain *terrain)
+TargetMapWindow::SetTerrain(RasterTerrain *terrain) noexcept
 {
   background.SetTerrain(terrain);
 }
 
 void
-TargetMapWindow::SetTopograpgy(TopographyStore *topography)
+TargetMapWindow::SetTopograpgy(TopographyStore *topography) noexcept
 {
   delete topography_renderer;
   topography_renderer = topography != nullptr
@@ -267,9 +248,9 @@ TargetMapWindow::SetTopograpgy(TopographyStore *topography)
     : nullptr;
 }
 
-gcc_pure
+[[gnu::pure]]
 static double
-GetRadius(const ObservationZonePoint &oz)
+GetRadius(const ObservationZonePoint &oz) noexcept
 {
   switch (oz.GetShape()) {
   case ObservationZone::Shape::LINE:
@@ -283,7 +264,7 @@ GetRadius(const ObservationZonePoint &oz)
   case ObservationZone::Shape::BGAENHANCEDOPTION:
   case ObservationZone::Shape::BGA_START:
   case ObservationZone::Shape::ANNULAR_SECTOR:
-  case ObservationZone::Shape::SYMMETRIC_QUADRANT:
+  case ObservationZone::Shape::SYMMETRIC_SECTOR:
     const CylinderZone &cz = (const CylinderZone &)oz;
     return cz.GetRadius();
   }
@@ -291,15 +272,15 @@ GetRadius(const ObservationZonePoint &oz)
   return 1;
 }
 
-gcc_pure
+[[gnu::pure]]
 static double
-GetRadius(const OrderedTaskPoint &tp)
+GetRadius(const OrderedTaskPoint &tp) noexcept
 {
   return GetRadius(tp.GetObservationZone());
 }
 
 void
-TargetMapWindow::SetTarget(unsigned index)
+TargetMapWindow::SetTarget(unsigned index) noexcept
 {
   GeoPoint location;
   double radius;
@@ -326,7 +307,7 @@ TargetMapWindow::SetTarget(unsigned index)
 }
 
 void
-TargetMapWindow::OnResize(PixelSize new_size)
+TargetMapWindow::OnResize(PixelSize new_size) noexcept
 {
   BufferWindow::OnResize(new_size);
 
@@ -335,7 +316,7 @@ TargetMapWindow::OnResize(PixelSize new_size)
 #endif
 
   projection.SetScreenSize(new_size);
-  projection.SetScreenOrigin(new_size.cx / 2, new_size.cy / 2);
+  projection.SetScreenOrigin(PixelRect{new_size}.GetCenter());
   projection.UpdateScreenBounds();
 }
 
@@ -353,7 +334,7 @@ TargetMapWindow::OnCreate()
 }
 
 void
-TargetMapWindow::OnDestroy()
+TargetMapWindow::OnDestroy() noexcept
 {
   SetTerrain(nullptr);
   SetTopograpgy(nullptr);

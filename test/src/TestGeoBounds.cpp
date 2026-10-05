@@ -1,26 +1,8 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Geo/GeoBounds.hpp"
+#include "Geo/Quadrilateral.hpp"
 #include "TestUtil.hpp"
 
 #include <stdio.h>
@@ -32,9 +14,9 @@ MakeGeoBounds(int west, int north, int east, int south)
                    GeoPoint(Angle::Degrees(east), Angle::Degrees(south)));
 }
 
-int main(int argc, char **argv)
+int main()
 {
-  plan_tests(58);
+  plan_tests(74);
 
   GeoPoint g(Angle::Degrees(2), Angle::Degrees(4));
 
@@ -128,6 +110,55 @@ int main(int argc, char **argv)
   ok1(equals(x.GetNorth(), inner.GetNorth()));
   ok1(equals(x.GetEast(), inner.GetEast()));
   ok1(equals(x.GetSouth(), inner.GetSouth()));
+
+  /* GeoQuadrilateral::GetBounds must be wraparound-safe */
+  const GeoQuadrilateral plain{
+    GeoPoint(Angle::Degrees(10), Angle::Degrees(20)),
+    GeoPoint(Angle::Degrees(30), Angle::Degrees(20)),
+    GeoPoint(Angle::Degrees(10), Angle::Degrees(0)),
+    GeoPoint(Angle::Degrees(30), Angle::Degrees(0)),
+  };
+  const GeoBounds plain_bounds = plain.GetBounds();
+  ok1(equals(plain_bounds.GetWest(), 10));
+  ok1(equals(plain_bounds.GetEast(), 30));
+  ok1(equals(plain_bounds.GetNorth(), 20));
+  ok1(equals(plain_bounds.GetSouth(), 0));
+  ok1(plain_bounds.IsInside(GeoPoint(Angle::Degrees(20),
+                                     Angle::Degrees(10))));
+
+  /* corners on both sides of the antimeridian */
+  const GeoQuadrilateral wrap{
+    GeoPoint(Angle::Degrees(170), Angle::Degrees(10)),
+    GeoPoint(Angle::Degrees(-170), Angle::Degrees(10)),
+    GeoPoint(Angle::Degrees(170), Angle::Degrees(-10)),
+    GeoPoint(Angle::Degrees(-170), Angle::Degrees(-10)),
+  };
+  const GeoBounds wrap_bounds = wrap.GetBounds();
+  ok1(equals(wrap_bounds.GetWest(), 170));
+  ok1(equals(wrap_bounds.GetEast(), -170));
+  ok1(equals(wrap_bounds.GetNorth(), 10));
+  ok1(equals(wrap_bounds.GetSouth(), -10));
+  ok1(wrap_bounds.IsInside(GeoPoint(Angle::Degrees(180),
+                                    Angle::Degrees(0))));
+  ok1(wrap_bounds.IsInside(GeoPoint(Angle::Degrees(-180),
+                                    Angle::Degrees(0))));
+  ok1(!wrap_bounds.IsInside(GeoPoint(Angle::Degrees(0),
+                                     Angle::Degrees(0))));
+
+  /* Unnormalized longitudes past ±180° (as ScreenToGeo can produce) */
+  const GeoQuadrilateral unnormalized{
+    GeoPoint(Angle::Degrees(-188), Angle::Degrees(10)),
+    GeoPoint(Angle::Degrees(-172), Angle::Degrees(10)),
+    GeoPoint(Angle::Degrees(-188), Angle::Degrees(-10)),
+    GeoPoint(Angle::Degrees(-172), Angle::Degrees(-10)),
+  };
+  const GeoBounds unnorm_bounds = unnormalized.GetBounds();
+  ok1(equals(unnorm_bounds.GetWest(), 172));
+  ok1(equals(unnorm_bounds.GetEast(), -172));
+  ok1(unnorm_bounds.IsInside(GeoPoint(Angle::Degrees(180),
+                                      Angle::Degrees(0))));
+  ok1(unnorm_bounds.IsInside(GeoPoint(Angle::Degrees(175),
+                                      Angle::Degrees(0))));
 
   return exit_status();
 }

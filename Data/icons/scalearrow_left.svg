@@ -1,120 +1,49 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!-- Created with Inkscape (http://www.inkscape.org/) -->
-
 <svg
-   xmlns:dc="http://purl.org/dc/elements/1.1/"
-   xmlns:cc="http://creativecommons.org/ns#"
-   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-   xmlns:svg="http://www.w3.org/2000/svg"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   version="1.0"
-   width="7"
-   height="11"
-   id="svg2816"
-   inkscape:version="0.48.3.1 r9886"
+   version="1.1"
+   viewBox="0 0 14 22"
+   id="svg3"
    sodipodi:docname="scalearrow_left.svg"
-   sodipodi:version="0.32"
-   inkscape:output_extension="org.inkscape.output.svg.inkscape">
-  <metadata
-     id="metadata15">
-    <rdf:RDF>
-      <cc:Work
-         rdf:about="">
-        <dc:format>image/svg+xml</dc:format>
-        <dc:type
-           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-      </cc:Work>
-    </rdf:RDF>
-  </metadata>
-  <sodipodi:namedview
-     pagecolor="#ff00ff"
-     bordercolor="#666666"
-     borderopacity="1"
-     objecttolerance="10"
-     gridtolerance="10"
-     guidetolerance="10"
-     inkscape:pageopacity="1"
-     inkscape:pageshadow="2"
-     inkscape:window-width="1280"
-     inkscape:window-height="774"
-     id="namedview13"
-     showgrid="true"
-     inkscape:zoom="23.6"
-     inkscape:cx="7.1176627"
-     inkscape:cy="5.2564972"
-     inkscape:window-x="471"
-     inkscape:window-y="138"
-     inkscape:window-maximized="1"
-     inkscape:current-layer="layer3"
-     showguides="true"
-     inkscape:guide-bbox="true"
-     borderlayer="true">
-    <inkscape:grid
-       type="xygrid"
-       id="grid3277" />
-  </sodipodi:namedview>
+   width="14"
+   height="22"
+   inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
   <defs
-     id="defs2818">
-    <clipPath
-       clipPathUnits="userSpaceOnUse"
-       id="clipPath3202">
-      <path
-         style="fill:none;fill-opacity:1;fill-rule:evenodd;stroke:none;stroke-width:3;stroke-linecap:butt;stroke-linejoin:round;stroke-miterlimit:4;stroke-dashoffset:0;stroke-opacity:1"
-         d="M -0.37853242,11.457627 L 4.9548035,11.457627 C 6.0596727,11.457627 6.9491524,12.43832 6.9491524,13.656491 L 6.9491524,23.411306 C 6.9491524,24.629476 6.0596727,25.610169 4.9548035,25.610169 L -0.37853242,25.610169 C -1.4834017,25.610169 -2.3728813,24.629476 -2.3728813,23.411306 L -2.3728813,13.656491 C -2.3728813,12.43832 -1.4834017,11.457627 -0.37853242,11.457627 z"
-         id="path3204" />
-    </clipPath>
-  </defs>
+     id="defs3" />
+  <sodipodi:namedview
+     id="namedview3"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showguides="true"
+     inkscape:zoom="83.454545"
+     inkscape:cx="11.005991"
+     inkscape:cy="11"
+     inkscape:window-width="3840"
+     inkscape:window-height="2078"
+     inkscape:window-x="-11"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg3" />
   <g
-     transform="translate(0,3)"
-     id="layer1" />
-  <g
-     inkscape:groupmode="layer"
-     id="layer3"
-     inkscape:label="MASK_Background"
-     transform="translate(0,-13)">
-    <g
-       id="g8237"
-       transform="translate(8.4745805e-2,0)"
-       clip-path="url(#clipPath3202)">
-      <path
-         id="path8215"
-         d="M 8.5798374,14.429361 L 12.351695,18.352044 L 8.4745762,22.384197 L 8.5798374,14.429361 z"
-         style="fill:#ffffff;fill-opacity:1;fill-rule:evenodd;stroke:#ffffff;stroke-width:2.99999976;stroke-linecap:butt;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
-      <rect
-         ry="2"
-         rx="2"
-         y="13"
-         x="-0.084745802"
-         height="11"
-         width="9"
-         id="rect8211"
-         style="opacity:1;fill:#ffffff;fill-opacity:1;fill-rule:evenodd;stroke:none;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:1, 3;stroke-dashoffset:0;stroke-opacity:1" />
-      <path
-         id="path2401"
-         d="M 1.4152542,18.5 L 8.9152542,18.5"
-         style="fill:none;fill-rule:evenodd;stroke:#5a5a5a;stroke-width:0.99999994000000003px;stroke-linecap:butt;stroke-linejoin:miter;marker-start:none;marker-end:none;stroke-opacity:1"
-         sodipodi:nodetypes="cc" />
-      <path
-         id="path8207"
-         d="M 8.5169495,14.254237 L 12.669492,18.406779 L 8.4957625,22.580508"
-         style="fill:none;fill-rule:evenodd;stroke:#000000;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1" />
-    </g>
+     transform="matrix(-0.694213,0,0,0.689612,14.022568,-0.02)"
+     fill-rule="evenodd"
+     id="g2">
     <path
-       style="fill:none;fill-rule:evenodd;stroke:#5a5a5a;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-       d="M 1.5,2 L 1.5,9"
-       id="path3812"
-       transform="translate(0,13)"
-       sodipodi:nodetypes="cc" />
+       d="M 20.228,15.98 C 20.2237,14.8699 19.80076,13.7612 18.9592,12.9136 L 7.4012,1.2786 C 6.6077,0.48093 5.5602,0.0434 4.4835,0.0072 V -6.01e-5 L 0.0037,2e-4 l 8.68e-6,31.96 4.47980002,-0.0012 v -0.0058 c 1.0767,-0.03619 2.1242,-0.47373 2.9177,-1.2714 L 18.959209,19.0468 c 0.84157,-0.84756 1.2659,-1.9563 1.2688,-3.0664"
+       fill="#ffffff"
+       style="-inkscape-stroke:none"
+       id="path1" />
+    <path
+       d="M 5.358,3.3367 3.3151,5.394 13.8581,16 3.3151,26.606 5.358,28.6633 17.938,16.0003 Z"
+       style="-inkscape-stroke:none"
+       id="path2" />
   </g>
-  <g
-     inkscape:groupmode="layer"
-     id="layer2"
-     inkscape:label="Layer"
-     transform="translate(0,-13)" />
-  <g
-     inkscape:groupmode="layer"
-     id="layer4"
-     inkscape:label="Glider" />
 </svg>

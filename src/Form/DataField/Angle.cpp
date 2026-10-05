@@ -1,37 +1,15 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Angle.hpp"
+#include "util/StringFormat.hpp"
 #include "ComboList.hpp"
-#include "Util/NumberParser.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
 #include <stdio.h>
 
-static TCHAR buffer[16];
-
 unsigned
-AngleDataField::Import(int value)
+AngleDataField::Import(int value) noexcept
 {
   assert(value >= -int(MAX));
   if (value < 0)
@@ -41,7 +19,7 @@ AngleDataField::Import(int value)
 }
 
 void
-AngleDataField::ModifyValue(unsigned _value)
+AngleDataField::ModifyValue(unsigned _value) noexcept
 {
   unsigned value2 = Import(_value);
   if (value2 == value)
@@ -52,7 +30,7 @@ AngleDataField::ModifyValue(unsigned _value)
 }
 
 void
-AngleDataField::ModifyValue(int _value)
+AngleDataField::ModifyValue(int _value) noexcept
 {
   unsigned value2 = Import(_value);
   if (value2 == value)
@@ -63,7 +41,7 @@ AngleDataField::ModifyValue(int _value)
 }
 
 void
-AngleDataField::ModifyValue(Angle _value)
+AngleDataField::ModifyValue(Angle _value) noexcept
 {
   unsigned value2 = Import(_value);
   if (value2 == value)
@@ -73,52 +51,34 @@ AngleDataField::ModifyValue(Angle _value)
   Modified();
 }
 
-int
-AngleDataField::GetAsInteger() const
+const char *
+AngleDataField::GetAsString() const noexcept
 {
-  return GetIntegerValue();
+  StringFormat(string_buffer, sizeof(string_buffer), "%u", GetIntegerValue());
+  return string_buffer;
 }
 
-const TCHAR *
-AngleDataField::GetAsString() const
+const char *
+AngleDataField::GetAsDisplayString() const noexcept
 {
-  _stprintf(buffer, _T("%u"), GetIntegerValue());
-  return buffer;
-}
-
-const TCHAR *
-AngleDataField::GetAsDisplayString() const
-{
-  _stprintf(buffer, _T("%u°"), GetIntegerValue());
-  return buffer;
+  StringFormat(string_buffer, sizeof(string_buffer), "%u°", GetIntegerValue());
+  return string_buffer;
 }
 
 void
-AngleDataField::SetAsInteger(int _value)
-{
-  ModifyValue(_value);
-}
-
-void
-AngleDataField::SetAsString(const TCHAR *_value)
-{
-  ModifyValue(Angle::Degrees(ParseDouble(_value)));
-}
-
-void
-AngleDataField::Inc()
+AngleDataField::Inc() noexcept
 {
   ModifyValue(value + step);
 }
 
 void
-AngleDataField::Dec()
+AngleDataField::Dec() noexcept
 {
   ModifyValue(MAX + value - step);
 }
 
 void
-AngleDataField::SetFromCombo(int i, gcc_unused const TCHAR *s)
+AngleDataField::SetFromCombo(int i, [[maybe_unused]] const char *s) noexcept
 {
   assert(i >= 0);
   assert(unsigned(i) < MAX);
@@ -127,16 +87,16 @@ AngleDataField::SetFromCombo(int i, gcc_unused const TCHAR *s)
 }
 
 static void
-AppendComboValue(ComboList &combo_list, unsigned value)
+AppendComboValue(ComboList &combo_list, unsigned value) noexcept
 {
-  TCHAR buffer1[ARRAY_SIZE(buffer)], buffer2[ARRAY_SIZE(buffer)];
-  _stprintf(buffer1, _T("%u"), value);
-  _stprintf(buffer2, _T("%u°"), value);
+  char buffer1[16], buffer2[16];
+  StringFormat(buffer1, sizeof(buffer1), "%u", value);
+  StringFormat(buffer2, sizeof(buffer2), "%u°", value);
   combo_list.Append(value, buffer1, buffer2);
 }
 
 ComboList
-AngleDataField::CreateComboList(const TCHAR *reference) const
+AngleDataField::CreateComboList([[maybe_unused]] const char *reference) const noexcept
 {
   ComboList combo_list;
 

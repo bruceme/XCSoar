@@ -1,40 +1,18 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Terrain/RasterMap.hpp"
 #include "Terrain/HeightMatrix.hpp"
 #include "Terrain/Loader.hpp"
+#include "Operation/ConsoleOperationEnvironment.hpp"
 #include "Projection/WindowProjection.hpp"
 #include "Screen/Layout.hpp"
-#include "OS/Args.hpp"
-#include "IO/ZipArchive.hpp"
-#include "Operation/Operation.hpp"
-#include "Util/PrintException.hxx"
+#include "system/Args.hpp"
+#include "io/ZipArchive.hpp"
+#include "util/PrintException.hxx"
 
 #include <stdio.h>
 #include <string.h>
-#include <tchar.h>
-
 unsigned Layout::scale_1024 = 1024;
 
 int main(int argc, char **argv)
@@ -47,11 +25,9 @@ try {
 
   RasterMap map;
 
-  NullOperationEnvironment operation;
-  if (!LoadTerrainOverview(archive.get(), map.GetTileCache(),
-                           operation)) {
-    fprintf(stderr, "failed to load map\n");
-    return EXIT_FAILURE;
+  {
+    ConsoleOperationEnvironment operation;
+    LoadTerrainOverview(archive.get(), map.GetTileCache(), operation);
   }
 
   map.UpdateProjection();
@@ -74,7 +50,7 @@ try {
   HeightMatrix matrix;
 #ifdef ENABLE_OPENGL
   matrix.Fill(map, projection.GetScreenBounds(),
-              projection.GetScreenWidth(), projection.GetScreenHeight(),
+              (UnsignedPoint2D)projection.GetScreenSize(),
               false);
 #else
   matrix.Fill(map, projection, 1, false);

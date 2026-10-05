@@ -1,31 +1,13 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef GEOELLIPSE_HPP
-#define GEOELLIPSE_HPP
+#pragma once
 
 #include "Flat/FlatProjection.hpp"
 #include "Flat/FlatEllipse.hpp"
-#include "Compiler.h"
+
+#include <optional>
+#include <utility>
 
 /**
  * Ellipse in geodesic coordinates, defined by two foci and
@@ -56,7 +38,7 @@ public:
    *
    * @return Location of point on ellipse
    */
-  gcc_pure
+  [[gnu::pure]]
   GeoPoint Parametric(double t) const;
 
   /**
@@ -69,8 +51,6 @@ public:
    *
    * @return True if line intersects
    */
-  bool IntersectExtended(const GeoPoint &p, GeoPoint &i1, GeoPoint &i2) const;
+  [[gnu::pure]]
+  std::optional<std::pair<GeoPoint, GeoPoint>> IntersectExtended(const GeoPoint &p) const noexcept;
 };
-
-
-#endif

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "WaypointDialogs.hpp"
 #include "Dialogs/WidgetDialog.hpp"
@@ -36,6 +16,7 @@ Copyright_License {
 class WaypointEditWidget final : public RowFormWidget, DataFieldListener {
   enum Rows {
     NAME,
+    SHORTNAME,
     COMMENT,
     LOCATION,
     ELEVATION,
@@ -47,7 +28,7 @@ class WaypointEditWidget final : public RowFormWidget, DataFieldListener {
   bool modified;
 
 public:
-  WaypointEditWidget(const DialogLook &look, Waypoint _value)
+  WaypointEditWidget(const DialogLook &look, const Waypoint &_value) noexcept
     :RowFormWidget(look), value(_value), modified(false) {}
 
   const Waypoint &GetValue() const {
@@ -56,71 +37,82 @@ public:
 
 private:
   /* virtual methods from Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
   /* virtual methods from DataFieldListener */
-  void OnModified(gcc_unused DataField &df) override {
+  void OnModified(DataField &) noexcept override {
     modified = true;
   }
 };
 
 static constexpr StaticEnumChoice waypoint_types[] = {
-  { 0, N_("Turnpoint"), nullptr },
-  { 1, N_("Airport"), nullptr },
-  { 2, N_("Landable"), nullptr },
-  { 0 }
+  { Waypoint::Type::NORMAL, N_("Turnpoint") },
+  { Waypoint::Type::AIRFIELD, N_("Airport") },
+  { Waypoint::Type::OUTLANDING, N_("Landable") },
+  { Waypoint::Type::MOUNTAIN_PASS, N_("Mountain Pass") },
+  { Waypoint::Type::MOUNTAIN_TOP, N_("Mountain Top") },
+  { Waypoint::Type::OBSTACLE, N_("Transmitter Mast") },
+  { Waypoint::Type::TOWER, N_("Tower") },
+  { Waypoint::Type::TUNNEL, N_("Tunnel") },
+  { Waypoint::Type::BRIDGE, N_("Bridge") },
+  { Waypoint::Type::POWERPLANT, N_("Power Plant") },
+  { Waypoint::Type::VOR, N_("VOR") },
+  { Waypoint::Type::NDB, N_("NDB") },
+  { Waypoint::Type::DAM, N_("Dam") },
+  { Waypoint::Type::CASTLE, N_("Castle") },
+  { Waypoint::Type::INTERSECTION, N_("Intersection") },
+  { Waypoint::Type::MARKER, N_("Marker") },
+  { Waypoint::Type::REPORTING_POINT, N_("Control Point") },
+  { Waypoint::Type::PGTAKEOFF, N_("PG Take Off") },
+  { Waypoint::Type::PGLANDING, N_("PG Landing Zone") },
+  nullptr
 };
 
 void
-WaypointEditWidget::Prepare(gcc_unused ContainerWindow &parent,
-                            gcc_unused const PixelRect &rc)
+WaypointEditWidget::Prepare(ContainerWindow &, const PixelRect &) noexcept
 {
   AddText(_("Name"), nullptr, value.name.c_str(), this);
+  AddText(_("Short Name"), nullptr, value.shortname.c_str(), this);
   AddText(_("Comment"), nullptr, value.comment.c_str(), this);
   Add(_("Location"), nullptr,
       new GeoPointDataField(value.location,
                             UIGlobals::GetFormatSettings().coordinate_format,
                             this));
   AddFloat(_("Altitude"), nullptr,
-           _T("%.0f %s"), _T("%.0f"),
+           "%.0f %s", "%.0f",
            0, 30000, 5, false,
-           UnitGroup::ALTITUDE, value.elevation);
-  AddEnum(_("Type"), nullptr, waypoint_types,
-          value.IsAirport() ? 1u : (value.IsLandable() ? 2u : 0u),
-          this);
+           UnitGroup::ALTITUDE, value.GetElevationOrZero(), this);
+  AddEnum(_("Type"), nullptr, waypoint_types, (unsigned)value.type, this);
 }
 
 bool
-WaypointEditWidget::Save(bool &_changed)
+WaypointEditWidget::Save(bool &_changed) noexcept
 {
   bool changed = modified;
   value.name = GetValueString(NAME);
+  value.shortname = GetValueString(SHORTNAME);
   value.comment = GetValueString(COMMENT);
   value.location = ((GeoPointDataField &)GetDataField(LOCATION)).GetValue();
-  changed |= SaveValue(ELEVATION, UnitGroup::ALTITUDE, value.elevation);
+
+  if (double elevation = value.GetElevationOrZero();
+      SaveValue(ELEVATION, UnitGroup::ALTITUDE, elevation)) {
+    value.elevation = elevation;
+    value.has_elevation = true;
+  }
+
+  if (SaveValueEnum(TYPE, value.type)) {
+    changed = true;
+
+    value.flags.turn_point = value.type == Waypoint::Type::AIRFIELD ||
+      value.type == Waypoint::Type::NORMAL;
+  }
+
   _changed |= changed;
-
-  switch (GetValueInteger(TYPE)) {
-  case 1:
-    value.flags.turn_point = true;
-    value.type = Waypoint::Type::AIRFIELD;
-    break;
-
-  case 2:
-    value.type = Waypoint::Type::OUTLANDING;
-    break;
-
-  default:
-    value.type = Waypoint::Type::NORMAL;
-    value.flags.turn_point = true;
-    break;
-  };
-
   return true;
 }
 
-bool
+WaypointEditResult
 dlgWaypointEditShowModal(Waypoint &way_point)
 {
   if (UIGlobals::GetFormatSettings().coordinate_format ==
@@ -128,21 +120,24 @@ dlgWaypointEditShowModal(Waypoint &way_point)
     ShowMessageBox(
         _("Sorry, the waypoint editor is not yet available for the UTM coordinate format."),
         _("Waypoint Editor"), MB_OK);
-    return false;
+    return WaypointEditResult::CANCEL;
   }
 
   const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
-  WaypointEditWidget widget(look, way_point);
-  dialog.CreateAuto(UIGlobals::GetMainWindow(), _("Waypoint Editor"), &widget);
+  TWidgetDialog<WaypointEditWidget>
+    dialog(WidgetDialog::Auto{}, UIGlobals::GetMainWindow(),
+           look, _("Waypoint Editor"));
   dialog.AddButton(_("OK"), mrOK);
   dialog.AddButton(_("Cancel"), mrCancel);
+  dialog.SetWidget(look, way_point);
   const int result = dialog.ShowModal();
-  dialog.StealWidget();
 
-  if (result != mrOK || !dialog.GetChanged())
-    return false;
+  if (result != mrOK)
+    return WaypointEditResult::CANCEL;
 
-  way_point = widget.GetValue();
-  return true;
+  if (!dialog.GetChanged())
+    return WaypointEditResult::UNMODIFIED;
+
+  way_point = dialog.GetWidget().GetValue();
+  return WaypointEditResult::MODIFIED;
 }

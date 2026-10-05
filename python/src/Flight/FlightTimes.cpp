@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "FlightTimes.hpp"
 #include "DebugReplay.hpp"
@@ -42,7 +23,7 @@ Update(const MoreData &basic, const FlyingState &state,
     result.landing_location = state.landing_location;
   }
 
-  if (state.release_time >= 0 && !result.release_time.IsPlausible()) {
+  if (state.release_time.IsDefined() && !result.release_time.IsPlausible()) {
     result.release_time = basic.GetDateTimeAt(state.release_time);
     result.release_location = state.release_location;
   }
@@ -55,9 +36,8 @@ Update(const MoreData &basic, const DerivedInfo &calculated,
   Update(basic, calculated.flight, result);
 }
 
-void
-Finish(const MoreData &basic, const DerivedInfo &calculated,
-       FlightTimeResult &result)
+static void
+Finish(const MoreData &basic, FlightTimeResult &result)
 {
   if (!basic.time_available || !basic.date_time_utc.IsDatePlausible())
     return;
@@ -83,7 +63,8 @@ Run(DebugReplay &replay, FlightTimeResult &result)
   replay.SetCalculated().Reset();
   replay.SetFlyingComputer().Reset();
 
-  while (replay.Next()) {
+  bool had_next;
+  while ((had_next = replay.Next())) {
     const MoreData &basic = replay.Basic();
 
     Update(basic, replay.Calculated(), result);
@@ -103,7 +84,7 @@ Run(DebugReplay &replay, FlightTimeResult &result)
 
     last_location = basic.location;
 
-    if (!released && replay.Calculated().flight.release_time >= 0) {
+    if (!released && replay.Calculated().flight.release_time.IsDefined()) {
       released = true;
     }
 
@@ -132,10 +113,10 @@ Run(DebugReplay &replay, FlightTimeResult &result)
   }
 
   Update(replay.Basic(), replay.Calculated(), result);
-  Finish(replay.Basic(), replay.Calculated(), result);
+  Finish(replay.Basic(), result);
 
   // landing detected or eof?
-  if (replay.Tell() != replay.Size())
+  if (had_next)
     return false;
   else
     return true;
@@ -152,7 +133,7 @@ void FlightTimes(DebugReplay &replay, std::vector<FlightTimeResult> &results)
         && result.landing_time.IsPlausible()) {
 
       if (result.release_time.IsPlausible() &&
-          result.release_time.ToUnixTimeUTC() < result.takeoff_time.ToUnixTimeUTC())
+          result.release_time < result.takeoff_time)
         result.release_time = result.takeoff_time;
 
       results.push_back(result);

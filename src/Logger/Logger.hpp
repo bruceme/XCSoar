@@ -1,33 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_LOGGER_HPP
-#define XCSOAR_LOGGER_HPP
+#pragma once
 
 #include "LoggerImpl.hpp"
-#include "Thread/SharedMutex.hpp"
-
-#include <tchar.h>
+#include "system/Path.hpp"
+#include "thread/Mutex.hxx"
 
 struct NMEAInfo;
 struct ComputerSettings;
@@ -36,7 +14,7 @@ class ProtectedTaskManager;
 
 class Logger {
   LoggerImpl logger;
-  mutable SharedMutex lock;
+  mutable Mutex lock;
 
   void LogEvent(const NMEAInfo &gps_info, const char*);
 
@@ -44,11 +22,19 @@ public:
   void LogPoint(const NMEAInfo &gps_info);
   void LogStartEvent(const NMEAInfo &gps_info);
   void LogFinishEvent(const NMEAInfo &gps_info);
+  void LogPilotEvent(const NMEAInfo &gps_info);
 
-  gcc_pure
-  bool IsLoggerActive() const;
+  [[gnu::pure]]
+  bool IsLoggerActive() const noexcept;
 
-  bool LoggerClearFreeSpace(unsigned current_year);
+  /**
+   * The IGC file being written right now, or nullptr while the
+   * logger is off.  A backup leaves it out: it is not sharable on
+   * Windows, and incomplete anyway.
+   */
+  [[gnu::pure]]
+  AllocatedPath GetActivePath() const noexcept;
+
   void GUIStartLogger(const NMEAInfo& gps_info,
                       const ComputerSettings& settings,
                       const ProtectedTaskManager *protected_task_manager,
@@ -59,8 +45,6 @@ public:
                        bool noAsk = false);
   void GUIStopLogger(const NMEAInfo &gps_info,
                      bool noAsk = false);
-  void LoggerNote(const TCHAR *text);
-  void ClearBuffer();
+  void LoggerNote(const char *text);
+  void ClearBuffer() noexcept;
 };
-
-#endif

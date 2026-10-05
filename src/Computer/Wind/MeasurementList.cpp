@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 /* This library was originally imported from Cumulus
    http://kflog.org/cumulus/ */
@@ -35,7 +15,7 @@ Copyright_License {
  * too low quality data).
  */
 const Vector
-WindMeasurementList::getWind(unsigned now, double alt, bool &found) const
+WindMeasurementList::getWind(TimeStamp now, double alt, bool &found) const
 {
   //relative weight for each factor
   static constexpr unsigned REL_FACTOR_QUALITY = 100;
@@ -43,7 +23,7 @@ WindMeasurementList::getWind(unsigned now, double alt, bool &found) const
   static constexpr unsigned REL_FACTOR_TIME = 200;
 
   static constexpr unsigned altRange = 1000;
-  static constexpr unsigned timeRange = 3600; // one hour
+  static constexpr FloatDuration timeRange = std::chrono::hours{1};
 
   static constexpr double k = 0.0025;
 
@@ -64,7 +44,7 @@ WindMeasurementList::getWind(unsigned now, double alt, bool &found) const
          warps "should" be filtered at a higher level already */
       continue;
 
-    auto timediff = double(now - m.time) / timeRange;
+    auto timediff = (now - m.time) / timeRange;
     if (timediff >= 1)
       continue;
 
@@ -132,7 +112,7 @@ WindMeasurementList::getWind(unsigned now, double alt, bool &found) const
  * Adds the windvector vector with quality quality to the list.
  */
 void
-WindMeasurementList::addMeasurement(unsigned time, const SpeedVector &vector,
+WindMeasurementList::addMeasurement(TimeStamp time, const SpeedVector &vector,
                                     double alt, unsigned quality)
 {
   WindMeasurement &wind = measurements.full()
@@ -150,7 +130,7 @@ WindMeasurementList::addMeasurement(unsigned time, const SpeedVector &vector,
  * removed if the list is too full. Reimplemented from LimitedList.
  */
 unsigned
-WindMeasurementList::getLeastImportantItem(unsigned now)
+WindMeasurementList::getLeastImportantItem(TimeStamp now) noexcept
 {
   unsigned maxscore = 0;
   unsigned int founditem = measurements.size() - 1;

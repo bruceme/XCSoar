@@ -1,30 +1,9 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ATMOSPHERE_PRESSURE_H
-#define XCSOAR_ATMOSPHERE_PRESSURE_H
-
-#include "Compiler.h"
+#include <compare> // for the defaulted spaceship operator
 
 /**
  * ICAO Standard Atmosphere calculations (valid in Troposphere, alt<11000m)
@@ -39,7 +18,7 @@ class AtmosphericPressure
    * @param value the pressure in hPa
    */
   explicit constexpr
-  AtmosphericPressure(double _value):value(_value) {}
+  AtmosphericPressure(double _value) noexcept:value(_value) {}
 
 public:
   /**
@@ -54,7 +33,7 @@ public:
    * "invalid" (IsPlausible() returns false).
    */
   static constexpr
-  AtmosphericPressure Zero() {
+  AtmosphericPressure Zero() noexcept {
     return AtmosphericPressure(0);
   }
 
@@ -63,17 +42,17 @@ public:
    * hPa).
    */
   static constexpr
-  AtmosphericPressure Standard() {
+  AtmosphericPressure Standard() noexcept {
     return AtmosphericPressure(1013.25);
   }
 
   static constexpr
-  AtmosphericPressure Pascal(double value) {
+  AtmosphericPressure Pascal(double value) noexcept {
     return AtmosphericPressure(value / 100);
   }
 
   static constexpr
-  AtmosphericPressure HectoPascal(double value) {
+  AtmosphericPressure HectoPascal(double value) noexcept {
     return AtmosphericPressure(value);
   }
 
@@ -81,11 +60,15 @@ public:
    * Is this a plausible value?
    */
   constexpr
-  bool IsPlausible() const {
+  bool IsPlausible() const noexcept {
     return value > 100 && value < 1200;
   }
 
-  double GetPascal() const {
+  constexpr bool IsPositive() const noexcept {
+    return value > 0;
+  }
+
+  double GetPascal() const noexcept {
     return GetHectoPascal() * 100;
   }
 
@@ -94,8 +77,19 @@ public:
    *
    * @return QNH value (hPa)
    */
-  double GetHectoPascal() const {
+  double GetHectoPascal() const noexcept {
     return value;
+  }
+
+  friend constexpr auto operator<=>(const AtmosphericPressure &,
+                                    const AtmosphericPressure &) noexcept = default;
+
+  constexpr auto operator+(AtmosphericPressure other) const noexcept {
+    return AtmosphericPressure{value + other.value};
+  }
+
+  constexpr auto operator-(AtmosphericPressure other) const noexcept {
+    return AtmosphericPressure{value - other.value};
   }
 
   /**
@@ -105,25 +99,25 @@ public:
    * @param pressure Current pressure
    * @param alt_known Altitude of a known location (m)
    */
-  gcc_const
+  [[gnu::const]]
   static AtmosphericPressure FindQNHFromPressure(AtmosphericPressure pressure,
-                                                 double alt_known);
+                                                 double alt_known) noexcept;
 
   /**
    * Converts altitude with QNH=1013.25 reference to QNH adjusted altitude
    * @param alt 1013.25-based altitude (m)
    * @return QNH-based altitude (m)
    */
-  gcc_pure
-  double PressureAltitudeToQNHAltitude(double alt) const;
+  [[gnu::pure]]
+  double PressureAltitudeToQNHAltitude(double alt) const noexcept;
 
   /**
    * Converts QNH adjusted altitude to pressure altitude (with QNH=1013.25 as reference)
    * @param alt QNH-based altitude(m)
    * @return pressure altitude (m)
    */
-  gcc_pure
-  double QNHAltitudeToPressureAltitude(double alt) const;
+  [[gnu::pure]]
+  double QNHAltitudeToPressureAltitude(double alt) const noexcept;
 
   /**
    * Converts a pressure value to the corresponding QNH-based altitude
@@ -136,8 +130,8 @@ public:
    * @param ps Air pressure
    * @return Altitude over QNH-based zero (m)
    */
-  gcc_pure
-  double StaticPressureToQNHAltitude(const AtmosphericPressure ps) const;
+  [[gnu::pure]]
+  double StaticPressureToQNHAltitude(const AtmosphericPressure ps) const noexcept;
 
   /**
    * Converts a QNH-based altitude to the corresponding pressure
@@ -150,16 +144,16 @@ public:
    * @param alt Altitude over QNH-based zero (m)
    * @return Air pressure at given altitude
    */
-  gcc_pure
-  AtmosphericPressure QNHAltitudeToStaticPressure(double alt) const;
+  [[gnu::pure]]
+  AtmosphericPressure QNHAltitudeToStaticPressure(double alt) const noexcept;
 
   /**
    * Converts a pressure value to pressure altitude (with QNH=1013.25 as reference)
    * @param ps Air pressure
    * @return pressure altitude (m)
    */
-  gcc_const
-  static double StaticPressureToPressureAltitude(const AtmosphericPressure ps);
+  [[gnu::const]]
+  static double StaticPressureToPressureAltitude(const AtmosphericPressure ps) noexcept;
 
   /**
    * Converts a 1013.25 hPa based altitude to the corresponding pressure
@@ -168,8 +162,6 @@ public:
    * @param alt Altitude over 1013.25 hPa based zero(m)
    * @return Air pressure at given altitude
    */
-  gcc_const
-  static AtmosphericPressure PressureAltitudeToStaticPressure(double alt);
+  [[gnu::const]]
+  static AtmosphericPressure PressureAltitudeToStaticPressure(double alt) noexcept;
 };
-
-#endif

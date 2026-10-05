@@ -1,42 +1,19 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "ButtonPanelWidget.hpp"
 #include "Look/DialogLook.hpp"
 #include "Form/ButtonPanel.hpp"
 #include "Screen/Layout.hpp"
 #include "UIGlobals.hpp"
+#include "util/Compiler.h"
 
-#include <assert.h>
+#include <cassert>
 
-ButtonPanelWidget::~ButtonPanelWidget()
-{
-  delete buttons;
-  delete widget;
-}
+ButtonPanelWidget::~ButtonPanelWidget() noexcept = default;
 
 PixelRect
-ButtonPanelWidget::UpdateLayout(const PixelRect &rc)
+ButtonPanelWidget::UpdateLayout(const PixelRect &rc) noexcept
 {
   assert(buttons != nullptr);
 
@@ -55,29 +32,30 @@ ButtonPanelWidget::UpdateLayout(const PixelRect &rc)
 }
 
 PixelSize
-ButtonPanelWidget::GetMinimumSize() const
+ButtonPanelWidget::GetMinimumSize() const noexcept
 {
   PixelSize size = widget->GetMinimumSize();
-  if (size.cy > 0)
-    size.cy += Layout::GetMinimumControlHeight();
+  if (size.height > 0)
+    size.height += Layout::GetMinimumControlHeight();
   return size;
 }
 
 PixelSize
-ButtonPanelWidget::GetMaximumSize() const
+ButtonPanelWidget::GetMaximumSize() const noexcept
 {
   PixelSize size = widget->GetMaximumSize();
-  if (size.cy > 0)
-    size.cy += Layout::GetMaximumControlHeight();
+  if (size.height > 0)
+    size.height += Layout::GetMaximumControlHeight();
   return size;
 }
 
 void
-ButtonPanelWidget::Initialise(ContainerWindow &parent, const PixelRect &rc)
+ButtonPanelWidget::Initialise(ContainerWindow &parent,
+                              const PixelRect &rc) noexcept
 {
   assert(buttons == nullptr);
 
-  buttons = new ButtonPanel(parent, UIGlobals::GetDialogLook().button);
+  buttons = std::make_unique<ButtonPanel>(parent, UIGlobals::GetDialogLook().button);
   buttons->SetDefaultHidden();
 
   /* initialise with full dimensions for now, buttons will be added
@@ -86,7 +64,8 @@ ButtonPanelWidget::Initialise(ContainerWindow &parent, const PixelRect &rc)
 }
 
 void
-ButtonPanelWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+ButtonPanelWidget::Prepare(ContainerWindow &parent,
+                           const PixelRect &rc) noexcept
 {
   assert(buttons != nullptr);
 
@@ -96,7 +75,7 @@ ButtonPanelWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
 }
 
 void
-ButtonPanelWidget::Unprepare()
+ButtonPanelWidget::Unprepare() noexcept
 {
   assert(buttons != nullptr);
 
@@ -104,19 +83,19 @@ ButtonPanelWidget::Unprepare()
 }
 
 bool
-ButtonPanelWidget::Save(bool &changed)
+ButtonPanelWidget::Save(bool &changed) noexcept
 {
   return widget->Save(changed);
 }
 
 bool
-ButtonPanelWidget::Click()
+ButtonPanelWidget::Click() noexcept
 {
   return widget->Click();
 }
 
 void
-ButtonPanelWidget::ReClick()
+ButtonPanelWidget::ReClick() noexcept
 {
   assert(buttons != nullptr);
 
@@ -124,41 +103,50 @@ ButtonPanelWidget::ReClick()
 }
 
 void
-ButtonPanelWidget::Show(const PixelRect &rc)
+ButtonPanelWidget::Show(const PixelRect &rc) noexcept
 {
   assert(buttons != nullptr);
 
-  widget->Show(UpdateLayout(rc));
   buttons->ShowAll();
+  widget->Show(UpdateLayout(rc));
 }
 
 bool
-ButtonPanelWidget::Leave()
+ButtonPanelWidget::Leave() noexcept
 {
   return widget->Leave();
 }
 
 void
-ButtonPanelWidget::Hide()
+ButtonPanelWidget::Hide() noexcept
 {
   buttons->HideAll();
   widget->Hide();
 }
 
 void
-ButtonPanelWidget::Move(const PixelRect &rc)
+ButtonPanelWidget::Move(const PixelRect &rc) noexcept
 {
   widget->Move(UpdateLayout(rc));
 }
 
 bool
-ButtonPanelWidget::SetFocus()
+ButtonPanelWidget::SetFocus() noexcept
 {
   return widget->SetFocus();
 }
 
 bool
-ButtonPanelWidget::KeyPress(unsigned key_code)
+ButtonPanelWidget::HasFocus() const noexcept
 {
-  return widget->KeyPress(key_code) || buttons->KeyPress(key_code);
+  return widget->HasFocus() || buttons->HasFocus();
+}
+
+bool
+ButtonPanelWidget::KeyPress(unsigned key_code) noexcept
+{
+  /* apply ButtonPanel hot keys and cursor navigation only any part of
+     this widget is focused */
+  return (HasFocus() && buttons->KeyPress(key_code)) ||
+    widget->KeyPress(key_code);
 }

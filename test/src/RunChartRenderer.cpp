@@ -1,41 +1,20 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_DIALOG_LOOK
 
 #include "Main.hpp"
-#include "Screen/SingleWindow.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/window/SingleWindow.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/control/List.hpp"
 #include "Look/ChartLook.hpp"
-#include "Form/List.hpp"
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 #include "Renderer/ChartRenderer.hpp"
 
-static const TCHAR *const chart_names[] = {
-  _T("Line"),
-  _T("Line2"),
+static const char *const chart_names[] = {
+  "Line",
+  "Line2",
 };
 
 class ChartWindow : public PaintWindow {
@@ -55,13 +34,13 @@ public:
   }
 
 protected:
-  virtual void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 
   void DrawChart(ChartRenderer &renderer);
 };
 
 void
-ChartWindow::OnPaint(Canvas &canvas)
+ChartWindow::OnPaint(Canvas &canvas) noexcept
 {
   canvas.ClearWhite();
   ChartRenderer renderer(look, canvas, canvas.GetRect());
@@ -71,6 +50,13 @@ ChartWindow::OnPaint(Canvas &canvas)
 void
 ChartWindow::DrawChart(ChartRenderer &renderer)
 {
+  if (chart == 1) {
+    renderer.SetXLabel("VVV","m/s");
+    renderer.SetYLabel("AAA","m/s");
+  }
+
+  renderer.Begin();
+
   renderer.ScaleXFromValue(0);
   renderer.ScaleXFromValue(100);
 
@@ -78,52 +64,47 @@ ChartWindow::DrawChart(ChartRenderer &renderer)
   renderer.ScaleYFromValue(100);
 
   if (chart == 0) {
-    renderer.DrawLine(0, 10, 100, 70,
+    renderer.DrawLine({0, 10}, {100, 70},
                       look.GetPen(ChartLook::STYLE_BLUETHINDASH));
   } else if (chart == 1) {
     renderer.ScaleXFromValue(-50);
     renderer.ScaleXFromValue(110);
     renderer.ScaleYFromValue(110);
 
-    renderer.DrawLine(0, 10, 100, 70,
+    renderer.DrawLine({0, 10}, {100, 70},
                       look.GetPen(ChartLook::STYLE_BLUETHINDASH));
 
-    renderer.DrawLine(0, 10, 100, 80,
+    renderer.DrawLine({0, 10}, {100, 80},
                       look.GetPen(ChartLook::STYLE_GREENDASH));
 
-    renderer.DrawLine(0, 10, 100, 100,
+    renderer.DrawLine({0, 10}, {100, 100},
                       look.GetPen(ChartLook::STYLE_BLACK));
 
     renderer.DrawXGrid(20, 20, ChartRenderer::UnitFormat::NUMERIC);
 
     renderer.DrawYGrid(20, 20, ChartRenderer::UnitFormat::NUMERIC);
 
-    renderer.DrawLabel(_T("hello"), 50, 50);
-    renderer.DrawXLabel(_T("VVV"),_T("m/s"));
-    renderer.DrawYLabel(_T("AAA"),_T("m/s"));
+    renderer.DrawLabel({50, 50}, "hello");
   }
+
+  renderer.Finish();
 }
 
-class TestWindow : public SingleWindow,
-                   ActionListener,
+class TestWindow : public UI::SingleWindow,
                    ListItemRenderer, ListCursorHandler {
   Button close_button;
-  ListControl *type_list;
+  ListControl *type_list = nullptr;
   ChartWindow chart;
 
-  enum Buttons {
-    CLOSE,
-  };
-
 public:
-  TestWindow(const ChartLook &chart_look)
-    :type_list(NULL), chart(chart_look) {}
+  TestWindow(UI::Display &display, const ChartLook &chart_look)
+    :UI::SingleWindow(display), chart(chart_look) {}
   ~TestWindow() {
     delete type_list;
   }
 
   void Create(const DialogLook &look, PixelSize size) {
-    SingleWindow::Create(_T("RunChartRenderer"), size);
+    SingleWindow::Create("RunChartRenderer", size);
 
     const PixelRect rc = GetClientRect();
 
@@ -146,33 +127,24 @@ public:
     PixelRect button_rc = rc;
     button_rc.right = list_rc.right;
     button_rc.top = button_rc.bottom - 30;
-    close_button.Create(*this, *button_look, _T("Close"), button_rc,
+    close_button.Create(*this, *button_look, "Close", button_rc,
                         WindowStyle(),
-                        *this, CLOSE);
+                        [this](){ Close(); });
 
     type_list->SetFocus();
   }
 
 protected:
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override {
-    switch (id) {
-    case CLOSE:
-      Close();
-      break;
-    }
-  }
-
   /* virtual methods from ListItemRenderer */
-  virtual void OnPaintItem(Canvas &canvas, const PixelRect rc,
-                           unsigned idx) override {
+  void OnPaintItem(Canvas &canvas, const PixelRect rc,
+                   unsigned idx) noexcept override {
     assert(idx < ARRAY_SIZE(chart_names));
 
-    canvas.DrawText(rc.left + 2, rc.top + 2, chart_names[idx]);
+    canvas.DrawText(rc.WithPadding(2).GetTopLeft(), chart_names[idx]);
   }
 
   /* virtual methods from ListCursorHandler */
-  virtual void OnCursorMoved(unsigned idx) override {
+  void OnCursorMoved(unsigned idx) noexcept override {
     assert(idx < ARRAY_SIZE(chart_names));
 
     chart.SetChart(idx);
@@ -180,12 +152,12 @@ protected:
 };
 
 static void
-Main()
+Main(UI::Display &display)
 {
   ChartLook chart_look;
   chart_look.Initialise();
 
-  TestWindow window(chart_look);
+  TestWindow window{display, chart_look};
   window.Create(*dialog_look, {640, 480});
 
   window.Show();

@@ -1,52 +1,157 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "AirspaceAltitude.hpp"
 #include "Atmosphere/Pressure.hpp"
 #include "Navigation/Aircraft.hpp"
+#include "Units/Conversion.hpp"
+#include "util/CharUtil.hxx"
 
-void
-AirspaceAltitude::SetFlightLevel(const AtmosphericPressure &press)
+#include <string_view>
+
+using std::string_view_literals::operator""sv;
+
+namespace {
+
+using Units::FEET_TO_METERS;
+using Units::METERS_TO_FLIGHT_LEVEL;
+using Units::FLIGHT_LEVEL_TO_METERS;
+
+[[gnu::const]]
+static double
+AltitudeToMeters(const double value, const bool feet) noexcept
 {
-  static constexpr double fl_feet_to_m(30.48);
-  if (reference == AltitudeReference::STD)
-    altitude = press.PressureAltitudeToQNHAltitude(flight_level * fl_feet_to_m);
+  return feet ? value * FEET_TO_METERS : value;
+}
+
+[[gnu::const]]
+static double
+MetersToFlightLevel(const double meters) noexcept
+{
+  return meters * METERS_TO_FLIGHT_LEVEL;
+}
+
+} // namespace
+
+std::optional<AirspaceAltitude>
+ParseAirspaceAltitude(StringParser<> &input,
+                      const ParseAirspaceAltitudeOptions &options)
+{
+  bool feet_unit = true;
+  enum { MSL, AGL, SFC, FL, STD, UNLIMITED } type = MSL;
+  double value = 0;
+
+  while (true) {
+    input.Strip();
+
+    if (input.IsEmpty())
+      break;
+
+    if (IsDigitASCII(input.front())) {
+      if (auto x = input.ReadDouble())
+        value = *x;
+    } else if (input.SkipMatchIgnoreCase("GND"sv) ||
+               input.SkipMatchIgnoreCase("AGL"sv)) {
+      type = AGL;
+    } else if (input.SkipMatchIgnoreCase("SFC"sv)) {
+      type = SFC;
+    } else if (input.SkipMatchIgnoreCase("FL"sv)) {
+      type = FL;
+    } else if (input.SkipMatchIgnoreCase("FT"sv)) {
+      feet_unit = true;
+    } else if (input.SkipMatchIgnoreCase("MSL"sv) ||
+               (options.accept_amsl &&
+                input.SkipMatchIgnoreCase("AMSL"sv))) {
+      type = MSL;
+    } else if (input.front() == 'M' || input.front() == 'm') {
+      feet_unit = false;
+      input.Skip();
+    } else if (input.SkipMatchIgnoreCase("STD"sv)) {
+      type = STD;
+    } else if (input.SkipMatchIgnoreCase("UNL"sv)) {
+      type = UNLIMITED;
+    } else if (options.strict_unknown_tokens) {
+      return std::nullopt;
+    } else {
+      input.Skip();
+    }
+  }
+
+  AirspaceAltitude altitude{};
+
+  switch (type) {
+  case FL:
+    altitude.reference = AltitudeReference::STD;
+    altitude.flight_level = value;
+    altitude.altitude = value * FLIGHT_LEVEL_TO_METERS;
+    return altitude;
+
+  case UNLIMITED:
+    altitude.reference = AltitudeReference::MSL;
+    altitude.altitude = options.unlimited_ceiling_m;
+    return altitude;
+
+  case SFC:
+    altitude.reference = AltitudeReference::AGL;
+    altitude.altitude_above_terrain = -1;
+    altitude.altitude = 0;
+    return altitude;
+
+  default:
+    break;
+  }
+
+  value = AltitudeToMeters(value, feet_unit);
+  switch (type) {
+  case MSL:
+    altitude.reference = AltitudeReference::MSL;
+    altitude.altitude = value;
+    return altitude;
+
+  case AGL:
+    altitude.reference = AltitudeReference::AGL;
+    altitude.altitude_above_terrain = value;
+    altitude.altitude = value;
+    return altitude;
+
+  case STD:
+    altitude.reference = AltitudeReference::STD;
+    altitude.flight_level = MetersToFlightLevel(value);
+    altitude.altitude = value;
+    return altitude;
+
+  default:
+    altitude.reference = AltitudeReference::MSL;
+    altitude.altitude = value;
+    return altitude;
+  }
 }
 
 void
-AirspaceAltitude::SetGroundLevel(const double alt)
+AirspaceAltitude::SetFlightLevel(const AtmosphericPressure press) noexcept
+{
+  if (reference == AltitudeReference::STD)
+    altitude = press.PressureAltitudeToQNHAltitude(
+      flight_level * Units::FLIGHT_LEVEL_TO_METERS);
+}
+
+void
+AirspaceAltitude::SetGroundLevel(const double alt) noexcept
 {
   if (reference == AltitudeReference::AGL)
     altitude = altitude_above_terrain + alt;
 }
 
 bool
-AirspaceAltitude::IsAbove(const AltitudeState &state, const double margin) const
+AirspaceAltitude::IsAbove(const AltitudeState &state,
+                          const double margin) const noexcept
 {
   return GetAltitude(state) >= state.altitude - margin;
 }
 
 bool
-AirspaceAltitude::IsBelow(const AltitudeState &state, const double margin) const
+AirspaceAltitude::IsBelow(const AltitudeState &state,
+                          const double margin) const noexcept
 {
   return GetAltitude(state) <= state.altitude + margin ||
     /* special case: GND is always "below" the aircraft, even if the
@@ -56,7 +161,7 @@ AirspaceAltitude::IsBelow(const AltitudeState &state, const double margin) const
 }
 
 double
-AirspaceAltitude::GetAltitude(const AltitudeState &state) const
+AirspaceAltitude::GetAltitude(const AltitudeState &state) const noexcept
 {
   // TODO: check if state.altitude_agl is valid
   return reference == AltitudeReference::AGL

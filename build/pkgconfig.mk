@@ -1,7 +1,14 @@
 PKG_CONFIG = pkg-config
 
 ifeq ($(USE_THIRDPARTY_LIBS),y)
-  PKG_CONFIG := PKG_CONFIG_LIBDIR=$(THIRDPARTY_LIBS_ROOT)/lib/pkgconfig $(PKG_CONFIG) --static
+  ifeq ($(TARGET_IS_ANDROID)$(TARGET_IS_KOBO)$(TARGET_IS_IOS),nnn)
+    # Prefer packages built by build/thirdparty.py, but allow packages omitted
+    # from THIRDPARTY_PACKAGES to be discovered on the native system.
+    PKG_CONFIG := PKG_CONFIG_PATH=$(THIRDPARTY_LIBS_ROOT)/lib/pkgconfig $(PKG_CONFIG) --static
+  else
+    # Cross builds must not fall back to host pkg-config metadata.
+    PKG_CONFIG := PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR=$(THIRDPARTY_LIBS_ROOT)/lib/pkgconfig $(PKG_CONFIG) --static
+  endif
 endif
 
 ifeq ($(TARGET_IS_DARWIN),y)
@@ -12,30 +19,48 @@ ifeq ($(TARGET_IS_DARWIN),y)
   endif
 endif
 
-ifeq ($(HOST_IS_WIN32)$(HAVE_WIN32)$(HAVE_CE),nyn)
-  PKG_CONFIG := PKG_CONFIG_LIBDIR=/usr/local/i686-w64-mingw32/lib/pkgconfig $(PKG_CONFIG)
-endif
-
 ifeq ($(HOST_IS_PI)$(TARGET_IS_PI),ny)
-  PKG_CONFIG := PKG_CONFIG_LIBDIR=$(PI)/usr/lib/arm-linux-gnueabihf/pkgconfig $(PKG_CONFIG) --define-variable=prefix=$(PI)/usr
+  PI_PKG_CONFIG_LIBDIR := $(PI)/usr/lib/arm-linux-gnueabihf/pkgconfig:$(PI)/usr/share/pkgconfig
+  PKG_CONFIG := PKG_CONFIG_LIBDIR=$(PI_PKG_CONFIG_LIBDIR) $(PKG_CONFIG) --define-variable=prefix=$(PI)/usr
 endif
 
-ifeq ($(HOST_IS_ARM)$(TARGET_HAS_MALI),ny)
+ifeq ($(HOST_IS_ARM)$(TARGET_IS_CUBIE),ny)
   PKG_CONFIG := PKG_CONFIG_LIBDIR=$(CUBIE)/usr/lib/arm-linux-gnueabihf/pkgconfig $(PKG_CONFIG) --define-variable=prefix=$(CUBIE)/usr
 endif
 
 call-pkg-config = $(shell $(PKG_CONFIG) --$(2) $(1) || echo ERROR)
+call-pkg-config-unstatic = $(shell $(subst --static,,$(PKG_CONFIG)) --$(2) $(1) || echo ERROR)
 
 define assign-check-error
 $(1) = $$($(2))$$(if $$(filter ERROR,$$($(2))),$$(error $(3)))
 endef
 
+# Like pkg-config-library, but omit --static from the configured command.
+# Some native package configurations only provide valid transitive dependency
+# metadata for their shared libraries.
+define pkg-config-library-unstatic
+
+$(1)_CPPFLAGS_RAW_GEN = $$(call pkg-config-cppflags-filter,$$(call call-pkg-config-unstatic,$(2),cflags))
+$(1)_LDLIBS_RAW_GEN = $$(call pkg-config-ldlibs-filter,$$(call call-pkg-config-unstatic,$(2),libs))
+$(1)_MODVERSION_RAW_GEN = $$(call call-pkg-config-unstatic,$(2),modversion)
+
+$$(foreach i,CPPFLAGS LDLIBS MODVERSION,$$(call DEF_THUNK,$(1)_$$(i)_RAW))
+$$(foreach i,CPPFLAGS LDLIBS MODVERSION,$$(eval $$(call assign-check-error,$(1)_$$(i),$(1)_$$(i)_RAW,library not found: $(2))))
+
+endef
+
+ifeq ($(TARGET_IS_KOBO),y)
+# No -isystem on the Kobo because it may break our Musl sysroot
+pkg-config-cppflags-filter = $(1)
+else
 pkg-config-cppflags-filter = $(patsubst -I%,-isystem %,$(1))
+endif
+
 pkg-config-ldlibs-filter = $(1)
 
 # Generates a pkg-config lookup for a library.
 #
-# Example: $(eval $(call pkg-config-library,CURL,libcurl >= 2.21))
+# Example: $(eval $(call pkg-config-library,CURL,libcurl '>=' 2.21))
 #
 # Arguments: PREFIX, SPEC
 #

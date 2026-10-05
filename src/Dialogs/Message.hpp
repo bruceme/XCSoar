@@ -1,59 +1,46 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include <span>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
+/* Portable copies of the Win32 message-box constants.  ShowMessageBox
+   is XCSoar's own dialog; these names match the Win32 values so a
+   prior windows.h include is harmless. */
 
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DIALOGS_MESSAGE_HPP
-#define XCSOAR_DIALOGS_MESSAGE_HPP
-
-#include <tchar.h>
-
-#ifdef WIN32
-#include <windows.h>
-#else
-
+#ifndef IDOK
 enum {
-  IDCANCEL = 3,
-  IDOK,
-  IDYES,
-  IDNO,
-  IDRETRY,
-  IDABORT,
-  IDIGNORE,
+  IDOK = 1,
+  IDCANCEL = 2,
+  IDABORT = 3,
+  IDRETRY = 4,
+  IDIGNORE = 5,
+  IDYES = 6,
+  IDNO = 7,
+};
+#endif
+
+struct MessageBoxButton {
+  const char *caption;
+  int result;
 };
 
+#ifndef MB_OK
 enum {
-  MB_OKCANCEL,
-  MB_OK,
-  MB_YESNO,
-  MB_YESNOCANCEL,
-  MB_RETRYCANCEL,
-  MB_ABORTRETRYIGNORE,
-  MB_ICONINFORMATION = 0x10,
-  MB_ICONWARNING = 0x20,
-  MB_ICONEXCLAMATION = 0x40,
-  MB_ICONQUESTION = 0x80,
-  MB_ICONERROR = 0x100,
-};
+  MB_OK = 0x0000,
+  MB_OKCANCEL = 0x0001,
+  MB_ABORTRETRYIGNORE = 0x0002,
+  MB_YESNOCANCEL = 0x0003,
+  MB_YESNO = 0x0004,
+  MB_RETRYCANCEL = 0x0005,
 
+  MB_ICONERROR = 0x10,
+  MB_ICONQUESTION = 0x20,
+  MB_ICONEXCLAMATION = 0x30,
+  MB_ICONWARNING = 0x30,
+  MB_ICONINFORMATION = 0x40,
+};
 #endif
 
 /**
@@ -64,6 +51,17 @@ enum {
  * @return
  */
 int
-ShowMessageBox(const TCHAR *text, const TCHAR *caption, unsigned flags);
+ShowMessageBox(const char *text, const char *caption,
+               unsigned flags) noexcept;
 
-#endif
+/**
+ * Displays a message box with caller-defined buttons.
+ *
+ * @param buttons one to four actions shown in the message box
+ * @param default_result result of the button which receives initial focus;
+ * zero keeps the normal first-control behavior
+ */
+int
+ShowMessageBox(const char *text, const char *caption,
+               std::span<const MessageBoxButton> buttons,
+               int default_result = 0) noexcept;

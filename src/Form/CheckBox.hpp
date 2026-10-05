@@ -1,35 +1,27 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "ui/window/PaintWindow.hpp"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_CHECK_BOX_HPP
-#define XCSOAR_FORM_CHECK_BOX_HPP
-
-#include "Screen/PaintWindow.hpp"
-#include "Util/tstring.hpp"
+#include <string>
+#include <cassert>
+#include <functional>
 
 struct DialogLook;
 class ContainerWindow;
-class ActionListener;
+class Canvas;
+struct PixelRect;
+
+/**
+ * Draw the checkbox box and optional check mark into the given rectangle.
+ * Reusable helper used by `CheckBoxControl::OnPaint` and list renderers.
+ */
+void DrawCheckBox(Canvas &canvas, const DialogLook &look,
+                  const PixelRect &box_rc,
+                  bool checked, bool focused, bool pressed,
+                  bool enabled) noexcept;
 
 /**
  * This class is used for creating buttons.
@@ -38,25 +30,39 @@ class CheckBoxControl : public PaintWindow {
   bool checked, dragging, pressed;
 
   const DialogLook *look;
-  tstring caption;
+  std::string caption;
 
-  ActionListener *listener;
-  int id;
+  using Callback = std::function<void(bool)>;
+  Callback callback;
 
 public:
   void Create(ContainerWindow &parent, const DialogLook &look,
-              tstring::const_pointer caption,
+              std::string::const_pointer caption,
               const PixelRect &rc,
               const WindowStyle style,
-              ActionListener &listener, int id);
+              Callback _callback) noexcept;
 
   /**
-   * Set the object that will receive click events.
+   * Same as @ref Create, but with the @c WindowStyle that dialog bottom
+   * bars and configuration panels use (@c Hide + @c TabStop) — the pattern
+   * used for the configuration dialog "Expert" check box and the quick
+   * guide.
    */
-  void SetListener(ActionListener &_listener) {
-    assert(listener == nullptr);
+  void CreateInDialogForm(ContainerWindow &parent, const DialogLook &look,
+                          std::string::const_pointer caption, const PixelRect &rc,
+                          Callback callback) noexcept;
 
-    listener = &_listener;
+  [[gnu::pure]]
+  static unsigned GetMinimumWidth(const DialogLook &look, unsigned height,
+                                  std::string::const_pointer caption) noexcept;
+
+  /**
+   * Set the function that will receive click events.
+   */
+  void SetCallback(Callback _callback) noexcept {
+    assert(!_callback);
+
+    callback = std::move(_callback);
   }
 
   bool GetState() const {
@@ -68,18 +74,16 @@ public:
 protected:
   void SetPressed(bool value);
 
-  virtual bool OnClicked();
+  virtual bool OnClicked() noexcept;
 
   /* virtual methods from class Window */
-  bool OnKeyCheck(unsigned key_code) const override;
-  bool OnKeyDown(unsigned key_code) override;
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnMouseUp(PixelPoint p) override;
-  void OnSetFocus() override;
-  void OnKillFocus() override;
-  void OnCancelMode() override;
-  void OnPaint(Canvas &canvas) override;
+  bool OnKeyCheck(unsigned key_code) const noexcept override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  void OnSetFocus() noexcept override;
+  void OnKillFocus() noexcept override;
+  void OnCancelMode() noexcept override;
+  void OnPaint(Canvas &canvas) noexcept override;
 };
-
-#endif

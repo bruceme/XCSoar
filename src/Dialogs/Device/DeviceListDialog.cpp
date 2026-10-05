@@ -1,55 +1,40 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DeviceListDialog.hpp"
 #include "DeviceEditWidget.hpp"
 #include "Vega/VegaDialogs.hpp"
 #include "BlueFly/BlueFlyDialogs.hpp"
+#include "Stratux/ConfigurationDialog.hpp"
+#include "GDL90/ConfigurationDialog.hpp"
+#include "ManageI2CPitotDialog.hpp"
 #include "ManageCAI302Dialog.hpp"
 #include "ManageFlarmDialog.hpp"
-#include "LX/ManageV7Dialog.hpp"
+#include "LX/ManageLXNAVVarioDialog.hpp"
 #include "LX/ManageNanoDialog.hpp"
 #include "LX/ManageLX16xxDialog.hpp"
 #include "PortMonitor.hpp"
 #include "Dialogs/WidgetDialog.hpp"
+#include "Dialogs/HelpDialog.hpp"
 #include "Dialogs/Message.hpp"
 #include "UIGlobals.hpp"
-#include "Util/StaticString.hxx"
-#include "Util/Macros.hpp"
+#include "util/StaticString.hxx"
+#include "util/Macros.hpp"
 #include "Device/MultipleDevices.hpp"
 #include "Device/Descriptor.hpp"
 #include "Device/Register.hpp"
 #include "Device/Port/Listener.hpp"
 #include "Device/Driver/LX/Internal.hpp"
-#include "Event/Notify.hpp"
+#include "ui/event/Notify.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
 #include "Blackboard/BlackboardListener.hpp"
-#include "Components.hpp"
 #include "Look/DialogLook.hpp"
-#include "Form/List.hpp"
 #include "Widget/ListWidget.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/canvas/Color.hpp"
+#include "ui/control/List.hpp"
 #include "Screen/Layout.hpp"
+#include "Asset.hpp"
 #include "Language/Language.hpp"
 #include "Operation/MessageOperationEnvironment.hpp"
 #include "Simulator.hpp"
@@ -58,20 +43,65 @@ Copyright_License {
 #include "Profile/Profile.hpp"
 #include "Profile/DeviceConfig.hpp"
 #include "Interface.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
 
 #ifdef ANDROID
-#include "Java/Global.hxx"
+#include "java/Global.hxx"
+#include "Android/Main.hpp"
 #include "Android/BluetoothHelper.hpp"
 #endif
 
+using namespace UI;
+
+/* Same threshold as BatteryTimer::BATTERY_WARNING (host "Battery low"). */
+static constexpr int BATTERY_WARNING_PERCENT = 10;
+
+static const char *
+GetDeviceListHelp() noexcept
+{
+  return _("XCSoar uses the first device that supplies each value "
+           "(device A before B, and so on). "
+           "Bold flags are the values XCSoar is using from this device. "
+           "Flags that are not bold mean an earlier device already "
+           "supplies the same data. "
+           "Baro is height with the current QNH; QNE is pressure "
+           "altitude; Alt IGC is the altitude the logger writes. "
+           "Bad GPS and a battery below 10% are shown in red on a colour "
+           "display, and in bold on e-paper.");
+}
+
+static void
+DrawStatusToken(Canvas &canvas, PixelPoint &p,
+                const Font &regular, const Font &bold,
+                const char *text, bool used, bool &need_sep,
+                bool warning=false) noexcept
+{
+  if (need_sep) {
+    canvas.Select(regular);
+    canvas.DrawText(p, "; ");
+    p.x += canvas.CalcTextWidth("; ");
+  }
+
+  const Color old_color = canvas.GetTextColor();
+  if (warning && HasColors())
+    canvas.SetTextColor(COLOR_RED);
+
+  canvas.Select(used || warning ? bold : regular);
+  canvas.DrawText(p, text);
+  p.x += canvas.CalcTextWidth(text);
+
+  if (warning && HasColors())
+    canvas.SetTextColor(old_color);
+
+  need_sep = true;
+}
+
 class DeviceListWidget final
-  : public ListWidget, private ActionListener,
-    NullBlackboardListener, PortListener, Notify {
-  enum Buttons {
-    DISABLE,
-    RECONNECT, FLIGHT, EDIT, MANAGE, MONITOR,
-    DEBUG,
-  };
+  : public ListWidget,
+    NullBlackboardListener, PortListener {
+  DeviceBlackboard &device_blackboard;
+  MultipleDevices *const devices;
 
   const DialogLook &look;
 
@@ -79,55 +109,111 @@ class DeviceListWidget final
 
   struct Flags {
     bool duplicate:1;
-    bool open:1, error:1;
-    bool alive:1, location:1, gps:1, baro:1, airspeed:1, vario:1, traffic:1;
+    bool open:1, error:1, connecting:1;
+    bool alive:1, location:1, gps:1, baro:1, pressure_altitude:1;
+    bool igc_altitude:1, pitot:1, airspeed:1, vario:1, traffic:1;
+    bool gdl90:1;
+    bool foreflight_id:1;
+    bool foreflight_ahrs:1;
     bool temperature:1;
     bool humidity:1;
+    bool pressure:1;
+    bool imu:1;
+    bool accel:1;
+    bool heart_rate:1;
+    bool blood_oxygen:1;
+    bool radio:1, transponder:1;
+    bool engine:1;
     bool debug:1;
 
-    void Set(const DeviceConfig &config, const DeviceDescriptor &device,
+#ifdef ANDROID
+    bool bluetooth_disabled:1;
+#else
+    static constexpr bool bluetooth_disabled = false;
+#endif
+
+    int8_t battery_percent;
+
+    void Set(const DeviceConfig &config, const DeviceDescriptor *device,
              const NMEAInfo &basic) {
       /* if a DeviceDescriptor is "unconfigured" but its DeviceConfig
          contains a valid configuration, then it got disabled by
          DeviceConfigOverlaps(), i.e. it's duplicate */
-      duplicate = !config.IsDisabled() && !device.IsConfigured();
+      duplicate = !config.IsDisabled() && (device != nullptr && !device->IsConfigured());
 
-      switch (device.GetState()) {
+      switch (device != nullptr ? device->GetState() : PortState::LIMBO) {
       case PortState::READY:
         open = true;
         error = false;
+        connecting = false;
         break;
 
       case PortState::FAILED:
         open = false;
         error = true;
+        connecting = false;
         break;
 
       case PortState::LIMBO:
         open = false;
         error = false;
+        connecting = true;
         break;
       }
 
       alive = basic.alive;
       location = basic.location_available;
       gps = basic.gps.fix_quality_available;
-      baro = basic.baro_altitude_available ||
-        basic.pressure_altitude_available ||
-        basic.static_pressure_available;
-      airspeed = basic.airspeed_available;
-      vario = basic.total_energy_vario_available;
-      traffic = basic.flarm.IsDetected();
+      baro = basic.baro_altitude_available;
+      pressure_altitude = basic.pressure_altitude_available;
+      igc_altitude = basic.igc_pressure_altitude_available;
+      pressure = basic.static_pressure_available;
+      pitot = basic.pitot_pressure_available;
+      airspeed = basic.airspeed_available ||
+        basic.dyn_pressure_available;
+      vario = basic.netto_vario_available ||
+        basic.total_energy_vario_available ||
+        basic.noncomp_vario_available;
+      /* PFLAU heartbeat; expires after 10 s */
+      traffic = basic.flarm.status.available;
+      /* GDL90 status follows protocol activity (heartbeat / any frame
+         sets alive), not traffic presence — SoftRF may have ownship
+         with an empty traffic list. */
+      gdl90 = alive && config.UsesDriver() && config.driver_name == "GDL90";
+      foreflight_id = config.UsesDriver() && config.driver_name == "GDL90" &&
+        basic.device.license.equals("ForeFlight");
+      foreflight_ahrs = config.UsesDriver() && config.driver_name == "GDL90" &&
+        (basic.attitude.bank_angle_available ||
+         basic.attitude.pitch_angle_available ||
+         basic.attitude.heading_available);
       temperature = basic.temperature_available;
       humidity = basic.humidity_available;
-      debug = device.IsDumpEnabled();
+      imu = basic.gyroscope.available;
+      accel = basic.acceleration.available;
+      heart_rate = basic.heart_rate_available;
+      blood_oxygen = basic.blood_oxygen_available;
+      debug = device != nullptr && device->IsDumpEnabled();
+      radio = basic.settings.has_active_frequency ||
+        basic.settings.has_standby_frequency;
+      transponder = basic.settings.has_transponder_code;
+      engine = basic.engine.IsAnyDefined();
+
+#ifdef ANDROID
+      bluetooth_disabled = config.IsAndroidBluetooth() &&
+        bluetooth_helper != nullptr &&
+        !bluetooth_helper->IsEnabled(Java::GetEnv());
+#endif
+
+      battery_percent = basic.battery_level_available
+        ? (int)basic.battery_level
+        : -1;
     }
   };
 
   union Item {
   private:
     Flags flags;
-    uint16_t i;
+    uint64_t i;
 
     static_assert(sizeof(flags) <= sizeof(i), "wrong size");
 
@@ -136,7 +222,7 @@ class DeviceListWidget final
       i = 0;
     }
 
-    void Set(const DeviceConfig &config, const DeviceDescriptor &device,
+    void Set(const DeviceConfig &config, const DeviceDescriptor *device,
              const NMEAInfo &basic) {
       i = 0;
       flags.Set(config, device, basic);
@@ -159,10 +245,10 @@ class DeviceListWidget final
     }
   };
 
-  static_assert(sizeof(Item) == 2, "wrong size");
+  static_assert(sizeof(Item) == 8, "wrong size");
 
   Item items[NUMDEV];
-  tstring error_messages[NUMDEV];
+  std::string error_messages[NUMDEV];
 
   Button *disable_button;
   Button *reconnect_button, *flight_button;
@@ -170,9 +256,18 @@ class DeviceListWidget final
   Button *manage_button, *monitor_button;
   Button *debug_button;
 
+  Notify port_state_notify{[this]{
+    if (RefreshList())
+      UpdateButtons();
+  }};
+
 public:
-  DeviceListWidget(const DialogLook &_look)
-    :look(_look) {}
+  DeviceListWidget(DeviceBlackboard &_device_blackboard,
+                   MultipleDevices *_devices,
+                   const DialogLook &_look) noexcept
+    :device_blackboard(_device_blackboard),
+     devices(_devices),
+     look(_look) {}
 
   void CreateButtons(WidgetDialog &dialog);
 
@@ -191,54 +286,58 @@ protected:
 
 public:
   /* virtual methods from class Widget */
-  virtual void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  virtual void Unprepare() override {
-    DeleteWindow();
-  }
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override;
 
-  virtual void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     ListWidget::Show(rc);
 
-    devices->AddPortListener(*this);
+    if (devices != nullptr)
+      devices->AddPortListener(*this);
     CommonInterface::GetLiveBlackboard().AddListener(*this);
 
     RefreshList();
     UpdateButtons();
   }
 
-  virtual void Hide() override {
+  void Hide() noexcept override {
     ListWidget::Hide();
 
     CommonInterface::GetLiveBlackboard().RemoveListener(*this);
-    devices->RemovePortListener(*this);
+
+    if (devices != nullptr)
+      devices->RemovePortListener(*this);
   }
 
   /* virtual methods from class List::Handler */
-  virtual void OnPaintItem(Canvas &canvas, const PixelRect rc,
-                           unsigned idx) override;
-  virtual void OnCursorMoved(unsigned index) override;
+   void OnPaintItem(Canvas &canvas, const PixelRect rc,
+                    unsigned idx) noexcept override;
+  void OnCursorMoved(unsigned index) noexcept override;
 
 private:
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override;
+  template<typename Pred>
+  bool EarlierHas(unsigned idx, Pred pred) const noexcept {
+    for (unsigned i = 0; i < idx; ++i)
+      if ((*items[i]).alive && pred(*items[i]))
+        return true;
+    return false;
+  }
 
+  void DrawAliveStatus(Canvas &canvas, PixelPoint p,
+                       unsigned idx) noexcept;
+
+private:
   /* virtual methods from class BlackboardListener */
   virtual void OnGPSUpdate(const MoreData &basic) override;
 
   /* virtual methods from class PortListener */
-  void PortStateChanged() override {
-    Notify::SendNotification();
-  }
-
-  /* virtual methods from class Notify */
-  void OnNotification() override {
-    if (RefreshList())
-      UpdateButtons();
+  void PortStateChanged() noexcept override {
+    port_state_notify.SendNotification();
   }
 };
 
 void
-DeviceListWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+DeviceListWidget::Prepare(ContainerWindow &parent,
+                          const PixelRect &rc) noexcept
 {
   const DialogLook &look = UIGlobals::GetDialogLook();
   const unsigned margin = Layout::GetTextPadding();
@@ -261,17 +360,20 @@ DeviceListWidget::RefreshList()
 
     Item n;
     n.Set(CommonInterface::GetSystemSettings().devices[i],
-          (*devices)[i], device_blackboard->RealState(i));
+          devices != nullptr ? &(*devices)[i] : nullptr,
+          device_blackboard.RealState(i));
 
     if (n != item) {
       item = n;
       modified = true;
     }
 
-    auto error_message = (*devices)[i].GetErrorMessage();
-    if (error_message != error_messages[i]) {
-      error_messages[i] = std::move(error_message);
-      modified = true;
+    if (devices != nullptr) {
+      auto error_message = (*devices)[i].GetErrorMessage();
+      if (error_message != error_messages[i]) {
+        error_messages[i] = std::move(error_message);
+        modified = true;
+      }
     }
   }
 
@@ -283,13 +385,33 @@ DeviceListWidget::RefreshList()
 void
 DeviceListWidget::CreateButtons(WidgetDialog &dialog)
 {
-  edit_button = dialog.AddButton(_("Edit"), *this, EDIT);
-  flight_button = dialog.AddButton(_("Flight download"), *this, FLIGHT);
-  manage_button = dialog.AddButton(_("Manage"), *this, MANAGE);
-  monitor_button = dialog.AddButton(_("Monitor"), *this, MONITOR);
-  reconnect_button = dialog.AddButton(_("Reconnect"), *this, RECONNECT);
-  disable_button = dialog.AddButton(_("Disable"), *this, DISABLE);
-  debug_button = dialog.AddButton(_("Debug"), *this, DEBUG);
+  edit_button = dialog.AddButton(_("Edit"), [this](){
+    EditCurrent();
+  });
+
+  flight_button = dialog.AddButton(_("Flight download"), [this](){
+    DownloadFlightFromCurrent();
+  });
+
+  manage_button = dialog.AddButton(_("Manage"), [this](){
+    ManageCurrent();
+  });
+
+  monitor_button = dialog.AddButton(_("Monitor"), [this](){
+    MonitorCurrent();
+  });
+
+  reconnect_button = dialog.AddButton(_("Reconnect"), [this](){
+    ReconnectCurrent();
+  });
+
+  disable_button = dialog.AddButton(_("Disable"), [this](){
+    EnableDisableCurrent();
+  });
+
+  debug_button = dialog.AddButton(_("Debug"), [this](){
+    DebugCurrent();
+  });
 }
 
 void
@@ -308,7 +430,7 @@ DeviceListWidget::UpdateButtons()
   } else
     disable_button->SetEnabled(false);
 
-  if (is_simulator() || current >= NUMDEV) {
+  if (is_simulator() || current >= NUMDEV || devices == nullptr) {
     reconnect_button->SetEnabled(false);
     flight_button->SetEnabled(false);
     manage_button->SetEnabled(false);
@@ -317,7 +439,8 @@ DeviceListWidget::UpdateButtons()
   } else {
     const DeviceDescriptor &device = (*devices)[current];
 
-    reconnect_button->SetEnabled(!device.GetConfig().IsDisabled());
+    reconnect_button->SetEnabled(!device.GetConfig().IsDisabled() && 
+                                 !device.IsWaitingToCallOpen());
     flight_button->SetEnabled(device.IsLogger());
     manage_button->SetEnabled(device.IsManageable());
     monitor_button->SetEnabled(device.GetConfig().UsesPort());
@@ -329,7 +452,156 @@ DeviceListWidget::UpdateButtons()
 }
 
 void
-DeviceListWidget::OnPaintItem(Canvas &canvas, const PixelRect rc, unsigned idx)
+DeviceListWidget::DrawAliveStatus(Canvas &canvas, PixelPoint p,
+                                  unsigned idx) noexcept
+{
+  const Flags flags(*items[idx]);
+  const Font &regular = look.small_font;
+  const Font &bold = look.small_font_bold;
+  bool need_sep = false;
+
+  if (flags.location)
+    DrawStatusToken(canvas, p, regular, bold, _("GPS fix"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.location;
+                    }), need_sep);
+  else if (flags.gps)
+    /* device sends GPGGA, but no valid location */
+    DrawStatusToken(canvas, p, regular, bold, _("Bad GPS"),
+                    false, need_sep, true);
+  else
+    DrawStatusToken(canvas, p, regular, bold, _("Connected"),
+                    false, need_sep);
+
+  if (flags.baro)
+    DrawStatusToken(canvas, p, regular, bold, _("Baro"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.baro;
+                    }), need_sep);
+
+  if (flags.pressure_altitude)
+    DrawStatusToken(canvas, p, regular, bold, _("QNE"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.pressure_altitude;
+                    }), need_sep);
+
+  if (flags.igc_altitude)
+    DrawStatusToken(canvas, p, regular, bold,
+                    C_("Abbreviation", "Alt IGC"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.igc_altitude;
+                    }), need_sep);
+
+  if (flags.pressure)
+    DrawStatusToken(canvas, p, regular, bold, _("Pressure"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.pressure;
+                    }), need_sep);
+
+  if (flags.pitot)
+    DrawStatusToken(canvas, p, regular, bold, _("Pitot"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.pitot;
+                    }), need_sep);
+
+  if (flags.airspeed)
+    DrawStatusToken(canvas, p, regular, bold, _("Airspeed"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.airspeed;
+                    }), need_sep);
+
+  if (flags.vario)
+    DrawStatusToken(canvas, p, regular, bold, _("Vario"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.vario;
+                    }), need_sep);
+
+  if (flags.gdl90)
+    DrawStatusToken(canvas, p, regular, bold, "GDL90",
+                    flags.alive, need_sep);
+  else if (flags.traffic)
+    DrawStatusToken(canvas, p, regular, bold, "FLARM",
+                    true, need_sep);
+
+  if (flags.foreflight_ahrs)
+    DrawStatusToken(canvas, p, regular, bold, "ForeFlight AHRS",
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.foreflight_ahrs;
+                    }), need_sep);
+
+  if (flags.foreflight_id)
+    DrawStatusToken(canvas, p, regular, bold, "ForeFlight ID",
+                    true, need_sep);
+
+  if (flags.temperature)
+    DrawStatusToken(canvas, p, regular, bold, _("Temperature"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.temperature;
+                    }), need_sep);
+
+  if (flags.humidity)
+    DrawStatusToken(canvas, p, regular, bold, _("Relative humidity"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.humidity;
+                    }), need_sep);
+
+  if (flags.imu)
+    DrawStatusToken(canvas, p, regular, bold, _("IMU"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.imu;
+                    }), need_sep);
+
+  if (flags.accel)
+    DrawStatusToken(canvas, p, regular, bold, "G",
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.accel;
+                    }), need_sep);
+
+  if (flags.heart_rate)
+    DrawStatusToken(canvas, p, regular, bold, _("Heart Rate"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.heart_rate;
+                    }), need_sep);
+
+  if (flags.blood_oxygen)
+    DrawStatusToken(canvas, p, regular, bold, _("Blood Oxygen"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.blood_oxygen;
+                    }), need_sep);
+
+  if (flags.radio)
+    DrawStatusToken(canvas, p, regular, bold, _("Radio"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.radio;
+                    }), need_sep);
+
+  if (flags.transponder)
+    DrawStatusToken(canvas, p, regular, bold, "XPDR",
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.transponder;
+                    }), need_sep);
+
+  if (flags.engine)
+    DrawStatusToken(canvas, p, regular, bold, _("Engine"),
+                    !EarlierHas(idx, [](const Flags &f) {
+                      return f.engine;
+                    }), need_sep);
+
+  if (flags.debug)
+    DrawStatusToken(canvas, p, regular, bold, _("Debug"),
+                    true, need_sep);
+
+  if (flags.battery_percent >= 0) {
+    StaticString<32> battery;
+    battery.Format("%s=%d%%", _("Battery"), flags.battery_percent);
+    DrawStatusToken(canvas, p, regular, bold, battery, false, need_sep,
+                    flags.battery_percent < BATTERY_WARNING_PERCENT);
+  }
+}
+
+void
+DeviceListWidget::OnPaintItem(Canvas &canvas, const PixelRect rc,
+                              unsigned idx) noexcept
 {
   assert(idx < NUMDEV);
 
@@ -339,15 +611,15 @@ DeviceListWidget::OnPaintItem(Canvas &canvas, const PixelRect rc, unsigned idx)
 
   const unsigned margin = Layout::GetTextPadding();
 
-  TCHAR port_name_buffer[128];
-  const TCHAR *port_name =
+  char port_name_buffer[128];
+  const char *port_name =
     config.GetPortName(port_name_buffer, ARRAY_SIZE(port_name_buffer));
 
-  StaticString<256> text(_T("A: "));
+  StaticString<256> text("A: ");
   text[0u] += idx;
 
   if (config.UsesDriver()) {
-    const TCHAR *driver_name = FindDriverDisplayName(config.driver_name);
+    const char *driver_name = FindDriverDisplayName(config.driver_name);
 
     text.AppendFormat(_("%s on %s"), driver_name, port_name);
   } else {
@@ -355,72 +627,40 @@ DeviceListWidget::OnPaintItem(Canvas &canvas, const PixelRect rc, unsigned idx)
   }
 
   canvas.Select(*look.list.font);
-  canvas.DrawText(rc.left + margin, rc.top + margin, text);
+  canvas.DrawText(rc.GetTopLeft() + PixelSize{margin, margin}, text);
 
-  /* show a list of features that are available in the second row */
+  /* show a list of features that are available in the second row;
+     merge-priority flags are bold when this device is the first
+     source (A before B, and so on) */
 
-  StaticString<256> buffer;
-  const TCHAR *status;
+  const PixelPoint status_p =
+    rc.GetTopLeft() + PixelSize{margin, 2 * margin + font_height};
+
   if (flags.alive) {
-    if (flags.location) {
-      buffer = _("GPS fix");
-    } else if (flags.gps) {
-      /* device sends GPGGA, but no valid location */
-      buffer = _("Bad GPS");
-    } else {
-      buffer = _("Connected");
-    }
+    DrawAliveStatus(canvas, status_p, idx);
+    return;
+  }
 
-    if (flags.baro) {
-      buffer.append(_T("; "));
-      buffer.append(_("Baro"));
-    }
-
-    if (flags.airspeed) {
-      buffer.append(_T("; "));
-      buffer.append(_("Airspeed"));
-    }
-
-    if (flags.vario) {
-      buffer.append(_T("; "));
-      buffer.append(_("Vario"));
-    }
-
-    if (flags.traffic)
-      buffer.append(_T("; FLARM"));
-
-    if (flags.temperature || flags.humidity) {
-      buffer.append(_T("; "));
-      buffer.append(_T("Environment"));
-    }
-
-    if (flags.debug) {
-      buffer.append(_T("; "));
-      buffer.append(_("Debug"));
-    }
-
-    status = buffer;
-  } else if (config.IsDisabled()) {
+  const char *status;
+  if (config.IsDisabled()) {
     status = _("Disabled");
   } else if (is_simulator() || !config.IsAvailable()) {
     status = _("N/A");
-  } else if (flags.open) {
-    buffer = _("No data");
-
-    if (flags.debug) {
-      buffer.append(_T("; "));
-      buffer.append(_("Debug"));
-    }
-
-    status = buffer;
-#ifdef ANDROID
-  } else if ((config.port_type == DeviceConfig::PortType::RFCOMM ||
-              config.port_type == DeviceConfig::PortType::RFCOMM_SERVER) &&
-             !BluetoothHelper::isEnabled(Java::GetEnv())) {
+  } else if (flags.bluetooth_disabled) {
     status = _("Bluetooth is disabled");
-#endif
   } else if (flags.duplicate) {
     status = _("Duplicate");
+  } else if (flags.connecting) {
+    status = _("Connecting...");
+  } else if (flags.open) {
+    bool need_sep = false;
+    PixelPoint p = status_p;
+    DrawStatusToken(canvas, p, look.small_font, look.small_font_bold,
+                    _("No data"), false, need_sep);
+    if (flags.debug)
+      DrawStatusToken(canvas, p, look.small_font, look.small_font_bold,
+                      _("Debug"), true, need_sep);
+    return;
   } else if (flags.error) {
     if (error_messages[idx].empty())
       status = _("Error");
@@ -431,12 +671,11 @@ DeviceListWidget::OnPaintItem(Canvas &canvas, const PixelRect rc, unsigned idx)
   }
 
   canvas.Select(look.small_font);
-  canvas.DrawText(rc.left + margin, rc.top + 2 * margin + font_height,
-                  status);
+  canvas.DrawText(status_p, status);
 }
 
 void
-DeviceListWidget::OnCursorMoved(unsigned index)
+DeviceListWidget::OnCursorMoved([[maybe_unused]] unsigned index) noexcept
 {
   UpdateButtons();
 }
@@ -458,23 +697,30 @@ DeviceListWidget::EnableDisableCurrent()
   Profile::SetDeviceConfig(Profile::map, index, config);
   Profile::Save();
 
-  /* .. and reopen the device */
-
-  DeviceDescriptor &descriptor = (*devices)[index];
-  descriptor.SetConfig(config);
+  /* update the UI */
 
   GetList().Invalidate();
   UpdateButtons();
 
-  /* this OperationEnvironment instance must be persistent, because
-     DeviceDescriptor::Open() is asynchronous */
-  static MessageOperationEnvironment env;
-  descriptor.Reopen(env);
+  /* .. and reopen the device */
+
+  if (devices != nullptr) {
+    DeviceDescriptor &descriptor = (*devices)[index];
+    descriptor.SetConfig(config);
+
+    /* this OperationEnvironment instance must be persistent, because
+       DeviceDescriptor::Open() is asynchronous */
+    static MessageOperationEnvironment env;
+    descriptor.Reopen(env);
+  }
 }
 
 inline void
 DeviceListWidget::ReconnectCurrent()
 {
+  if (devices == nullptr)
+    return;
+
   const unsigned current = GetList().GetCursorIndex();
   if (current >= NUMDEV)
     return;
@@ -483,8 +729,10 @@ DeviceListWidget::ReconnectCurrent()
   const DeviceConfig &config =
     CommonInterface::SetSystemSettings().devices[current];
   if ((config.port_type == DeviceConfig::PortType::RFCOMM ||
+       config.port_type == DeviceConfig::PortType::BLE_SERIAL ||
        config.port_type == DeviceConfig::PortType::RFCOMM_SERVER) &&
-      !BluetoothHelper::isEnabled(Java::GetEnv())) {
+      bluetooth_helper != nullptr &&
+      !bluetooth_helper->IsEnabled(Java::GetEnv())) {
     ShowMessageBox(_("Bluetooth is disabled"), _("Reconnect"),
                    MB_OK | MB_ICONERROR);
     return;
@@ -497,16 +745,16 @@ DeviceListWidget::ReconnectCurrent()
     return;
   }
 
-  /* this OperationEnvironment instance must be persistent, because
-     DeviceDescriptor::Open() is asynchronous */
-  static MessageOperationEnvironment env;
   device.ResetFailureCounter();
-  device.Reopen(env);
+  device.SlowReopen();
 }
 
 inline void
 DeviceListWidget::DownloadFlightFromCurrent()
 {
+  if (devices == nullptr)
+    return;
+
   const unsigned current = GetList().GetCursorIndex();
   if (current >= NUMDEV)
     return;
@@ -526,8 +774,10 @@ DeviceListWidget::DownloadFlightFromCurrent()
     return;
   }
 
+  MessageOperationEnvironment env;
+  const ScopeReturnDevice return_device{device, env};
+
   ExternalLogger::DownloadFlightFrom(device);
-  device.Return();
 }
 
 inline void
@@ -552,23 +802,30 @@ DeviceListWidget::EditCurrent()
   Profile::SetDeviceConfig(Profile::map, index, config);
   Profile::Save();
 
-  /* .. and reopen the device */
-
-  DeviceDescriptor &descriptor = (*devices)[index];
-  descriptor.SetConfig(widget.GetConfig());
+  /* update the UI */
 
   GetList().Invalidate();
   UpdateButtons();
 
-  /* this OperationEnvironment instance must be persistent, because
-     DeviceDescriptor::Open() is asynchronous */
-  static MessageOperationEnvironment env;
-  descriptor.Reopen(env);
+  /* .. and reopen the device */
+
+  if (devices != nullptr) {
+    DeviceDescriptor &descriptor = (*devices)[index];
+    descriptor.SetConfig(widget.GetConfig());
+
+    /* this OperationEnvironment instance must be persistent, because
+       DeviceDescriptor::Open() is asynchronous */
+    static MessageOperationEnvironment env;
+    descriptor.Reopen(env);
+  }
 }
 
 inline void
 DeviceListWidget::ManageCurrent()
 {
+  if (devices == nullptr)
+    return;
+
   const unsigned current = GetList().GetCursorIndex();
   if (current >= NUMDEV)
     return;
@@ -576,6 +833,21 @@ DeviceListWidget::ManageCurrent()
   DeviceDescriptor &descriptor = (*devices)[current];
   if (!descriptor.IsManageable())
     return;
+
+#ifdef ANDROID
+  const auto &config = descriptor.GetConfig();
+  if (config.port_type == DeviceConfig::PortType::DROIDSOAR_V2 ||
+      (config.port_type == DeviceConfig::PortType::I2CPRESSURESENSOR &&
+       config.press_use == DeviceConfig::PressureUse::PITOT)) {
+    ManageI2CPitotDialog(UIGlobals::GetMainWindow(), look, descriptor);
+    return;
+  }
+#endif
+
+  if (descriptor.IsDriver("GDL90")) {
+    ManageGDL90Dialog();
+    return;
+  }
 
   if (descriptor.GetState() != PortState::READY) {
     ShowMessageBox(_("Device is not connected"), _("Manage"),
@@ -588,48 +860,60 @@ DeviceListWidget::ManageCurrent()
     return;
   }
 
+  MessageOperationEnvironment env;
+  const ScopeReturnDevice return_device{descriptor, env};
+
   Device *device = descriptor.GetDevice();
   if (device == NULL) {
-    descriptor.Return();
     return;
   }
 
-  if (descriptor.IsDriver(_T("CAI 302")))
+  if (descriptor.IsDriver("CAI 302"))
     ManageCAI302Dialog(UIGlobals::GetMainWindow(), look, *device);
-  else if (descriptor.IsDriver(_T("FLARM"))) {
-    device_blackboard->mutex.Lock();
-    const NMEAInfo &basic = device_blackboard->RealState(current);
-    const FlarmVersion version = basic.flarm.version;
-    device_blackboard->mutex.Unlock();
+  else if (descriptor.IsDriver("Stratux"))
+    ManageStratuxDialog(*device);
+  else if (descriptor.IsDriver("FLARM")) {
+    FlarmVersion version;
+    FlarmHardware hardware;
+    FlarmState state;
 
-    ManageFlarmDialog(*device, version);
-  } else if (descriptor.IsDriver(_T("LX"))) {
-    device_blackboard->mutex.Lock();
-    const NMEAInfo &basic = device_blackboard->RealState(current);
-    const DeviceInfo info = basic.device;
-    const DeviceInfo secondary_info = basic.secondary_device;
-    device_blackboard->mutex.Unlock();
+    {
+      const std::lock_guard lock{device_blackboard.mutex};
+      const NMEAInfo &basic = device_blackboard.RealState(current);
+      version = basic.flarm.version;
+      state = basic.flarm.state;
+    }
+
+    ManageFlarmDialog(*device, version, hardware, state);
+  } else if (descriptor.IsDriver("LX")) {
+    DeviceInfo info, secondary_info;
+
+    {
+      const std::lock_guard lock{device_blackboard.mutex};
+      const NMEAInfo &basic = device_blackboard.RealState(current);
+      info = basic.device;
+      secondary_info = basic.secondary_device;
+    }
 
     LXDevice &lx_device = *(LXDevice *)device;
-    if (lx_device.IsV7())
-      ManageV7Dialog(lx_device, info, secondary_info);
+    if (lx_device.IsLXNAVVario())
+      ManageLXNAVVarioDialog(lx_device, info, secondary_info);
     else if (lx_device.IsNano())
       ManageNanoDialog(lx_device, info);
     else if (lx_device.IsLX16xx())
       ManageLX16xxDialog(lx_device, info);
-  } else if (descriptor.IsDriver(_T("Vega")))
+  } else if (descriptor.IsDriver("Vega"))
     dlgConfigurationVarioShowModal(*device);
-  else if (descriptor.IsDriver(_T("BlueFly")))
+  else if (descriptor.IsDriver("BlueFly"))
     dlgConfigurationBlueFlyVarioShowModal(*device);
-
-  MessageOperationEnvironment env;
-  descriptor.EnableNMEA(env);
-  descriptor.Return();
 }
 
 inline void
 DeviceListWidget::MonitorCurrent()
 {
+  if (devices == nullptr)
+    return;
+
   const unsigned current = GetList().GetCursorIndex();
   if (current >= NUMDEV)
     return;
@@ -641,6 +925,9 @@ DeviceListWidget::MonitorCurrent()
 inline void
 DeviceListWidget::DebugCurrent()
 {
+  if (devices == nullptr)
+    return;
+
   const unsigned current = GetList().GetCursorIndex();
   if (current >= NUMDEV)
     return;
@@ -651,7 +938,7 @@ DeviceListWidget::DebugCurrent()
 
   static constexpr unsigned MINUTES = 10;
 
-  device.EnableDumpTemporarily(MINUTES * 60000);
+  device.EnableDumpTemporarily(std::chrono::minutes(MINUTES));
   RefreshList();
 
   StaticString<256> msg;
@@ -661,57 +948,35 @@ DeviceListWidget::DebugCurrent()
 }
 
 void
-DeviceListWidget::OnAction(int id)
-{
-  switch (id) {
-  case DISABLE:
-    EnableDisableCurrent();
-    break;
-
-  case RECONNECT:
-    ReconnectCurrent();
-    break;
-
-  case FLIGHT:
-    DownloadFlightFromCurrent();
-    break;
-
-  case EDIT:
-    EditCurrent();
-    break;
-
-  case MANAGE:
-    ManageCurrent();
-    break;
-
-  case MONITOR:
-    MonitorCurrent();
-    break;
-
-  case DEBUG:
-    DebugCurrent();
-    break;
-  }
-}
-
-void
-DeviceListWidget::OnGPSUpdate(const MoreData &basic)
+DeviceListWidget::OnGPSUpdate([[maybe_unused]] const MoreData &basic)
 {
   if (RefreshList())
     UpdateButtons();
 }
 
 void
-ShowDeviceList()
+ShowDeviceList(MultipleDevices *devices)
 {
-  DeviceListWidget widget(UIGlobals::GetDialogLook());
+  /* Per-device NMEA (FLARM version, port flags) lives on
+     DeviceBlackboard, not the merged InterfaceBlackboard. */
+  DeviceBlackboard *device_blackboard =
+    backend_components != nullptr
+    ? backend_components->device_blackboard.get()
+    : nullptr;
+  if (device_blackboard == nullptr)
+    return;
 
-  WidgetDialog dialog(UIGlobals::GetDialogLook());
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Devices"), &widget);
-  widget.CreateButtons(dialog);
+  TWidgetDialog<DeviceListWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           UIGlobals::GetDialogLook(), _("Devices"));
+  dialog.SetWidget(*device_blackboard, devices,
+                   UIGlobals::GetDialogLook());
+  dialog.GetWidget().CreateButtons(dialog);
+  dialog.AddButton(_("Help"), [](){
+    HelpDialog(_("Devices"), GetDeviceListHelp());
+  });
   dialog.AddButton(_("Close"), mrOK);
   dialog.EnableCursorSelection();
 
   dialog.ShowModal();
-  dialog.StealWidget();
 }

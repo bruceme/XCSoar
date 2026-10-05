@@ -1,39 +1,18 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_POPUP_MESSAGE_H
-#define XCSOAR_POPUP_MESSAGE_H
-
-#include "Screen/PaintWindow.hpp"
+#include "ui/window/PaintWindow.hpp"
 #include "Renderer/TextRenderer.hpp"
-#include "Thread/Mutex.hpp"
-#include "Util/StaticString.hxx"
+#include "thread/Mutex.hxx"
+#include "util/StaticString.hxx"
 
-#include <tchar.h>
+#include <chrono>
 
 struct UISettings;
 struct DialogLook;
-class SingleWindow;
+namespace UI { class SingleWindow; }
 
 /**
  * - Single window, created in GUI thread.
@@ -62,48 +41,54 @@ private:
   static constexpr unsigned MAXMESSAGES = 20;
 
   struct Message {
-    Type type;
-    unsigned tstart; // time message was created
-    unsigned texpiry; // time message will expire
-    unsigned tshow; // time message is visible for
+    Type type = MSG_UNKNOWN;
+    std::chrono::steady_clock::time_point tstart{}; // time message was created
+    std::chrono::steady_clock::time_point texpiry{}; // time message will expire
+    std::chrono::steady_clock::duration tshow; // time message is visible for
 
     StaticString<256u> text;
 
-    Message()
-      :type(MSG_UNKNOWN), tstart(0), texpiry(0)
+    /** From #StatusMessage::sound; nullptr if none or not from status file. */
+    const char *sound = nullptr;
+
+    constexpr Message() noexcept
     {
       text.clear();
     }
 
-    bool IsUnknown() const {
+    constexpr bool IsUnknown() const noexcept {
       return type == MSG_UNKNOWN;
     }
 
-    bool IsNew() const {
+    constexpr bool IsNew() const noexcept {
       return texpiry == tstart;
     }
 
     /**
      * Expired for the first time?
      */
-    bool IsNewlyExpired(unsigned now) const {
+    constexpr bool IsNewlyExpired(std::chrono::steady_clock::time_point now) const noexcept {
       return texpiry <= now && texpiry > tstart;
     }
 
-    void Set(Type type, unsigned tshow, const TCHAR *text, unsigned now);
+    void Set(Type type, std::chrono::steady_clock::duration tshow,
+             const char *text,
+             std::chrono::steady_clock::time_point now,
+             const char *_sound = nullptr) noexcept;
 
     /**
      * @return true if something was changed
      */
-    bool Update(unsigned now);
+    bool Update(std::chrono::steady_clock::time_point now) noexcept;
 
     /**
      * @return true if a message has been appended
      */
-    bool AppendTo(StaticString<2000> &buffer, unsigned now);
+    bool AppendTo(StaticString<2000> &buffer,
+                  std::chrono::steady_clock::time_point now) noexcept;
   };
 
-  SingleWindow &parent;
+  UI::SingleWindow &parent;
   const DialogLook &look;
 
   PixelRect rc; // maximum message size
@@ -116,56 +101,59 @@ private:
   struct Message messages[MAXMESSAGES];
   StaticString<2000> text;
 
-  unsigned n_visible;
+  unsigned n_visible = 0;
 
-  bool enable_sound;
+  /** when was the last haptic feedback for a new message generated? */
+  std::chrono::steady_clock::time_point last_haptic{};
+
+  bool enable_sound = true;
 
 public:
-  PopupMessage(SingleWindow &_parent, const DialogLook &_look,
-               const UISettings &settings);
+  PopupMessage(UI::SingleWindow &_parent, const DialogLook &_look,
+               const UISettings &settings) noexcept;
 
-  void Create(const PixelRect _rc);
+  void Create(const PixelRect _rc) noexcept;
 
-  void UpdateLayout(PixelRect _rc);
+  void UpdateLayout(PixelRect _rc) noexcept;
 
   /** returns true if messages have changed */
-  bool Render();
+  bool Render() noexcept;
 
 protected:
   /** Caller must hold the lock. */
-  void AddMessage(unsigned tshow, Type type, const TCHAR *Text);
+  void AddMessage(std::chrono::steady_clock::duration tshow, Type type,
+                  const char *Text,
+                  const char *sound = nullptr) noexcept;
 
 public:
-  void AddMessage(const TCHAR* text, const TCHAR *data=nullptr);
+  void AddMessage(const char* text, const char *data=nullptr) noexcept;
 
   /**
    * Repeats last non-visible message of specified type
-   * (or any message type=MSG_UNKNOWN).
+   * (or any message type=MSG_UNKNOWN), including its status sound if any.
    */
-  void Repeat(Type type=MSG_UNKNOWN);
+  void Repeat(Type type=MSG_UNKNOWN) noexcept;
 
   /** Clears all visible messages (of specified type or if type=0, all). */
-  bool Acknowledge(Type type=MSG_UNKNOWN);
+  bool Acknowledge(Type type=MSG_UNKNOWN) noexcept;
 
 private:
-  gcc_pure
-  unsigned CalculateWidth() const;
+  [[gnu::pure]]
+  unsigned CalculateWidth() const noexcept;
 
-  gcc_pure
-  PixelRect GetRect(unsigned width, unsigned height) const;
+  [[gnu::pure]]
+  PixelRect GetRect(PixelSize size) const noexcept;
 
-  gcc_pure
-  PixelRect GetRect() const;
+  [[gnu::pure]]
+  PixelRect GetRect() const noexcept;
 
-  void UpdateTextAndLayout();
-  int GetEmptySlot();
+  void UpdateTextAndLayout() noexcept;
+  int GetEmptySlot() noexcept;
 
 protected:
   /* virtual methods from class Window */
-  bool OnMouseDown(PixelPoint p) override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
 
   /* virtual methods from class PaintWindow */
-  void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 };
-
-#endif

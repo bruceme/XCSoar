@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Engine/GlideSolvers/GlidePolar.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
@@ -34,29 +15,29 @@ static TaskBehaviour task_behaviour;
 static OrderedTaskSettings ordered_task_settings;
 static GlidePolar glide_polar(0);
 
-static GeoPoint
-MakeGeoPoint(double longitude, double latitude)
+static constexpr GeoPoint
+MakeGeoPoint(double longitude, double latitude) noexcept
 {
-  return GeoPoint(Angle::Degrees(longitude),
-                  Angle::Degrees(latitude));
+  return {Angle::Degrees(longitude), Angle::Degrees(latitude)};
 }
 
 static Waypoint
-MakeWaypoint(Waypoint wp, double altitude)
+MakeWaypoint(Waypoint wp, double altitude) noexcept
 {
   wp.elevation = altitude;
+  wp.has_elevation = true;
   return wp;
 }
 
 static Waypoint
-MakeWaypoint(double longitude, double latitude, double altitude)
+MakeWaypoint(double longitude, double latitude, double altitude) noexcept
 {
   return MakeWaypoint(Waypoint(MakeGeoPoint(longitude, latitude)), altitude);
 }
 
 template<typename... Args>
 static WaypointPtr
-MakeWaypointPtr(Args&&... args)
+MakeWaypointPtr(Args&&... args) noexcept
 {
   return WaypointPtr(new Waypoint(MakeWaypoint(std::forward<Args>(args)...)));
 }
@@ -69,20 +50,20 @@ static void
 TestAATPoint()
 {
   OrderedTask task(task_behaviour);
-  task.Append(StartPoint(new CylinderZone(wp1->location, 500),
+  task.Append(StartPoint(std::make_unique<CylinderZone>(wp1->location, 500),
                          WaypointPtr(wp1),
                          task_behaviour,
                          ordered_task_settings.start_constraints));
-  task.Append(AATPoint(new CylinderZone(wp2->location, 10000),
+  task.Append(AATPoint(std::make_unique<CylinderZone>(wp2->location, 10000),
                        WaypointPtr(wp2),
                        task_behaviour));
-  task.Append(FinishPoint(new CylinderZone(wp3->location, 500),
+  task.Append(FinishPoint(std::make_unique<CylinderZone>(wp3->location, 500),
                           WaypointPtr(wp3),
                           task_behaviour,
                           ordered_task_settings.finish_constraints));
   task.SetActiveTaskPoint(1);
   task.UpdateGeometry();
-  ok1(task.CheckTask());
+  ok1(!IsError(task.CheckTask()));
 
   AATPoint &ap = (AATPoint &)task.GetPoint(1);
 
@@ -145,7 +126,7 @@ TestAll()
   TestAATPoint();
 }
 
-int main(int argc, char **argv)
+int main()
 {
   plan_tests(717);
 

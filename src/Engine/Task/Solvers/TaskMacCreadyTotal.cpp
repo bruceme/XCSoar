@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskMacCreadyTotal.hpp"
 #include "TaskSolution.hpp"
@@ -44,7 +25,7 @@ TaskMacCreadyTotal::get_aircraft_start(const AircraftState &aircraft) const
   assert(tp.GetType() != TaskPointType::UNORDERED);
 
   if (tp.HasEntered()) {
-    return tp.GetEnteredState();
+    return tp.GetScoredState();
   } else if (aircraft.location.IsValid()) {
     return aircraft;
   } else {
@@ -56,13 +37,14 @@ TaskMacCreadyTotal::get_aircraft_start(const AircraftState &aircraft) const
 }
 
 double
-TaskMacCreadyTotal::effective_distance(const double time_remaining) const
+TaskMacCreadyTotal::effective_distance(const FloatDuration time_remaining) const noexcept
 {
-  double t_total = 0, d_total = 0;
+  FloatDuration t_total{};
+  double d_total = 0;
   for (int i = points.size() - 1; i >= 0; i--) {
     const GlideResult &result = leg_solutions[i];
 
-    if (result.IsOk() && result.time_elapsed > 0) {
+    if (result.IsOk() && result.time_elapsed.count() > 0) {
       auto p = (time_remaining - t_total) / result.time_elapsed;
       if (p >= 0 && p <= 1) {
         return d_total + p * result.vector.distance;
@@ -76,9 +58,14 @@ TaskMacCreadyTotal::effective_distance(const double time_remaining) const
 }
 
 double
-TaskMacCreadyTotal::effective_leg_distance(const double time_remaining) const
+TaskMacCreadyTotal::effective_leg_distance(const FloatDuration time_remaining) const noexcept
 {
   const GlideResult &result = get_active_solution();
+  if (result.time_elapsed.count() <= 0)
+    /* this can happen if the distance is zero; prevent division by
+       zero by checking for this special case */
+    return 0;
+
   auto p = time_remaining / result.time_elapsed;
   return p * result.vector.distance;
 }

@@ -1,52 +1,33 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DATA_FIELD_STRING_HPP
-#define XCSOAR_DATA_FIELD_STRING_HPP
+#pragma once
 
 #include "Base.hpp"
-#include "Util/StaticString.hxx"
 
-#define EDITSTRINGSIZE 32
+#include <string>
 
 class DataFieldString: public DataField
 {
-  StaticString<EDITSTRINGSIZE> mValue;
+  std::string mValue;
 
 protected:
-  DataFieldString(Type _type, const TCHAR *_value,
-                  DataFieldListener *listener=nullptr)
+  DataFieldString(Type _type, const char *_value,
+                  DataFieldListener *listener=nullptr) noexcept
     :DataField(_type, false, listener), mValue(_value) {}
 
 public:
-  DataFieldString(const TCHAR *_value, DataFieldListener *listener=nullptr)
+  DataFieldString(const char *_value,
+                  DataFieldListener *listener=nullptr) noexcept
     :DataField(Type::STRING, false, listener), mValue(_value) {}
 
-  void Set(const TCHAR *Value);
+  const char *GetValue() const noexcept {
+    return mValue.c_str();
+  }
+
+  void SetValue(const char *new_value) noexcept;
+  void ModifyValue(const char *new_value) noexcept;
 
   /* virtual methods from class DataField */
-  const TCHAR *GetAsString() const override;
-  void SetAsString(const TCHAR *Value) override;
+  const char *GetAsString() const noexcept override;
 };
-
-#endif

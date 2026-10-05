@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_TASK_MISC_PANEL_HPP
-#define XCSOAR_TASK_MISC_PANEL_HPP
+#pragma once
 
 #include "Widget/PagerWidget.hpp"
 
@@ -31,12 +10,20 @@ class OrderedTask;
 
 class TaskMiscPanel final : public PagerWidget {
 public:
+  enum Pages {
+    PAGE_ACTIONS,
+    PAGE_LIST,
+    PAGE_WEGLIDE_USER,
+    PAGE_WEGLIDE_PUBLIC_DECLARED,
+    PAGE_WEGLIDE_DAILY_COMPETITIONS,
+    PAGE_WEGLIDE_RECENT_SCORES,
+  };
+
   TaskMiscPanel(TaskManagerDialog &dialog,
-                OrderedTask **_active_task, bool *_task_modified);
+                std::unique_ptr<OrderedTask> &_active_task,
+                bool *_task_modified) noexcept;
 
   /* virtual methods from class Widget */
-  void ReClick() override;
-  void Show(const PixelRect &rc) override;
+  void ReClick() noexcept override;
+  void Show(const PixelRect &rc) noexcept override;
 };
-
-#endif

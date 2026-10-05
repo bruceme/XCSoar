@@ -1,40 +1,23 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include <cassert>
+#include <cstdint>
+#include <functional>
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DATA_FIELD_BASE_HPP
-#define XCSOAR_DATA_FIELD_BASE_HPP
-
-#include "Compiler.h"
-
-#include <assert.h>
-#include <tchar.h>
-#include <stdint.h>
-
-#define OUTBUFFERSIZE 128
+static constexpr unsigned OUTBUFFERSIZE = 128;
 
 class DataFieldListener;
 class ComboList;
 
+/**
+ * Most implementations have a method GetValue() for obtaining the raw
+ * value with its native type; ModifyValue() sets a new value and
+ * invokes DataFieldListener::OnModified(); SetValue() does the same,
+ * but does not invoke the callback.
+ */
 class DataField
 {
 public:
@@ -46,14 +29,20 @@ public:
     ANGLE,
     ENUM,
     FILE,
+    MULTI_FILE,
     ROUGH_TIME,
     TIME,
     PREFIX,
     GEOPOINT,
+    DATE,
   };
 
+  using ModifiedCallback = std::function<void()>;
+
 private:
-  DataFieldListener *listener;
+  ModifiedCallback on_modified;
+
+  DataFieldListener *listener; // deprecated
 
   // all Types dataField support combolist except DataFieldString.
   const bool supports_combolist;
@@ -65,43 +54,41 @@ protected:
 
 protected:
   DataField(Type type, bool supports_combolist,
-            DataFieldListener *listener);
+            DataFieldListener *listener) noexcept;
 
 public:
-  virtual ~DataField() {}
+  virtual ~DataField() noexcept = default;
 
-  void SetListener(DataFieldListener *_listener) {
+  void SetOnModified(ModifiedCallback &&_callback) noexcept {
+    on_modified = std::move(_callback);
+  }
+
+  // deprecated
+  void SetListener(DataFieldListener *_listener) noexcept {
     assert(listener == nullptr);
     assert(_listener != nullptr);
 
     listener = _listener;
   }
 
-  Type GetType() const {
+  Type GetType() const noexcept {
     return type;
   }
 
-  bool SupportsCombolist() const {
+  bool SupportsCombolist() const noexcept {
     return supports_combolist;
   }
 
-  virtual void Inc();
-  virtual void Dec();
+  virtual void Inc() noexcept;
+  virtual void Dec() noexcept;
 
-  gcc_pure
-  virtual int GetAsInteger() const;
+  [[gnu::pure]]
+  virtual const char *GetAsString() const noexcept;
 
-  gcc_pure
-  virtual const TCHAR *GetAsString() const;
+  [[gnu::pure]]
+  virtual const char *GetAsDisplayString() const noexcept;
 
-  gcc_pure
-  virtual const TCHAR *GetAsDisplayString() const;
-
-  virtual void SetAsInteger(int value);
-  virtual void SetAsString(const TCHAR *value);
-
-  virtual void EnableItemHelp(gcc_unused bool value) {};
-
+  virtual void EnableItemHelp([[maybe_unused]] bool value) noexcept {};
 
   /**
    * Create a #ComboList that allows the user to choose a value.
@@ -110,16 +97,17 @@ public:
    * determine the range of displayed values; pass nullptr for the
    * "default" reference
    */
-  gcc_pure
-  virtual ComboList CreateComboList(const TCHAR *reference) const;
+  [[gnu::pure]]
+  virtual ComboList CreateComboList(const char *reference) const noexcept;
 
-  virtual void SetFromCombo(int iDataFieldIndex,
-                            gcc_unused const TCHAR *sValue)
+  virtual void SetFromCombo([[maybe_unused]] int iDataFieldIndex,
+                            [[maybe_unused]] const char *sValue) noexcept
   {
-    SetAsInteger(iDataFieldIndex);
+    /* this method must be implemented by all classes which also
+       implement CreateComboList() */
   }
 
-  bool GetItemHelpEnabled() {
+  bool GetItemHelpEnabled() const noexcept {
     return item_help_enabled;
   }
 
@@ -128,7 +116,5 @@ protected:
    * Notify interested parties that the value of this object has
    * been modified.
    */
-  void Modified();
+  void Modified() noexcept;
 };
-
-#endif

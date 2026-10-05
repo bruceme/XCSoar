@@ -1,31 +1,10 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef FlatGeoPoint_HPP
-#define FlatGeoPoint_HPP
+#pragma once
 
 #include "Math/Util.hpp"
 #include "Math/Point2D.hpp"
-#include "Compiler.h"
 
 #include <type_traits>
 
@@ -33,21 +12,8 @@
  * Integer projected (flat-earth) version of Geodetic coordinates
  */
 struct FlatGeoPoint : IntPoint2D {
-  /**
-   * Non-initialising constructor.
-   */
-  FlatGeoPoint() = default;
-
-  /**
-   * Constructor at specified location (x,y)
-   *
-   * @param x x location
-   * @param y y location
-   *
-   * @return Initialised object at origin
-   */
-  constexpr
-  FlatGeoPoint(const int _x, const int _y):IntPoint2D(_x, _y) {}
+  FlatGeoPoint() noexcept = default;
+  using IntPoint2D::IntPoint2D;
 
   /**
    * Find distance from one point to another
@@ -56,8 +22,8 @@ struct FlatGeoPoint : IntPoint2D {
    *
    * @return Distance in projected units
    */
-  gcc_pure
-  unsigned Distance(const FlatGeoPoint &sp) const;
+  [[gnu::pure]]
+  unsigned Distance(const FlatGeoPoint &sp) const noexcept;
 
   /**
    * Find squared distance from one point to another
@@ -66,8 +32,8 @@ struct FlatGeoPoint : IntPoint2D {
    *
    * @return Squared distance in projected units
    */
-  gcc_pure
-  unsigned DistanceSquared(const FlatGeoPoint &sp) const;
+  [[gnu::pure]]
+  unsigned DistanceSquared(const FlatGeoPoint &sp) const noexcept;
 
   /**
    * Multiply point by a constant
@@ -76,8 +42,8 @@ struct FlatGeoPoint : IntPoint2D {
    *
    * @return Scaled value
    */
-  gcc_pure
-  FlatGeoPoint operator*(const double t) const {
+  [[gnu::pure]]
+  FlatGeoPoint operator*(const double t) const noexcept {
     return FlatGeoPoint(iround(x * t), iround(y * t));
   }
 
@@ -88,7 +54,7 @@ struct FlatGeoPoint : IntPoint2D {
    *
    * @return Cross product
    */
-  constexpr int CrossProduct(FlatGeoPoint other) const {
+  constexpr int CrossProduct(FlatGeoPoint other) const noexcept {
     return ::CrossProduct(*this, other);
   }
 
@@ -99,29 +65,14 @@ struct FlatGeoPoint : IntPoint2D {
    *
    * @return Dot product
    */
-  constexpr int DotProduct(FlatGeoPoint other) const {
+  constexpr int DotProduct(FlatGeoPoint other) const noexcept {
     return ::DotProduct(*this, other);
   }
 
-  /**
-   * Test whether two points are co-located
-   *
-   * @param other Point to compare
-   *
-   * @return True if coincident
-   */
-  constexpr
-  bool operator==(const FlatGeoPoint other) const {
-    return IntPoint2D::operator==(other);
-  };
+  constexpr bool operator==(const FlatGeoPoint &) const noexcept = default;
 
-  constexpr
-  bool operator!=(const FlatGeoPoint other) const {
-    return IntPoint2D::operator!=(other);
-  };
-
-  gcc_pure
-  bool Sort(const FlatGeoPoint& sp) const {
+  [[gnu::pure]]
+  bool Sort(const FlatGeoPoint& sp) const noexcept {
     if (x < sp.x)
       return false;
     else if (x == sp.x)
@@ -140,35 +91,22 @@ struct AFlatGeoPoint : public FlatGeoPoint {
   /** Nav reference altitude (m) */
   int altitude;
 
-  constexpr
-  AFlatGeoPoint(const int x, const int y, const int alt):
-    FlatGeoPoint(x,y),altitude(alt) {};
+  constexpr AFlatGeoPoint() noexcept = default;
 
-  constexpr
-  AFlatGeoPoint(const FlatGeoPoint p, const int alt)
+  constexpr AFlatGeoPoint(const int x, const int y, const int alt) noexcept
+    :FlatGeoPoint(x,y),altitude(alt) {};
+
+  constexpr AFlatGeoPoint(const FlatGeoPoint p, const int alt) noexcept
     :FlatGeoPoint(p), altitude(alt) {};
 
-  constexpr
-  AFlatGeoPoint():FlatGeoPoint(0,0),altitude(0) {};
-
   /** Rounds location to reduce state space */
-  void RoundLocation() {
+  void RoundLocation() noexcept {
     // round point to correspond roughly with terrain step size
     x = (x >> 2) << 2;
     y = (y >> 2) << 2;
   }
 
-  /**
-   * Equality comparison operator
-   *
-   * @param other object to compare to
-   *
-   * @return true if location and altitude are equal
-   */
-  constexpr
-  bool operator==(const AFlatGeoPoint other) const {
-    return FlatGeoPoint::operator==(other) && (altitude == other.altitude);
-  };
+  constexpr bool operator==(const AFlatGeoPoint &) const noexcept = default;
 
   /**
    * Ordering operator, used for set ordering.  Uses lexicographic comparison.
@@ -177,8 +115,8 @@ struct AFlatGeoPoint : public FlatGeoPoint {
    *
    * @return true if lexicographically smaller
    */
-  gcc_pure
-  bool Sort(const AFlatGeoPoint &sp) const {
+  [[gnu::pure]]
+  bool Sort(const AFlatGeoPoint &sp) const noexcept {
     if (!FlatGeoPoint::Sort(sp))
       return false;
     else if (FlatGeoPoint::operator==(sp))
@@ -187,5 +125,3 @@ struct AFlatGeoPoint : public FlatGeoPoint {
       return true;
   }
 };
-
-#endif

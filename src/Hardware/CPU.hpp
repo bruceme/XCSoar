@@ -1,28 +1,7 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_HARDWARE_CPU_FREQUENCY_HPP
-#define XCSOAR_HARDWARE_CPU_FREQUENCY_HPP
+#pragma once
 
 #ifdef KOBO
 #define HAVE_CPU_FREQUENCY
@@ -31,10 +10,10 @@ Copyright_License {
 #ifdef HAVE_CPU_FREQUENCY
 
 void
-LockCPU();
+LockCPU() noexcept;
 
 void
-UnlockCPU();
+UnlockCPU() noexcept;
 
 #endif
 
@@ -44,15 +23,43 @@ UnlockCPU();
  */
 struct ScopeLockCPU {
 #ifdef HAVE_CPU_FREQUENCY
-  ScopeLockCPU() {
+  ScopeLockCPU() noexcept {
     LockCPU();
   }
 
-  ~ScopeLockCPU() {
+  ~ScopeLockCPU() noexcept {
     UnlockCPU();
   }
 #else
 #endif
 };
 
-#endif
+/**
+ * Max CPU frequency threshold for #IsSlowCPUFrequency / #IsSlowCPU
+ * (1.4 GHz in kHz).
+ */
+static constexpr unsigned SLOW_CPU_MAX_FREQ_KHZ = 1400000;
+
+/**
+ * True if \a max_freq_khz is known and at most #SLOW_CPU_MAX_FREQ_KHZ.
+ */
+[[gnu::const]]
+constexpr bool
+IsSlowCPUFrequency(unsigned max_freq_khz) noexcept
+{
+  return max_freq_khz != 0 && max_freq_khz <= SLOW_CPU_MAX_FREQ_KHZ;
+}
+
+/**
+ * Maximum CPU frequency in kHz from the OS, or 0 if unknown.
+ * Cached after the first successful read on Linux.
+ */
+unsigned
+GetMaxCPUFrequencyKHz() noexcept;
+
+/**
+ * True when the host max CPU frequency is known and ≤ 1.4 GHz
+ * (typical Kobo, Raspberry Pi 1–3 / 3B+, Cubieboard-class boards).
+ */
+bool
+IsSlowCPU() noexcept;

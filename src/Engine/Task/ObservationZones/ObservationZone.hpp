@@ -1,32 +1,9 @@
-/*
-  Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef OBSERVATIONZONE_HPP
-#define OBSERVATIONZONE_HPP
-
-#include "Compiler.h"
-
-#include <stdint.h>
+#include <cstdint>
 
 struct GeoPoint;
 class OZBoundary;
@@ -49,7 +26,7 @@ public:
     BGAENHANCEDOPTION,
     BGA_START,
     ANNULAR_SECTOR,
-    SYMMETRIC_QUADRANT,
+    SYMMETRIC_SECTOR,
     CUSTOM_KEYHOLE,
   };
 
@@ -59,16 +36,16 @@ private:
   const bool can_start_through_top;
 
 protected:
-  ObservationZone(Shape _shape, bool _can_start_through_top)
+  constexpr ObservationZone(Shape _shape, bool _can_start_through_top) noexcept
     :shape(_shape), can_start_through_top(_can_start_through_top) {}
 
 public:
-  virtual ~ObservationZone() {}
+  virtual ~ObservationZone() noexcept = default;
 
   ObservationZone(const ObservationZone &) = delete;
   ObservationZone &operator=(const ObservationZone &) = delete;
 
-  Shape GetShape() const {
+  constexpr Shape GetShape() const noexcept {
     return shape;
   }
 
@@ -77,16 +54,15 @@ public:
    *
    * @return True if reference point is inside sector
    */
-  gcc_pure
-  virtual bool IsInSector(const GeoPoint &location) const = 0;
+  [[gnu::pure]]
+  virtual bool IsInSector(const GeoPoint &location) const noexcept = 0;
 
   /**
    * If zone when used for start can trigger task start via vertical exit
    *
    * @return True if zone type can have a valid start through top
    */
-  gcc_pure
-  bool CanStartThroughTop() const {
+  constexpr bool CanStartThroughTop() const noexcept {
     return can_start_through_top;
   }
 
@@ -98,9 +74,9 @@ public:
    *
    * @return True if constraints are satisfied
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual bool TransitionConstraint(const GeoPoint &location,
-                                    const GeoPoint &last_location) const = 0;
+                                    const GeoPoint &last_location) const noexcept = 0;
 
   /**
    * Return an unordered list of boundary points for evaluation by the
@@ -114,8 +90,8 @@ public:
    * TaskDijkstra chooses the outer points only if there is a
    * measurable advantage.
    */
-  gcc_pure
-  virtual OZBoundary GetBoundary() const = 0;
+  [[gnu::pure]]
+  virtual OZBoundary GetBoundary() const noexcept = 0;
 
   /**
    * Distance reduction for scoring when outside this OZ
@@ -124,8 +100,6 @@ public:
    *
    * @return Distance (m) to subtract from score
    */
-  gcc_pure
-  virtual double ScoreAdjustment() const = 0;
+  [[gnu::pure]]
+  virtual double ScoreAdjustment() const noexcept = 0;
 };
-
-#endif

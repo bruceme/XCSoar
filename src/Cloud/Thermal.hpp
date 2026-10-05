@@ -1,36 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CLOUD_THERMAL_HPP
-#define XCSOAR_CLOUD_THERMAL_HPP
+#pragma once
 
 #include "Geo/Boost/GeoPoint.hpp"
 
 #include <boost/intrusive/list.hpp>
 #include <boost/geometry/index/rtree.hpp>
 #include <boost/range/iterator_range_core.hpp>
-#include <boost/asio/ip/udp.hpp>
-
 #include <memory>
 #include <chrono>
 
@@ -66,7 +43,7 @@ struct CloudThermal
      bottom_location(_bottom_location), top_location(_top_location),
      lift(_lift) {}
 
-  gcc_pure
+  [[gnu::pure]]
   SkyLinesTracking::Thermal Pack() const;
 
   void Save(Serialiser &s) const;
@@ -81,7 +58,7 @@ using CloudThermalPtr = std::shared_ptr<CloudThermal>;
 struct CloudThermalIndexable {
   typedef GeoPoint result_type;
 
-  gcc_pure
+  [[gnu::pure]]
   result_type operator()(const CloudThermalPtr &client) const {
     return client->top_location;
   }
@@ -149,11 +126,9 @@ public:
   typedef Tree::const_query_iterator query_iterator;
   typedef boost::iterator_range<query_iterator> query_iterator_range;
 
-  gcc_pure
+  [[gnu::pure]]
   query_iterator_range QueryWithinRange(GeoPoint location, double range) const;
 
   void Save(Serialiser &s) const;
   void Load(Deserialiser &s);
 };
-
-#endif

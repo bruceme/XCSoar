@@ -1,85 +1,115 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskDialogs.hpp"
 #include "Dialogs/WidgetDialog.hpp"
 #include "Dialogs/Waypoint/WaypointDialogs.hpp"
+#include "Form/Form.hpp"
+#include "InfoBoxes/Content/Alternate.hpp"
 #include "Widget/ListWidget.hpp"
 #include "Look/DialogLook.hpp"
 #include "Task/ProtectedTaskManager.hpp"
 #include "Engine/Task/TaskManager.hpp"
 #include "Engine/Task/Unordered/AlternateList.hpp"
-#include "Components.hpp"
+#include "Engine/Waypoint/Waypoint.hpp"
 #include "Interface.hpp"
 #include "UIGlobals.hpp"
 #include "Look/MapLook.hpp"
 #include "Renderer/WaypointListRenderer.hpp"
 #include "Renderer/TwoTextRowsRenderer.hpp"
 #include "Language/Language.hpp"
+#include "ActionInterface.hpp"
+#include "Message.hpp"
+#include "Components.hpp"
+#include "BackendComponents.hpp"
+#include "DataComponents.hpp"
+#include "Protection.hpp"
+#include "Engine/Waypoint/Waypoints.hpp"
+
+#include <cassert>
+#include <optional>
 
 class AlternatesListWidget final
-  : public ListWidget, private ActionListener {
-  enum Buttons {
-    SETTINGS,
-    GOTO,
-  };
-
+  : public ListWidget {
   const DialogLook &dialog_look;
+  const bool select_mode;
+  const std::optional<AlternateInfoBoxSlot> slot;
 
   TwoTextRowsRenderer row_renderer;
 
-  Button *details_button, *cancel_button, *goto_button;
+  Button *details_button = nullptr;
+  Button *cancel_button = nullptr;
+  Button *goto_button = nullptr;
+  Button *select_button = nullptr;
+  Button *auto_button = nullptr;
+  Button *manual_button = nullptr;
+  Button *set_active_freq_button = nullptr;
+  Button *set_standby_freq_button = nullptr;
 
 public:
   AlternateList alternates;
 
 public:
-  void CreateButtons(WidgetDialog &dialog);
+  void CreateButtons(WidgetDialog &dialog, Waypoints *waypoints_for_details = nullptr) noexcept;
 
 public:
-  AlternatesListWidget(const DialogLook &_dialog_look)
-    :dialog_look(_dialog_look) {}
+  explicit
+  AlternatesListWidget(const DialogLook &_dialog_look,
+                       bool _select_mode = false,
+                       std::optional<AlternateInfoBoxSlot> _slot =
+                         std::nullopt) noexcept
+    :dialog_look(_dialog_look), select_mode(_select_mode), slot(_slot) {}
 
   unsigned GetCursorIndex() const {
     return GetList().GetCursorIndex();
   }
 
   bool Update() {
-    ProtectedTaskManager::Lease lease(*protected_task_manager);
+    ProtectedTaskManager::Lease lease(*backend_components->protected_task_manager);
     alternates = lease->GetAlternates();
     return !alternates.empty();
   }
 
+private:
+  [[nodiscard]] [[gnu::pure]]
+  bool
+  HasValidSelection() const noexcept {
+    return !alternates.empty() && GetCursorIndex() < alternates.size();
+  }
+
+  /**
+   * Returns the configured alternate slot for the slot-aware dialog
+   * path.  This must only be used when slot-specific controls have
+   * been created.
+   */
+  [[nodiscard]] [[gnu::pure]]
+  AlternateInfoBoxSlot
+  GetConfiguredSlot() const noexcept {
+    assert(slot.has_value());
+    return *slot;
+  }
+
+  [[nodiscard]] [[gnu::pure]]
+  const auto &GetSelectedWaypointPtr() const noexcept {
+    const unsigned index = GetCursorIndex();
+    assert(index < alternates.size());
+
+    auto const &item = alternates[index];
+    return item.waypoint;
+  }
+
+  [[nodiscard]] [[gnu::pure]]
+  const auto &GetSelectedWaypoint() const noexcept {
+    return *GetSelectedWaypointPtr();
+  }
+
 public:
   /* virtual methods from class Widget */
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override;
-  void Unprepare() override {
-    DeleteWindow();
-  }
+  void Prepare([[maybe_unused]] ContainerWindow &parent, [[maybe_unused]] const PixelRect &rc) noexcept override;
 
   /* virtual methods from class List::Handler */
   void OnPaintItem(Canvas &canvas, const PixelRect rc,
-                   unsigned index) override {
+                   unsigned index) noexcept override {
     assert(index < alternates.size());
 
     const ComputerSettings &settings = CommonInterface::GetComputerSettings();
@@ -93,83 +123,240 @@ public:
                                CommonInterface::GetMapSettings().waypoint);
   }
 
-  bool CanActivateItem(unsigned index) const  override{
+  bool CanActivateItem([[maybe_unused]] unsigned index) const noexcept override {
     return true;
   }
 
-  void OnActivateItem(unsigned index) override;
+  void OnCursorMoved([[maybe_unused]] unsigned index) noexcept override {
+    UpdateButtons();
+  }
 
-  /* virtual methods from class ActionListener */
-  void OnAction(int id) override;
+  void OnActivateItem([[maybe_unused]] unsigned index) noexcept override;
+
+private:
+  void UpdateButtons() noexcept {
+
+    // Check if window is initialized (widget is prepared)
+    if (!IsDefined())
+      return;
+
+    if (set_active_freq_button == nullptr || set_standby_freq_button == nullptr)
+      return;
+
+    if (auto_button != nullptr) {
+      auto_button->SetEnabled(GetAlternateInfoBoxMode(GetConfiguredSlot()) ==
+                              AlternateInfoBoxMode::MANUAL);
+    }
+
+    if (!HasValidSelection()) {
+      if (goto_button != nullptr)
+        goto_button->SetEnabled(false);
+      if (details_button != nullptr)
+        details_button->SetEnabled(false);
+      set_active_freq_button->SetEnabled(false);
+      set_standby_freq_button->SetEnabled(false);
+      if (manual_button != nullptr)
+        manual_button->SetEnabled(false);
+      return;
+    }
+
+    const auto &waypoint = GetSelectedWaypoint();
+    const bool has_freq = waypoint.radio_frequency.IsDefined();
+    if (goto_button != nullptr)
+      goto_button->SetEnabled(true);
+    if (details_button != nullptr)
+      details_button->SetEnabled(true);
+    set_active_freq_button->SetEnabled(has_freq);
+    set_standby_freq_button->SetEnabled(has_freq);
+    if (manual_button != nullptr)
+      manual_button->SetEnabled(true);
+  }
 };
 
 void
-AlternatesListWidget::CreateButtons(WidgetDialog &dialog)
+AlternatesListWidget::CreateButtons(WidgetDialog &dialog,
+                                    Waypoints *waypoints_for_details) noexcept
 {
-  goto_button = dialog.AddButton(_("Goto"), *this, GOTO);
-  details_button = dialog.AddButton(_("Details"), mrOK);
+  if (!select_mode) {
+    goto_button = dialog.AddButton(_("GoTo"), [this](){
+      if (!HasValidSelection())
+        return;
+
+      // Remove old temporary goto waypoint when selecting a regular waypoint
+      if (data_components != nullptr && data_components->waypoints != nullptr) {
+        auto &way_points = *data_components->waypoints;
+        {
+          ScopeSuspendAllThreads suspend;
+          way_points.EraseTempGoto();
+        }
+      }
+
+      backend_components->protected_task_manager->DoGoto(GetSelectedWaypointPtr());
+      cancel_button->Click();
+    });
+  } else {
+    select_button = dialog.AddButton(_("Select"), mrOK);
+  }
+
+  if (!select_mode && slot.has_value()) {
+    /* Alternate Mode: Auto returns a MANUAL slot to the computed
+       list. Pinning is Select as Alternate, which is always
+       available and sets MANUAL. */
+    auto_button = dialog.AddButton(C_("Button", "Alternate Mode: Auto"), [this](){
+      const auto slot = GetConfiguredSlot();
+      if (GetAlternateInfoBoxMode(slot) != AlternateInfoBoxMode::MANUAL)
+        return;
+
+      SetAlternateInfoBoxMode(slot, AlternateInfoBoxMode::AUTO);
+      UpdateButtons();
+    });
+
+    manual_button = dialog.AddButton(C_("Button", "Select as Alternate"), [this](){
+      if (!HasValidSelection())
+        return;
+
+      const auto slot = GetConfiguredSlot();
+      SetManualAlternateWaypoint(slot, GetSelectedWaypointPtr());
+      SetAlternateInfoBoxMode(slot, AlternateInfoBoxMode::MANUAL);
+      cancel_button->Click();
+    });
+  }
+
+  if (!select_mode) {
+    details_button = dialog.AddButton(
+      _("Details"),
+      [this, &dialog, waypoints_for_details]() noexcept {
+        if (!HasValidSelection())
+          return;
+
+        Waypoints *wpts = waypoints_for_details;
+        if (wpts == nullptr && data_components != nullptr)
+          wpts = data_components->waypoints.get();
+        if (wpts == nullptr)
+          return;
+
+        WaypointPtr w(GetSelectedWaypointPtr());
+        if (w == nullptr)
+          return;
+
+        /* allow_navigation + allow_edit: like the persistent list;
+         * alternates are task-adjacent; editing user waypoints
+         * (e.g. user.cup) stays available from this entry point. */
+        if (dlgWaypointDetailsShowModalForBrowseParent(
+              wpts, std::move(w), true, true))
+          dialog.SetModalResult(mrOK);
+      });
+  }
+
+  set_active_freq_button = dialog.AddButton(_("Set Active Frequency"), [this](){
+    if (!HasValidSelection())
+      return;
+
+    auto const &waypoint = GetSelectedWaypoint();
+    ActionInterface::SetActiveFrequency(waypoint.radio_frequency,
+                                        waypoint.name.c_str());
+  });
+
+  set_standby_freq_button = dialog.AddButton(_("Set Standby Frequency"), [this](){
+    if (!HasValidSelection())
+      return;
+
+    auto const &waypoint = GetSelectedWaypoint();
+    ActionInterface::SetStandbyFrequency(waypoint.radio_frequency,
+                                         waypoint.name.c_str());
+  });
+
   cancel_button = dialog.AddButton(_("Close"), mrCancel);
+  
+  // Update button states now that buttons are created
+  UpdateButtons();
 }
 
 void
-AlternatesListWidget::Prepare(ContainerWindow &parent, const PixelRect &rc)
+AlternatesListWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                              [[maybe_unused]] const PixelRect &rc) noexcept
 {
   CreateList(parent, dialog_look, rc,
              row_renderer.CalculateLayout(*dialog_look.list.font_bold,
                                           dialog_look.small_font));
 
   GetList().SetLength(alternates.size());
+  UpdateButtons();
 }
 
 void
-AlternatesListWidget::OnActivateItem(unsigned index)
+AlternatesListWidget::OnActivateItem([[maybe_unused]] unsigned index) noexcept
 {
-  details_button->Click();
+  if (select_mode && select_button != nullptr)
+    select_button->Click();
+  else if (details_button != nullptr)
+    details_button->Click();
 }
 
 void
-AlternatesListWidget::OnAction(int id)
+dlgAlternatesListShowModal(Waypoints *waypoints,
+                           std::optional<AlternateInfoBoxSlot> slot) noexcept
 {
-  switch (id) {
-  case GOTO:
-    unsigned index = GetCursorIndex();
-    assert(index < alternates.size());
-
-    auto const &item = alternates[index];
-    auto const &waypoint = item.waypoint;
-
-    protected_task_manager->DoGoto(waypoint);
-    cancel_button->Click();
-
-    break;
-  }
-}
-
-void
-dlgAlternatesListShowModal()
-{
-  if (protected_task_manager == nullptr)
+  if (!backend_components->protected_task_manager)
     return;
 
   const DialogLook &dialog_look = UIGlobals::GetDialogLook();
 
-  AlternatesListWidget widget(dialog_look);
-  if (!widget.Update())
+  auto widget = std::make_unique<AlternatesListWidget>(dialog_look, false,
+                                                       slot);
+  const bool has_alternates = widget->Update();
+  if (!has_alternates && !slot.has_value()) {
     /* no alternates: don't show the dialog */
+    Message::AddMessage(_("No alternates available"));
     return;
+  }
 
-  WidgetDialog dialog(dialog_look);
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _("Alternates"), &widget);
-  widget.CreateButtons(dialog);
+  const auto *title = _("Alternates");
+  if (slot.has_value()) {
+    title = C_("Menu", "Alternates 1");
+    if (*slot == AlternateInfoBoxSlot::SECOND)
+      title = C_("Menu", "Alternates 2");
+  }
+
+  TWidgetDialog<AlternatesListWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(), dialog_look,
+           title);
+  widget->CreateButtons(dialog, waypoints);
+  dialog.FinishPreliminary(std::move(widget));
   dialog.EnableCursorSelection();
 
-  int i = dialog.ShowModal() == mrOK
-    ? (int)widget.GetCursorIndex()
-    : -1;
-  dialog.StealWidget();
+  dialog.ShowModal();
+}
 
-  if (i < 0 || (unsigned)i >= widget.alternates.size())
-    return;
+WaypointPtr
+dlgAlternatesListSelectWaypoint() noexcept
+{
+  if (!backend_components->protected_task_manager)
+    return nullptr;
 
-  dlgWaypointDetailsShowModal(widget.alternates[i].waypoint, false);
+  const DialogLook &dialog_look = UIGlobals::GetDialogLook();
+
+  auto widget = std::make_unique<AlternatesListWidget>(dialog_look, true);
+  if (!widget->Update()) {
+    Message::AddMessage(_("No alternates available"));
+    return nullptr;
+  }
+
+  TWidgetDialog<AlternatesListWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           dialog_look, _("Alternates"));
+  widget->CreateButtons(dialog);
+  dialog.FinishPreliminary(std::move(widget));
+  dialog.EnableCursorSelection();
+
+  const int result = dialog.ShowModal();
+  if (result != mrOK)
+    return nullptr;
+
+  const auto &dialog_widget = dialog.GetWidget();
+  const unsigned i = dialog_widget.GetCursorIndex();
+  if (i >= dialog_widget.alternates.size())
+    return nullptr;
+
+  return dialog_widget.alternates[i].waypoint;
 }

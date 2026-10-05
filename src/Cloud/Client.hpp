@@ -1,43 +1,24 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_CLOUD_CLIENT_HPP
-#define XCSOAR_CLOUD_CLIENT_HPP
+#pragma once
 
 #include "Geo/Boost/GeoPoint.hpp"
+#include "net/AllocatedSocketAddress.hxx"
 
 #include <boost/intrusive/list.hpp>
 #include <boost/intrusive/set.hpp>
 #include <boost/intrusive/unordered_set.hpp>
 #include <boost/geometry/index/rtree.hpp>
 #include <boost/range/iterator_range_core.hpp>
-#include <boost/asio/ip/udp.hpp>
-
 #include <memory>
 #include <chrono>
 
 class Serialiser;
 class Deserialiser;
+
+/** FLARM aircraft type for glider (#FlarmTraffic::AircraftType::GLIDER). */
+static constexpr unsigned CLOUD_DEFAULT_AIRCRAFT_TYPE = 1;
 
 /**
  * A client which has submitted data to us recently.
@@ -51,7 +32,7 @@ struct CloudClient
   /**
    * Last known IP address.
    */
-  boost::asio::ip::udp::endpoint endpoint;
+  AllocatedSocketAddress address;
 
   /**
    * "Internal" id of this client, i.e. the secret key from
@@ -72,10 +53,9 @@ struct CloudClient
   std::chrono::steady_clock::time_point stamp;
 
   /**
-   * The client wishes to receive traffic information until this time
-   * stamp.
+   * Last traffic snapshot sent to this client (monotonic clock).
    */
-  std::chrono::steady_clock::time_point wants_traffic =
+  std::chrono::steady_clock::time_point last_traffic_push =
     std::chrono::steady_clock::time_point::min();
 
   /**
@@ -96,51 +76,61 @@ struct CloudClient
    */
   int altitude;
 
+  /** Ground track in degrees (0..359) when track_valid. */
+  unsigned track_deg = 0;
+  bool track_valid = false;
+
+  /**
+   * FLARM aircraft type (glider for XCSoar cloud clients).
+   */
+  unsigned aircraft_type = CLOUD_DEFAULT_AIRCRAFT_TYPE;
+
   struct KeyHash {
     constexpr std::size_t operator()(uint64_t key) const {
       return key;
     }
 
-    gcc_pure
+    [[gnu::pure]]
     std::size_t operator()(const CloudClient &client) const {
       return client.key;
     }
   };
 
   struct KeyEqual {
-    gcc_pure
+    [[gnu::pure]]
     bool operator()(const CloudClient &a, const CloudClient &b) const {
       return a.key == b.key;
     }
 
-    gcc_pure
+    [[gnu::pure]]
     bool operator()(uint64_t a, const CloudClient &b) const {
       return a == b.key;
     }
   };
 
   struct IdCompare {
-    gcc_pure
+    [[gnu::pure]]
     bool operator()(const CloudClient &a, const CloudClient &b) const {
       return a.id < b.id;
     }
 
-    gcc_pure
+    [[gnu::pure]]
     bool operator()(unsigned a, const CloudClient &b) const {
       return a < b.id;
     }
   };
 
-  CloudClient(const boost::asio::ip::udp::endpoint &_endpoint, uint64_t _key,
+  template<typename A>
+  CloudClient(A &&_address, uint64_t _key,
               unsigned _id,
               const GeoPoint &_location, int _altitude)
-    :endpoint(_endpoint), key(_key), id(_id),
+    :address(std::forward<A>(_address)), key(_key), id(_id),
      stamp(std::chrono::steady_clock::now()),
      location(_location), altitude(_altitude) {}
 
-  void Refresh(const boost::asio::ip::udp::endpoint &_endpoint) {
-      endpoint = _endpoint;
-      stamp = std::chrono::steady_clock::now();
+  void Refresh(SocketAddress _address) noexcept {
+    address = _address;
+    stamp = std::chrono::steady_clock::now();
   }
 
   void Save(Serialiser &s) const;
@@ -155,7 +145,7 @@ using CloudClientPtr = std::shared_ptr<CloudClient>;
 struct CloudClientIndexable {
   typedef GeoPoint result_type;
 
-  gcc_pure
+  [[gnu::pure]]
   result_type operator()(const CloudClientPtr &client) const {
     return client->location;
   }
@@ -233,21 +223,23 @@ public:
    * Look up a client by its secret key.  Note that this does not
    * increment the reference counter.
    */
-  gcc_pure
+  [[gnu::pure]]
   CloudClient *Find(uint64_t key);
 
   /**
    * Create a new #CloudClient, or refresh the existing one.
    */
-  CloudClient &Make(const boost::asio::ip::udp::endpoint &endpoint,
-                    uint64_t key, const GeoPoint &location, int altitude);
+  CloudClient &Make(SocketAddress address,
+                    uint64_t key, const GeoPoint &location, int altitude,
+                    unsigned track_deg, bool track_valid);
 
   void Refresh(CloudClient &client,
-               const boost::asio::ip::udp::endpoint &endpoint);
+               SocketAddress address);
 
   void Refresh(CloudClient &client,
-               const boost::asio::ip::udp::endpoint &endpoint,
-               const GeoPoint &location, int altitude);
+               SocketAddress address,
+               const GeoPoint &location, int altitude,
+               unsigned track_deg, bool track_valid);
 
   void Insert(CloudClient &client);
 
@@ -262,11 +254,9 @@ public:
   typedef Tree::const_query_iterator query_iterator;
   typedef boost::iterator_range<query_iterator> query_iterator_range;
 
-  gcc_pure
+  [[gnu::pure]]
   query_iterator_range QueryWithinRange(GeoPoint location, double range) const;
 
   void Save(Serialiser &s) const;
   void Load(Deserialiser &s);
 };
-
-#endif

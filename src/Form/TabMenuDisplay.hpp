@@ -1,32 +1,11 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FORM_TABMENU_DISPLAY_HPP
-#define XCSOAR_FORM_TABMENU_DISPLAY_HPP
-
-#include "Screen/PaintWindow.hpp"
+#include "ui/window/PaintWindow.hpp"
 #include "Renderer/TabRenderer.hpp"
-#include "Util/StaticArray.hxx"
+#include "util/StaticArray.hxx"
 
 struct TabMenuGroup;
 struct DialogLook;
@@ -35,7 +14,7 @@ class PagerWidget;
 class TabMenuDisplay final : public PaintWindow
 {
   /* excludes "Main Menu" which is a "super menu" */
-  static constexpr unsigned MAX_MAIN_MENU_ITEMS = 7;
+  static constexpr unsigned MAX_MAIN_MENU_ITEMS = 9;
 
   /**
    * The offset from a page number in the #TabMenuDisplay to a page
@@ -49,14 +28,14 @@ class TabMenuDisplay final : public PaintWindow
   struct SubMenuButton {
     //TODO MainMenuButton *group;
     unsigned main_menu_index;
-    const TCHAR *caption;
+    const char *caption;
 
     PixelRect rc;
 
     TabRenderer renderer;
 
     void Draw(Canvas &canvas, const DialogLook &look,
-              bool focused, bool pressed, bool selected) const {
+              bool focused, bool pressed, bool selected) const noexcept {
       renderer.Draw(canvas, rc, look, caption, nullptr,
                     focused, pressed, selected);
     }
@@ -66,7 +45,7 @@ class TabMenuDisplay final : public PaintWindow
    * class that holds the main menu button and info
    */
   struct MainMenuButton {
-    const TCHAR *caption;
+    const char *caption;
 
     PixelRect rc;
 
@@ -78,12 +57,12 @@ class TabMenuDisplay final : public PaintWindow
     /* index to Pages array of last page in submenu */
     unsigned last_page_index;
 
-    unsigned NumSubMenus() const {
+    unsigned NumSubMenus() const noexcept {
       return last_page_index - first_page_index + 1;
     };
 
     void Draw(Canvas &canvas, const DialogLook &look,
-              bool focused, bool pressed, bool selected) const {
+              bool focused, bool pressed, bool selected) const noexcept {
       renderer.Draw(canvas, rc, look, caption, nullptr,
                     focused, pressed, selected);
     }
@@ -98,37 +77,38 @@ class TabMenuDisplay final : public PaintWindow
     unsigned sub_index;
 
     constexpr
-    explicit MenuTabIndex(unsigned mainNum, unsigned subNum=NO_SUB_MENU)
+    explicit MenuTabIndex(unsigned mainNum,
+                          unsigned subNum=NO_SUB_MENU) noexcept
       :main_index(mainNum), sub_index(subNum) {}
 
     constexpr
-    static MenuTabIndex None() {
+    static MenuTabIndex None() noexcept {
       return MenuTabIndex(NO_MAIN_MENU, NO_SUB_MENU);
     }
 
     constexpr
-    bool IsNone() const {
+    bool IsNone() const noexcept {
       return main_index == NO_MAIN_MENU;
     }
 
     constexpr
-    bool IsMain() const {
+    bool IsMain() const noexcept {
       return main_index != NO_MAIN_MENU && sub_index == NO_SUB_MENU;
     }
 
     constexpr
-    bool IsSub() const {
+    bool IsSub() const noexcept {
       return sub_index != NO_SUB_MENU;
     }
 
     constexpr
-    bool operator==(const MenuTabIndex &other) const {
+    bool operator==(const MenuTabIndex &other) const noexcept {
       return main_index == other.main_index &&
         sub_index == other.sub_index;
     }
 
     constexpr
-    bool operator!=(const MenuTabIndex &other) const {
+    bool operator!=(const MenuTabIndex &other) const noexcept {
       return !(*this == other);
     }
   };
@@ -136,26 +116,26 @@ class TabMenuDisplay final : public PaintWindow
   PagerWidget &pager;
   const DialogLook &look;
 
-  StaticArray<SubMenuButton, 32> buttons;
+  StaticArray<SubMenuButton, 48> buttons;
 
   /* holds info and buttons for the main menu.  not on child menus */
   StaticArray<MainMenuButton, MAX_MAIN_MENU_ITEMS> main_menu_buttons;
 
-  bool dragging; // tracks that mouse is down and captured
-  bool drag_off_button; // set by mouse_move
+  bool dragging = false; // tracks that mouse is down and captured
+  bool drag_off_button = false; // set by mouse_move
 
   /* used to track mouse down/up clicks */
-  MenuTabIndex down_index;
+  MenuTabIndex down_index = MenuTabIndex::None();
 
   /**
    * Which page is currently selected by the cursor?
    */
-  unsigned cursor;
+  unsigned cursor = 0;
 
   /* used to render which submenu is drawn and which item is highlighted */
 
 public:
-  TabMenuDisplay(PagerWidget &pager, const DialogLook &look);
+  TabMenuDisplay(PagerWidget &pager, const DialogLook &look) noexcept;
 
   /**
    * Initializes the menu and buids it from the Menuitem[] array
@@ -164,50 +144,50 @@ public:
    * displayed in the menu
    * @param num_pages Size the menus array
    */
-  void InitMenu(const TabMenuGroup groups[], unsigned n_groups);
+  void InitMenu(const TabMenuGroup groups[], unsigned n_groups) noexcept;
 
-  const TCHAR *GetCaption(TCHAR buffer[], size_t size) const;
+  const char *GetCaption(char buffer[], size_t size) const noexcept;
 
   /**
    * Call this from PagerWidget's OnPageFlipped callback.  It moves
    * the cursor to the newly selected page.
    */
-  void OnPageFlipped();
+  void OnPageFlipped() noexcept;
 
-  void SetCursor(unsigned i);
+  void SetCursor(unsigned i) noexcept;
 
 private:
-  void UpdateLayout();
+  void UpdateLayout() noexcept;
 
-  bool HighlightNext();
-  bool HighlightPrevious();
+  bool HighlightNext() noexcept;
+  bool HighlightPrevious() noexcept;
 
 public:
   /**
    * Returns index of selected (highlighted) tab
    * @return
    */
-  unsigned GetCursor() const {
+  unsigned GetCursor() const noexcept {
     return cursor;
   }
 
 private:
-  unsigned GetNumPages() const {
+  unsigned GetNumPages() const noexcept {
     return buttons.size();
   }
 
-  const TCHAR *GetPageParentCaption(unsigned page) const {
+  const char *GetPageParentCaption(unsigned page) const noexcept {
     assert(page < GetNumPages());
 
     return main_menu_buttons[buttons[page].main_menu_index].caption;
   }
 
-  unsigned GetNumMainMenuItems() const {
+  unsigned GetNumMainMenuItems() const noexcept {
     return main_menu_buttons.size();
   }
 
-  gcc_pure
-  unsigned GetPageMainIndex(unsigned page) const {
+  [[gnu::pure]]
+  unsigned GetPageMainIndex(unsigned page) const noexcept {
     assert(page < GetNumPages());
 
     return buttons[page].main_menu_index;
@@ -221,18 +201,18 @@ private:
    * @SubMenuIndex Index within submenu
    * returns page number of selected sub menu item base on menus indexes
    */
-  gcc_pure
-  int GetPageNum(MenuTabIndex i) const;
+  [[gnu::pure]]
+  int GetPageNum(MenuTabIndex i) const noexcept;
 
-  gcc_pure
-  const PixelRect &GetButtonPosition(MenuTabIndex i) const;
+  [[gnu::pure]]
+  const PixelRect &GetButtonPosition(MenuTabIndex i) const noexcept;
 
   /**
    * @param main_menu_index
    * @return pointer to button or nullptr if index is out of range
    */
-  gcc_pure
-  const MainMenuButton &GetMainMenuButton(unsigned main_menu_index) const {
+  [[gnu::pure]]
+  const MainMenuButton &GetMainMenuButton(unsigned main_menu_index) const noexcept {
     assert(main_menu_index < main_menu_buttons.size());
 
     return main_menu_buttons[main_menu_index];
@@ -245,8 +225,8 @@ private:
    * @return Rectangle of button coordinates,
    *   or {0,0,0,0} if index out of bounds
    */
-  gcc_pure
-  const PixelRect &GetSubMenuButtonSize(unsigned i) const {
+  [[gnu::pure]]
+  const PixelRect &GetSubMenuButtonSize(unsigned i) const noexcept {
     return buttons[i].rc;
   }
 
@@ -257,8 +237,8 @@ private:
    * @return Rectangle of button coordinates,
    *   or {0,0,0,0} if index out of bounds
    */
-  gcc_pure
-  const PixelRect &GetMainMenuButtonSize(unsigned i) const {
+  [[gnu::pure]]
+  const PixelRect &GetMainMenuButtonSize(unsigned i) const noexcept {
     return main_menu_buttons[i].rc;
   }
 
@@ -266,8 +246,8 @@ private:
    * @param page
    * @return pointer to button or nullptr if index is out of range
    */
-  gcc_pure
-  const SubMenuButton &GetSubMenuButton(unsigned page) const {
+  [[gnu::pure]]
+  const SubMenuButton &GetSubMenuButton(unsigned page) const noexcept {
     assert(page < GetNumPages() && page < buttons.size());
 
     return buttons[page];
@@ -278,32 +258,33 @@ private:
    * @param mainIndex main menu whose submenu buttons are visible
    * @return MenuTabIndex w/ location of item
    */
-  gcc_pure
-  MenuTabIndex IsPointOverButton(PixelPoint Pos, unsigned mainIndex) const;
+  [[gnu::pure]]
+  MenuTabIndex IsPointOverButton(PixelPoint Pos,
+                                 unsigned mainIndex) const noexcept;
 
-  void DragEnd();
+  void DragEnd() noexcept;
 
 protected:
-  void OnResize(PixelSize new_size) override;
+  void OnResize(PixelSize new_size) noexcept override;
 
-  bool OnMouseMove(PixelPoint p, unsigned keys) override;
-  bool OnMouseUp(PixelPoint p) override;
-  bool OnMouseDown(PixelPoint p) override;
-  bool OnKeyCheck(unsigned key_code) const override;
-  bool OnKeyDown(unsigned key_code) override;
+  bool OnMouseMove(PixelPoint p, unsigned keys) noexcept override;
+  bool OnMouseUp(PixelPoint p) noexcept override;
+  bool OnMouseDown(PixelPoint p) noexcept override;
+  bool OnKeyCheck(unsigned key_code) const noexcept override;
+  bool OnKeyDown(unsigned key_code) noexcept override;
 
   /**
    * canvas is the tabmenu which is the full content window, no content
    * @param canvas
    * Todo: support icons and "ButtonOnly" style
    */
-  void OnPaint(Canvas &canvas) override;
+  void OnPaint(Canvas &canvas) noexcept override;
 
-  void OnKillFocus() override;
-  void OnSetFocus() override;
+  void OnKillFocus() noexcept override;
+  void OnSetFocus() noexcept override;
 
 private:
-  void InvalidateButton(MenuTabIndex i) {
+  void InvalidateButton(MenuTabIndex i) noexcept {
     if (SupportsPartialRedraw())
       Invalidate(GetButtonPosition(i));
     else
@@ -313,11 +294,9 @@ private:
   /**
    * draw border around main menu
    */
-  void PaintMainMenuBorder(Canvas &canvas) const;
-  void PaintMainMenuItems(Canvas &canvas) const;
+  void PaintMainMenuBorder(Canvas &canvas) const noexcept;
+  void PaintMainMenuItems(Canvas &canvas) const noexcept;
   void PaintSubMenuBorder(Canvas &canvas,
-                          const MainMenuButton &main_button) const;
-  void PaintSubMenuItems(Canvas &canvas) const;
+                          const MainMenuButton &main_button) const noexcept;
+  void PaintSubMenuItems(Canvas &canvas) const noexcept;
 };
-
-#endif

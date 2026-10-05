@@ -1,40 +1,17 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_WEATHER_RASP_STORE_HPP
-#define XCSOAR_WEATHER_RASP_STORE_HPP
-
-#include "Util/StaticArray.hxx"
-#include "Util/StaticString.hxx"
-#include "OS/Path.hpp"
-#include "Time/BrokenTime.hpp"
-#include "Compiler.h"
+#include "util/StaticArray.hxx"
+#include "util/StaticString.hxx"
+#include "system/Path.hpp"
+#include "time/BrokenDateTime.hpp"
+#include "time/BrokenTime.hpp"
 
 #include <memory>
 
-#include <assert.h>
-#include <tchar.h>
-
+#include <cassert>
 #define RASP_FILENAME "xcsoar-rasp.dat"
 
 class Path;
@@ -48,22 +25,22 @@ struct GeoPoint;
  */
 class RaspStore {
 public:
-  static constexpr unsigned MAX_WEATHER_MAP = 16; /**< Max number of items stored */
-  static constexpr unsigned MAX_WEATHER_TIMES = 48; /**< Max time segments of each item */
+  static constexpr unsigned MAX_WEATHER_MAP = 50; /**< Max number of items stored */
+  static constexpr unsigned MAX_WEATHER_TIMES = 96; /**< Max time segments of each item */
 
   struct MapInfo {
-    const TCHAR *name;
+    const char *name;
 
     /**
      * Human-readable label.  Call gettext() for internationalization.
      */
-    const TCHAR *label;
+    const char *label;
 
     /**
      * Human-readable help text.  Call gettext() for
      * internationalization.
      */
-    const TCHAR *help;
+    const char *help;
   };
 
   struct MapItem {
@@ -72,18 +49,18 @@ public:
     /**
      * Human-readable label.  Call gettext() for internationalization.
      */
-    const TCHAR *label;
+    const char *label;
 
     /**
      * Human-readable help text.  Call gettext() for
      * internationalization.
      */
-    const TCHAR *help;
+    const char *help;
 
     bool times[MAX_WEATHER_TIMES];
 
     MapItem() = default;
-    explicit MapItem(const TCHAR *_name);
+    explicit MapItem(const char *_name);
   };
 
   typedef StaticArray<MapItem, MAX_WEATHER_MAP> MapList;
@@ -101,12 +78,15 @@ public:
   explicit RaspStore(AllocatedPath &&_path)
     :path(std::move(_path)) {}
 
-  gcc_const
+  [[gnu::pure]]
   unsigned GetItemCount() const {
     return maps.size();
   }
 
-  gcc_const
+  [[nodiscard]]
+  BrokenDateTime GetFileModifiedTime() const noexcept;
+
+  [[gnu::pure]]
   const MapItem &GetItemInfo(unsigned i) const {
     return maps[i];
   }
@@ -117,15 +97,45 @@ public:
   void ScanAll();
 
   bool IsTimeAvailable(unsigned item_index, unsigned time_index) const {
-    assert(item_index < maps.size());
-    assert(time_index < MAX_WEATHER_TIMES);
+    if (item_index >= maps.size() || time_index >= MAX_WEATHER_TIMES)
+      return false;
 
     return maps[item_index].times[time_index];
   }
 
+  /**
+   * Number of quarter-hour slots that exist for @p item_index in the
+   * archive (0..#MAX_WEATHER_TIMES).
+   */
+  [[gnu::pure]]
+  unsigned CountAvailableTimes(unsigned item_index) const noexcept;
+
+  /**
+   * True when the archive has exactly one raster time for this field
+   * (typical "all day" products such as PFD).
+   */
+  [[gnu::pure]]
+  bool IsSingleTimeField(unsigned item_index) const noexcept {
+    return CountAvailableTimes(item_index) == 1;
+  }
+
+  /**
+   * Return true when this field has raster data for the effective
+   * cursor-bar time (AUTO quarter-hour or manual selection).
+   *
+   * Single-time ("all day") fields always return true when that one
+   * slot exists: rendering resolves the file via #GetNearestTime
+   * without rewriting the shared session cursor.
+   */
+  [[gnu::pure]]
+  bool HasSelectedTimeData(unsigned item_index, bool auto_advance,
+                           BrokenTime manual_time,
+                           BrokenTime auto_local_time) const noexcept;
+
   template<typename C>
   void ForEachTime(unsigned item_index, C &&c) {
-    assert(item_index < maps.size());
+    if (item_index >= maps.size())
+      return;
 
     const auto &mi = maps[item_index];
 
@@ -138,26 +148,30 @@ public:
    * Find the nearest time index which is available.  If no time index
    * is available, this method returns #MAX_WEATHER_TIMES.
    */
-  gcc_pure
+  [[gnu::pure]]
   unsigned GetNearestTime(unsigned item_index, unsigned time_index) const;
 
   /**
    * Converts a time index to a #BrokenTime.
    */
-  gcc_const
+  [[gnu::pure]]
   static BrokenTime IndexToTime(unsigned index);
+
+  /**
+   * Converts a #BrokenTime to a quarter-hour time index (0..95).
+   */
+  [[gnu::pure]]
+  static unsigned TimeToIndex(BrokenTime t) noexcept;
 
   std::unique_ptr<ZipArchive> OpenArchive() const;
 
-  static bool NarrowWeatherFilename(char *filename, Path name,
+  static bool WeatherFilename(char *filename, Path name,
                                     unsigned time_index);
 
 private:
-  gcc_pure
+  [[gnu::pure]]
   static bool ExistsItem(const ZipArchive &archive, Path name,
                          unsigned time_index);
 
   static bool ScanMapItem(const ZipArchive &archive, MapItem &item);
 };
-
-#endif

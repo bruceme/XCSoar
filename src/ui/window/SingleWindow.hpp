@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
+
+#include "TopWindow.hpp"
+
+#include <forward_list>
+#include <cassert>
+
+class WndForm;
+
+namespace UI {
+
+struct Event;
+
+/**
+ * The single top-level window of an application.  When it is closed,
+ * the process quits.
+ */
+class SingleWindow : public TopWindow {
+  std::forward_list<WndForm *> dialogs;
+
+  /**
+   * The area the open dialogs were laid out for.  A dialog that fills
+   * it grows with it; @see OnResize().
+   */
+  PixelRect dialog_rect{0, 0, 0, 0};
+
+  /** A non-owning pointer to an interactive strip outside modal dialogs. */
+  Window *dialog_overlay = nullptr;
+  unsigned dialog_bottom_margin = 0;
+
+public:
+  using TopWindow::TopWindow;
+
+  /**
+   * Throws on error.
+   */
+  void Create(const char *text, PixelSize size,
+              TopWindowStyle style=TopWindowStyle()) {
+    TopWindow::Create(text, size, style);
+  }
+
+  void AddDialog(WndForm *dialog) noexcept;
+  void RemoveDialog(WndForm *dialog) noexcept;
+
+  /** Raise a child above page content while preserving the dialog stack. */
+  void BringToTopBelowDialogs(Window &window) noexcept;
+
+  /** Available dialog area, excluding the optional bottom overlay. */
+  [[gnu::pure]]
+  PixelRect GetDialogRect() const noexcept;
+
+  /** The caller must unregister an overlay before destroying its window. */
+  void SetDialogOverlay(Window *window, unsigned bottom_margin=0) noexcept;
+
+  Window *GetDialogOverlay() const noexcept {
+    return dialog_overlay;
+  }
+
+  /**
+   * Forcefully cancel the top-most dialog.
+   */
+  void CancelDialog() noexcept;
+
+  /**
+   * Is any dialog open that fills the whole area available to
+   * dialogs, i.e. the safe area?
+   */
+  [[gnu::pure]]
+  bool HasMaximisedDialog() const noexcept;
+
+  /**
+   * Is any dialog open that covers the whole client area (edge to
+   * edge), not only the safe area?
+   */
+  [[gnu::pure]]
+  bool HasFullScreenDialog() const noexcept;
+
+  [[gnu::pure]]
+  bool HasDialog() const noexcept {
+    return !dialogs.empty();
+  }
+
+  /**
+   * Check whether the specified dialog is the top-most one.
+   */
+  [[gnu::pure]]
+  bool IsTopDialog(const WndForm &dialog) const noexcept {
+    assert(HasDialog());
+
+    return &dialog == dialogs.front();
+  }
+
+  WndForm &GetTopDialog() noexcept {
+    assert(HasDialog());
+
+    return *dialogs.front();
+  }
+
+protected:
+  virtual void OnDialogChanged() noexcept {}
+
+  /** Reflow open dialogs after changing the available area. */
+  void ReinitialiseDialogs() noexcept;
+
+private:
+  [[gnu::pure]]
+  PixelRect GetDialogRect(PixelRect rc) const noexcept;
+
+protected:
+  [[gnu::pure]]
+  bool FilterMouseEvent(PixelPoint pt, Window *allowed) const noexcept;
+
+public:
+  /**
+   * Check if the specified event should be allowed.  An event may be
+   * rejected when a modal dialog is active, and the event should go
+   * to a window outside of the dialog.
+   */
+  [[gnu::pure]]
+  bool FilterEvent(const Event &event, Window *allowed) const noexcept;
+
+protected:
+  bool OnClose() noexcept override;
+  void OnDestroy() noexcept override;
+  void OnResize(PixelSize new_size) noexcept override;
+};
+
+} // namespace UI

@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Device/Driver/AltairPro.hpp"
 #include "Device/Driver.hpp"
@@ -31,33 +11,29 @@ Copyright_License {
 #include "NMEA/InputLine.hpp"
 #include "Units/System.hpp"
 #include "Waypoint/Waypoint.hpp"
-#include "Util/TruncateString.hpp"
-#include "Util/Macros.hpp"
-#include "Time/TimeoutClock.hpp"
+#include "util/TruncateString.hpp"
+#include "util/Macros.hpp"
+#include "time/TimeoutClock.hpp"
 
 #include <stdio.h>
 #include <string.h>
-#include <assert.h>
-#include <tchar.h>
-#ifdef _UNICODE
-#include <windows.h>
-#endif
+#include <cassert>
+#include <string>
 
-#define DECELWPNAMESIZE   24                        // max size of taskpoint name
-#define DECELWPSIZE       DECELWPNAMESIZE + 25      // max size of WP declaration
+using std::string_view_literals::operator""sv;
+
+static constexpr unsigned DECELWPNAMESIZE = 24;                // max size of taskpoint name
+static constexpr unsigned DECELWPSIZE = DECELWPNAMESIZE + 25;  // max size of WP declaration
 
 class AltairProDevice : public AbstractDevice {
 private:
   Port &port;
 
-  bool DeclareInternal(const struct Declaration &declaration,
-                       OperationEnvironment &env);
-  void PutTurnPoint(const TCHAR *name, const Waypoint *waypoint,
+  void PutTurnPoint(const char *name, const Waypoint *waypoint,
                     OperationEnvironment &env);
-  bool PropertySetGet(char *Buffer, size_t size, OperationEnvironment &env);
-#ifdef _UNICODE
-  bool PropertySetGet(TCHAR *Buffer, size_t size, OperationEnvironment &env);
-#endif
+  bool PropertySetGet(const char *name, const char *value,
+                      std::span<char> dest,
+                      OperationEnvironment &env);
 
 public:
   AltairProDevice(Port &_port):port(_port){}
@@ -79,7 +55,7 @@ ReadAltitude(NMEAInputLine &line, double &value_r)
   if (!available)
     return false;
 
-  if (unit == _T('f') || unit == _T('F'))
+  if (unit == 'f' || unit == 'F')
     value = Units::ToSysUnit(value, Unit::FEET);
 
   value_r = value;
@@ -122,18 +98,17 @@ AltairProDevice::ParseNMEA(const char *String, NMEAInfo &info)
     return false;
 
   NMEAInputLine line(String);
-  char type[16];
-  line.Read(type, 16);
+  const auto type = line.ReadView();
 
   // no propriatary sentence
 
-  if (StringIsEqual(type, "$PGRMZ")) {
+  if (type == "$PGRMZ"sv) {
     double value;
     if (ReadAltitude(line, value))
       info.ProvidePressureAltitude(value);
 
     return true;
-  } else if (StringIsEqual(type, "$PTFRS")) {
+  } else if (type == "$PTFRS"sv) {
     return PTFRS(line, info);
   }
 
@@ -142,35 +117,23 @@ AltairProDevice::ParseNMEA(const char *String, NMEAInfo &info)
 
 bool
 AltairProDevice::Declare(const struct Declaration &declaration,
-                         gcc_unused const Waypoint *home,
+                         [[maybe_unused]] const Waypoint *home,
                          OperationEnvironment &env)
 {
   port.StopRxThread();
 
-  bool result = DeclareInternal(declaration, env);
+  char Buffer[256];
 
-  return result;
-}
-
-bool
-AltairProDevice::DeclareInternal(const struct Declaration &declaration,
-                                 OperationEnvironment &env)
-{
-  TCHAR Buffer[256];
-
-  StringFormatUnsafe(Buffer, _T("PDVSC,S,Pilot,%s"),
-                     declaration.pilot_name.c_str());
-  if (!PropertySetGet(Buffer, ARRAY_SIZE(Buffer), env))
+  if (!PropertySetGet("Pilot", declaration.pilot_name.c_str(),
+                      std::span{Buffer}, env))
     return false;
 
-  StringFormatUnsafe(Buffer, _T("PDVSC,S,GliderID,%s"),
-                     declaration.aircraft_registration.c_str());
-  if (!PropertySetGet(Buffer, ARRAY_SIZE(Buffer), env))
+  if (!PropertySetGet("GliderID", declaration.aircraft_registration.c_str(),
+                      std::span{Buffer}, env))
     return false;
 
-  StringFormatUnsafe(Buffer, _T("PDVSC,S,GliderType,%s"),
-                     declaration.aircraft_type.c_str());
-  if (!PropertySetGet(Buffer, ARRAY_SIZE(Buffer), env))
+  if (!PropertySetGet("GliderType", declaration.aircraft_type.c_str(),
+                      std::span{Buffer}, env))
     return false;
 
   /* TODO currently not supported by XCSOAR
@@ -183,15 +146,15 @@ AltairProDevice::DeclareInternal(const struct Declaration &declaration,
    */
 
   if (declaration.Size() > 1) {
-    PutTurnPoint(_T("DeclTakeoff"), nullptr, env);
-    PutTurnPoint(_T("DeclLanding"), nullptr, env);
+    PutTurnPoint("DeclTakeoff", nullptr, env);
+    PutTurnPoint("DeclLanding", nullptr, env);
 
-    PutTurnPoint(_T("DeclStart"), &declaration.GetFirstWaypoint(), env);
-    PutTurnPoint(_T("DeclFinish"), &declaration.GetLastWaypoint(), env);
+    PutTurnPoint("DeclStart", &declaration.GetFirstWaypoint(), env);
+    PutTurnPoint("DeclFinish", &declaration.GetLastWaypoint(), env);
 
     for (unsigned int index=1; index <= 10; index++){
-      TCHAR TurnPointPropertyName[32];
-      StringFormatUnsafe(TurnPointPropertyName, _T("DeclTurnPoint%d"), index);
+      char TurnPointPropertyName[32];
+      StringFormatUnsafe(TurnPointPropertyName, "DeclTurnPoint%d", index);
 
       if (index < declaration.Size() - 1) {
         PutTurnPoint(TurnPointPropertyName, &declaration.GetWaypoint(index),
@@ -202,11 +165,11 @@ AltairProDevice::DeclareInternal(const struct Declaration &declaration,
     }
   }
 
-  UnsafeCopyString(Buffer, _T("PDVSC,S,DeclAction,DECLARE"));
-  if (!PropertySetGet(Buffer, ARRAY_SIZE(Buffer), env))
+  if (!PropertySetGet("DeclAction", "DECLARE",
+                      std::span{Buffer}, env))
     return false;
 
-  if (StringIsEqual(&Buffer[9], _T("LOCKED")))
+  if (StringIsEqual(&Buffer[9], "LOCKED"))
     // FAILED! try to declare a task on a airborn recorder
     return false;
 
@@ -220,90 +183,60 @@ AltairProDevice::DeclareInternal(const struct Declaration &declaration,
 
 
 bool
-AltairProDevice::PropertySetGet(char *Buffer, size_t size,
+AltairProDevice::PropertySetGet(const char *name, const char *value,
+                                std::span<char> dest,
                                 OperationEnvironment &env)
 {
-  assert(Buffer != nullptr);
-
   port.Flush();
 
-  TimeoutClock timeout(5000);
+  TimeoutClock timeout(std::chrono::seconds(5));
 
   // eg $PDVSC,S,FOO,BAR*<cr>\r\n
-  if (!PortWriteNMEA(port, Buffer, env))
-    return false;
-
-  Buffer[6] = _T('A');
-  char *comma = strchr(&Buffer[8], ',');
-
-  if (comma == nullptr)
-    return false;
-
-  comma[1] = '\0';
+  char buffer[1024];
+  StringFormat(buffer, std::size(buffer),
+               "PDVSC,S,%s,%s", name, value);
+  PortWriteNMEA(port, buffer, env);
 
   // expect eg $PDVSC,A,FOO,
-  if (!port.ExpectString(Buffer, env, timeout.GetRemainingOrZero()))
-    return false;
+  port.ExpectString("PDVSC,A,", env, timeout.GetRemainingOrZero());
+  port.ExpectString(name, env, timeout.GetRemainingOrZero());
+  port.ExpectString(",", env, timeout.GetRemainingOrZero());
 
   // read value eg bar
-  while (size > 0) {
-    const size_t nbytes = port.WaitAndRead(Buffer, size, env, timeout);
-    if (nbytes == 0)
-      return false;
+  do {
+    const size_t nbytes = port.WaitAndRead(std::as_writable_bytes(dest), env, timeout);
 
-    char *asterisk = (char *)memchr(Buffer, '*', nbytes);
+    char *asterisk = (char *)memchr(dest.data(), '*', nbytes);
     if (asterisk != nullptr) {
       *asterisk = 0;
       return true;
     }
 
-    size -= nbytes;
-  }
+    dest = dest.subspan(nbytes);
+  } while (!dest.empty());
 
   return false;
 }
 
-#ifdef _UNICODE
-bool
-AltairProDevice::PropertySetGet(TCHAR *s, size_t size,
-                                OperationEnvironment &env)
-{
-  assert(s != nullptr);
-
-  char buffer[_tcslen(s) * 4 + 1];
-  if (::WideCharToMultiByte(CP_ACP, 0, s, -1, buffer, sizeof(buffer),
-                               nullptr, nullptr) <= 0)
-    return false;
-
-  if (!PropertySetGet(buffer, _tcslen(s) * 4 + 1, env))
-    return false;
-
-  if (::MultiByteToWideChar(CP_ACP, 0, buffer, -1, s, size) <= 0)
-    return false;
-
-  return true;
-
-}
-#endif
-
 void
-AltairProDevice::PutTurnPoint(const TCHAR *propertyName,
+AltairProDevice::PutTurnPoint(const char *propertyName,
                               const Waypoint *waypoint,
                               OperationEnvironment &env)
 {
-
-  TCHAR Name[DECELWPNAMESIZE];
-  TCHAR Buffer[DECELWPSIZE*2];
+  char Name[DECELWPNAMESIZE];
+  char Buffer[DECELWPSIZE*2];
 
   int DegLat, DegLon;
-  double tmp, MinLat, MinLon;
+  double MinLat, MinLon;
   char NoS, EoW;
 
   if (waypoint != nullptr){
+    if (waypoint->name.c_str())
+      CopyTruncateString(Name, ARRAY_SIZE(Name), waypoint->name.c_str());
+    else
+      throw std::runtime_error("Invalid string");
 
-    CopyTruncateString(Name, ARRAY_SIZE(Name), waypoint->name.c_str());
-
-    tmp = (double)waypoint->location.latitude.Degrees();
+    double tmp = (double)waypoint->location.latitude.Degrees();
 
     if(tmp < 0){
       NoS = 'S';
@@ -338,23 +271,23 @@ AltairProDevice::PutTurnPoint(const TCHAR *propertyName,
     EoW = 'E';
   }
 
-  StringFormatUnsafe(Buffer, _T("PDVSC,S,%s,%02d%05.0f%c%03d%05.0f%c%s"),
-                     propertyName,
+  StringFormatUnsafe(Buffer, "%02d%05.0f%c%03d%05.0f%c%s",
                      DegLat, MinLat, NoS, DegLon, MinLon, EoW, Name);
 
-  PropertySetGet(Buffer, ARRAY_SIZE(Buffer), env);
+  PropertySetGet(propertyName, Buffer,
+                 std::span{Buffer}, env);
 
 }
 
 static Device *
-AltairProCreateOnPort(const DeviceConfig &config, Port &com_port)
+AltairProCreateOnPort([[maybe_unused]] const DeviceConfig &config, Port &com_port)
 {
   return new AltairProDevice(com_port);
 }
 
 const struct DeviceRegister altair_pro_driver = {
-  _T("Altair RU"),
-  _T("Altair Recording Unit"),
+  "Altair RU",
+  "Altair Recording Unit",
   DeviceRegister::DECLARE,
   AltairProCreateOnPort,
 };

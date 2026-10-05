@@ -1,26 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "GlideComputerAirData.hpp"
 #include "Settings.hpp"
@@ -28,11 +7,14 @@ Copyright_License {
 #include "Terrain/RasterTerrain.hpp"
 #include "ThermalBase.hpp"
 #include "GlideSolvers/GlidePolar.hpp"
+#include "Atmosphere/AirDensity.hpp"
 #include "Math/SunEphemeris.hpp"
 #include "NMEA/Derived.hpp"
 #include "NMEA/MoreData.hpp"
 
-static constexpr double THERMAL_TIME_MIN = 45;
+using namespace std::chrono;
+
+static constexpr FloatDuration THERMAL_TIME_MIN = seconds{45};
 static constexpr double THERMAL_SHEAR_RATIO_MAX = 10;
 static constexpr double DEFAULT_TAKEOFF_SPEED = 10;
 static constexpr double CLIMB_RATE_G_MIN = 0.25;
@@ -57,6 +39,7 @@ GlideComputerAirData::ResetFlight(DerivedInfo &calculated,
 
   lift_database_computer.Reset(calculated.lift_database,
                                calculated.trace_history.CirclingAverage);
+  calculated.trace_history.circling_available.Clear();
 
   thermallocator.Reset();
 
@@ -109,11 +92,12 @@ GlideComputerAirData::ProcessVertical(const MoreData &basic,
   wind_computer.Select(settings.wind, basic, calculated);
   wind_computer.ComputeHeadWind(basic, calculated);
 
-  thermallocator.Process(calculated.circling && calculated.turning,
-                         basic.time, basic.location,
-                         basic.netto_vario,
-                         calculated.GetWindOrZero(),
-                         calculated.thermal_locator);
+  if (basic.location_available)
+    thermallocator.Process(calculated.circling && calculated.turning,
+                           basic.time, basic.location,
+                           basic.netto_vario,
+                           calculated.GetWindOrZero(),
+                           calculated.thermal_locator);
 
   LastThermalStats(basic, calculated, last_circling);
 
@@ -136,6 +120,8 @@ GlideComputerAirData::ProcessVertical(const MoreData &basic,
   lift_database_computer.Compute(calculated.lift_database,
                                  calculated.trace_history.CirclingAverage,
                                  basic, calculated);
+  calculated.trace_history.circling_available.Update(basic.clock);
+
   circling_computer.MaxHeightGain(basic, calculated.flight, calculated);
   NextLegEqThermal(basic, calculated, settings);
 }
@@ -150,13 +136,16 @@ GlideComputerAirData::NettoVario(const NMEAInfo &basic,
     ? basic.acceleration.g_load
     : 1;
 
-  vario.sink_rate =
-    flight.flying && basic.airspeed_available &&
-    settings_computer.polar.glide_polar_task.IsValid()
-    ? - settings_computer.polar.glide_polar_task.SinkRate(basic.indicated_airspeed,
-                                                          g_load)
+  if (flight.flying && basic.airspeed_available &&
+      settings_computer.polar.glide_polar_task.IsValid()) {
+    GlidePolar polar = settings_computer.polar.glide_polar_task;
+    if (const auto altitude = basic.GetAnyAltitude())
+      polar.SetDensityRatio(AirDensityRatio(*altitude));
+
+    vario.sink_rate = -polar.SinkRate(basic.true_airspeed, g_load);
+  } else
     /* the glider sink rate is useless when not flying */
-    : 0;
+    vario.sink_rate = 0;
 }
 
 inline void
@@ -183,7 +172,7 @@ GlideComputerAirData::CurrentThermal(const MoreData &basic,
                                      const CirclingInfo &circling,
                                      OneClimbInfo &current_thermal)
 {
-  if (circling.climb_start_time > 0) {
+  if (circling.climb_start_time.IsDefined()) {
     current_thermal.start_time = circling.climb_start_time;
     current_thermal.end_time = basic.time;
     current_thermal.gain =
@@ -212,8 +201,9 @@ GlideComputerAirData::GR(const MoreData &basic, const FlyingState &flying,
 inline void
 GlideComputerAirData::CruiseGR(const MoreData &basic, DerivedInfo &calculated)
 {
-  if (!calculated.circling && basic.NavAltitudeAvailable()) {
-    if (calculated.cruise_start_time < 0) {
+  if (!calculated.circling && basic.location_available &&
+      basic.NavAltitudeAvailable()) {
+    if (!calculated.cruise_start_time.IsDefined()) {
       calculated.cruise_start_location = basic.location;
       calculated.cruise_start_altitude = basic.nav_altitude;
       calculated.cruise_start_time = basic.time;
@@ -269,7 +259,7 @@ GlideComputerAirData::FlightTimes(const NMEAInfo &basic,
                                   const ComputerSettings &settings)
 {
   if (basic.time_available &&
-      delta_time.Update(basic.time, 0, 180) < 0)
+      delta_time.Update(basic.time, {}, minutes{3}).count() < 0)
     /* time warp: reset the computer */
     ResetFlight(calculated, true);
 
@@ -308,8 +298,7 @@ GlideComputerAirData::Turning(const MoreData &basic,
 
   thermal_band_computer.Compute(basic, calculated,
                                 calculated.thermal_encounter_band,
-                                calculated.thermal_encounter_collection,
-                                settings);
+                                calculated.thermal_encounter_collection);
 }
 
 inline void
@@ -354,7 +343,7 @@ GlideComputerAirData::LastThermalStats(const MoreData &basic,
                                        bool last_circling)
 {
   if (calculated.circling || !last_circling ||
-      calculated.climb_start_time <= 0)
+      !calculated.climb_start_time.IsDefined())
     return;
 
   auto duration = calculated.cruise_start_time - calculated.climb_start_time;
@@ -373,7 +362,7 @@ GlideComputerAirData::LastThermalStats(const MoreData &basic,
   calculated.last_thermal.end_time = calculated.cruise_start_time;
   calculated.last_thermal.gain = gain;
   calculated.last_thermal.duration = duration;
-  calculated.last_thermal.start_altitude = calculated.climb_start_altitude_te + (basic.nav_altitude-basic.TE_altitude);
+  calculated.last_thermal.start_altitude = calculated.climb_start_altitude_te + basic.energy_height;
   calculated.last_thermal.CalculateLiftRate();
   assert(calculated.last_thermal.lift_rate > 0);
 
@@ -397,7 +386,7 @@ GlideComputerAirData::ProcessSun(const NMEAInfo &basic,
     return;
 
   // Only calculate new azimuth if data is older than 15 minutes
-  if (!calculated.sun_data_available.IsOlderThan(basic.clock, 15 * 60))
+  if (!calculated.sun_data_available.IsOlderThan(basic.clock, minutes{15}))
     return;
 
   // Calculate new azimuth
@@ -408,7 +397,7 @@ GlideComputerAirData::ProcessSun(const NMEAInfo &basic,
 }
 
 inline void
-GlideComputerAirData::NextLegEqThermal(const NMEAInfo &basic,
+GlideComputerAirData::NextLegEqThermal([[maybe_unused]] const NMEAInfo &basic,
                                        DerivedInfo &calculated,
                                        const ComputerSettings &settings)
 {
@@ -423,6 +412,7 @@ GlideComputerAirData::NextLegEqThermal(const NMEAInfo &basic,
       !calculated.wind_available) {
     // Assign a negative value to invalidate the result
     calculated.next_leg_eq_thermal = -1;
+    calculated.next_leg_eq_thermal_inverse = -1;
     return;
   }
 
@@ -434,4 +424,6 @@ GlideComputerAirData::NextLegEqThermal(const NMEAInfo &basic,
 
   calculated.next_leg_eq_thermal =
       settings.polar.glide_polar_task.GetNextLegEqThermal(wind_comp, next_comp);
+  calculated.next_leg_eq_thermal_inverse =
+      settings.polar.glide_polar_task.GetNextLegEqThermal(next_comp, wind_comp);
 }

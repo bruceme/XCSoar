@@ -1,38 +1,37 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxes/Content/Speed.hpp"
-#include "InfoBoxes/Data.hpp"
-#include "Interface.hpp"
-
+#include "InfoBoxes/Panel/Panel.hpp"
+#include "InfoBoxes/Panel/SpeedSimulator.hpp"
 #include "Simulator.hpp"
+#include "BackendComponents.hpp"
 #include "Blackboard/DeviceBlackboard.hpp"
 #include "Components.hpp"
+#include "Computer/STF.hpp"
+#include "Formatter/UserUnits.hpp"
+#include "InfoBoxes/Data.hpp"
+#include "Interface.hpp"
 #include "Language/Language.hpp"
 #include "Units/Units.hpp"
+#include <stdlib.h>
+
+static constexpr InfoBoxPanel speed_ground_panels[] = {
+  { N_("Simulator"), LoadSpeedSimulatorPanel },
+  { nullptr, nullptr }
+};
+
+const InfoBoxPanel *
+InfoBoxContentSpeedGround::GetDialogContent() noexcept
+{
+  if (!is_simulator())
+    return nullptr;
+
+  return speed_ground_panels;
+}
 
 void
-InfoBoxContentSpeedGround::Update(InfoBoxData &data)
+InfoBoxContentSpeedGround::Update(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
   if (!basic.ground_speed_available) {
@@ -41,36 +40,48 @@ InfoBoxContentSpeedGround::Update(InfoBoxData &data)
   }
 
   data.SetValueFromSpeed(basic.ground_speed);
+
+  const DerivedInfo &info = CommonInterface::Calculated();
+  if (!info.head_wind_available) {
+    data.SetCommentInvalid();
+    return;
+  }
+
+  char buffer[16];
+  FormatUserWindSpeed(-info.head_wind, buffer, true, false);
+  data.SetComment(buffer);
 }
 
 bool
-InfoBoxContentSpeedGround::HandleKey(const InfoBoxKeyCodes keycode)
+InfoBoxContentSpeedGround::HandleKey(const InfoBoxKeyCodes keycode) noexcept
 {
   if (!is_simulator())
     return false;
-  if (!CommonInterface::Basic().gps.simulator)
+
+  if (!backend_components || !backend_components->device_blackboard)
     return false;
 
+  auto &device_blackboard = *backend_components->device_blackboard;
   const double step = Units::ToSysSpeed(10);
   const auto a5 = Angle::Degrees(5);
 
   switch (keycode) {
   case ibkUp:
-    device_blackboard->SetSpeed(
+    device_blackboard.SetSpeed(
         CommonInterface::Basic().ground_speed + step);
     return true;
 
   case ibkDown:
-    device_blackboard->SetSpeed(fdim(CommonInterface::Basic().ground_speed,
+    device_blackboard.SetSpeed(fdim(CommonInterface::Basic().ground_speed,
                                      step));
     return true;
 
   case ibkLeft:
-    device_blackboard->SetTrack(CommonInterface::Basic().track - a5);
+    device_blackboard.SetTrack(CommonInterface::Basic().track - a5);
     return true;
 
   case ibkRight:
-    device_blackboard->SetTrack(CommonInterface::Basic().track + a5);
+    device_blackboard.SetTrack(CommonInterface::Basic().track + a5);
     return true;
   }
 
@@ -78,7 +89,7 @@ InfoBoxContentSpeedGround::HandleKey(const InfoBoxKeyCodes keycode)
 }
 
 void
-UpdateInfoBoxSpeedIndicated(InfoBoxData &data)
+UpdateInfoBoxSpeedIndicated(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
   if (!basic.airspeed_available) {
@@ -87,10 +98,11 @@ UpdateInfoBoxSpeedIndicated(InfoBoxData &data)
   }
 
   data.SetValueFromSpeed(basic.indicated_airspeed, false);
+  data.SetValueColor(basic.airspeed_real ? 0 : 2);
 }
 
 void
-UpdateInfoBoxSpeed(InfoBoxData &data)
+UpdateInfoBoxSpeed(InfoBoxData &data) noexcept
 {
   const NMEAInfo &basic = CommonInterface::Basic();
   if (!basic.airspeed_available) {
@@ -99,21 +111,28 @@ UpdateInfoBoxSpeed(InfoBoxData &data)
   }
 
   data.SetValueFromSpeed(basic.true_airspeed, false);
+  data.SetValueColor(basic.airspeed_real ? 0 : 2);
 }
 
 void
-UpdateInfoBoxSpeedMacCready(InfoBoxData &data)
+UpdateInfoBoxSpeedMacCready(InfoBoxData &data) noexcept
 {
   const CommonStats &common_stats = CommonInterface::Calculated().common_stats;
   data.SetValueFromSpeed(common_stats.V_block, false);
 }
 
 void
-UpdateInfoBoxSpeedDolphin(InfoBoxData &data)
+UpdateInfoBoxSpeedDolphin(InfoBoxData &data) noexcept
 {
   // Set Value
-  const DerivedInfo &calculated = CommonInterface::Calculated();
-  data.SetValueFromSpeed(calculated.V_stf, false);
+  const auto stf = GetSTFSpeed(CommonInterface::Basic(),
+                               CommonInterface::Calculated());
+  if (!stf) {
+    data.SetInvalid();
+    return;
+  }
+
+  data.SetValueFromSpeed(*stf, false);
 
   // Set Comment
   if (CommonInterface::GetComputerSettings().features.block_stf_enabled)

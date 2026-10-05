@@ -1,66 +1,60 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Asset.hpp"
+#include "CommandLine.hpp"
 
-#ifdef USE_CONSOLE
-#include "Event/Globals.hpp"
-#include "Event/Queue.hpp"
+#if defined(USE_CONSOLE) || defined(USE_WAYLAND)
+#include "ui/event/Globals.hpp"
+#include "ui/event/Queue.hpp"
 #endif
 
-#include <string.h>
-
-// Registration Data
-TCHAR asset_number[100] = _T(""); //4G17DW31L0HY");
+#ifndef KOBO
+static DisplayType display_type = DisplayType::LCD;
+#else
+static DisplayType display_type = DisplayType::E_INK;
+#endif
 
 void
-ReadAssetNumber()
+SetDisplayType(DisplayType type) noexcept
 {
-  _tcscpy(asset_number, _T("AAA"));
+  display_type = type;
 }
 
-#if defined(USE_CONSOLE) && !defined(KOBO)
+bool
+HasEPaper() noexcept
+{
+  return IsEPaperDisplayType(display_type);
+}
+
+#if (defined(USE_CONSOLE) && !defined(KOBO)) || defined(USE_WAYLAND)
 
 bool
-HasPointer()
+HasPointer() noexcept
 {
-  return event_queue->HasPointer();
+  return UI::event_queue->HasPointer();
 }
 
 #endif
 
-#ifdef USE_LIBINPUT
+#if defined(USE_LIBINPUT) || defined(USE_WAYLAND)
 
-bool
-HasTouchScreen()
+static bool
+HasTouchScreenHardware() noexcept
 {
-  return event_queue->HasTouchScreen();
+  return UI::event_queue->HasTouchScreen();
 }
 
 bool
-HasKeyboard()
+HasTouchScreen() noexcept
 {
-  return event_queue->HasKeyboard();
+  return CommandLine::ApplyTouchInputOverride(HasTouchScreenHardware());
 }
 
-#endif
+bool
+HasKeyboard() noexcept
+{
+  return UI::event_queue->HasKeyboard();
+}
+
+#endif /* USE_LIBINPUT || USE_WAYLAND */

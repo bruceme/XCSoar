@@ -1,70 +1,61 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "StartupDialog.hpp"
 #include "Error.hpp"
-#include "ProfilePasswordDialog.hpp"
-#include "ProfileListDialog.hpp"
-#include "WidgetDialog.hpp"
-#include "Widget/TwoWidgets.hpp"
-#include "Widget/RowFormWidget.hpp"
-#include "UIGlobals.hpp"
-#include "Profile/Profile.hpp"
-#include "Screen/Canvas.hpp"
-#include "Screen/Layout.hpp"
-#include "Look/DialogLook.hpp"
-#include "Form/Form.hpp"
 #include "Form/Button.hpp"
 #include "Form/DataField/File.hpp"
-#include "Language/Language.hpp"
+#include "Form/Form.hpp"
 #include "Gauge/LogoView.hpp"
-#include "LogFile.hpp"
+#include "Language/Language.hpp"
 #include "LocalPath.hpp"
-#include "OS/FileUtil.hpp"
+#include "LogFile.hpp"
+#include "Look/DialogLook.hpp"
+#include "Profile/Profile.hpp"
+#include "Repository/FileType.hpp"
+#include "ProfileListDialog.hpp"
+#include "ProfilePasswordDialog.hpp"
+#include "Screen/Layout.hpp"
+#include "UIGlobals.hpp"
+#include "Widget/RowFormWidget.hpp"
+#include "Widget/TwoWidgets.hpp"
+#include "WidgetDialog.hpp"
+#include "system/FileUtil.hpp"
+#include "ui/canvas/Canvas.hpp"
 
 class LogoWindow final : public PaintWindow {
   LogoView logo;
+  bool dark_mode;
+
+public:
+  explicit LogoWindow(bool _dark_mode = false,
+                     Color _background_color = COLOR_WHITE) noexcept
+    :dark_mode(_dark_mode), background_color(_background_color) {}
 
 protected:
-  virtual void OnPaint(Canvas &canvas) override {
-    canvas.ClearWhite();
-    logo.draw(canvas, GetClientRect());
+  void OnPaint(Canvas &canvas) noexcept override {
+    canvas.Clear(background_color);
+    logo.draw(canvas, GetClientRect(), dark_mode);
   }
+
+private:
+  Color background_color;
 };
 
 class LogoQuitWidget final : public NullWidget {
   const ButtonLook &look;
-  ActionListener &action_listener;
+  WndForm &dialog;
 
   LogoWindow logo;
   Button quit;
 
 public:
-  LogoQuitWidget(const ButtonLook &_look, ActionListener &_action_listener)
-    :look(_look), action_listener(_action_listener) {}
+  LogoQuitWidget(const ButtonLook &_look, WndForm &_dialog,
+                 bool dark_mode, Color background_color) noexcept
+    :look(_look), dialog(_dialog), logo(dark_mode, background_color) {}
 
 private:
-  PixelRect GetButtonRect(PixelRect rc) {
+  PixelRect GetButtonRect(PixelRect rc) noexcept {
     rc.left = rc.right - Layout::Scale(75);
     rc.bottom = rc.top + Layout::GetMaximumControlHeight();
     return rc;
@@ -72,17 +63,17 @@ private:
 
 public:
   /* virtual methods from class Widget */
-  virtual PixelSize GetMinimumSize() const override {
+  PixelSize GetMinimumSize() const noexcept override {
     return { 150, 150 };
   }
 
-  virtual PixelSize GetMaximumSize() const override {
+  PixelSize GetMaximumSize() const noexcept override {
     /* use as much as possible */
     return { 8192, 8192 };
   }
 
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override {
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override {
     WindowStyle style;
     style.Hide();
 
@@ -91,26 +82,21 @@ public:
     button_style.TabStop();
 
     quit.Create(parent, look, _("Quit"), rc,
-                button_style, action_listener, mrCancel);
+                button_style, dialog.MakeModalResultCallback(mrCancel));
     logo.Create(parent, rc, style);
   }
 
-  virtual void Unprepare() override {
-    logo.Destroy();
-    quit.Destroy();
-  }
-
-  virtual void Show(const PixelRect &rc) override {
+  void Show(const PixelRect &rc) noexcept override {
     quit.MoveAndShow(GetButtonRect(rc));
     logo.MoveAndShow(rc);
   }
 
-  virtual void Hide() override {
+  void Hide() noexcept override {
     quit.FastHide();
     logo.FastHide();
   }
 
-  virtual void Move(const PixelRect &rc) override {
+  void Move(const PixelRect &rc) noexcept override {
     quit.Move(GetButtonRect(rc));
     logo.Move(rc);
   }
@@ -122,20 +108,20 @@ class StartupWidget final : public RowFormWidget {
     CONTINUE,
   };
 
-  ActionListener &action_listener;
+  WndForm &dialog;
   DataField *const df;
 
 public:
-  StartupWidget(const DialogLook &look, ActionListener &_action_listener,
-                DataField *_df)
-    :RowFormWidget(look), action_listener(_action_listener), df(_df) {}
+  StartupWidget(const DialogLook &look, WndForm &_dialog,
+                DataField *_df) noexcept
+    :RowFormWidget(look), dialog(_dialog), df(_df) {}
 
   /* virtual methods from class Widget */
-  virtual void Prepare(ContainerWindow &parent,
-                       const PixelRect &rc) override;
-  virtual bool Save(bool &changed) override;
+  void Prepare(ContainerWindow &parent,
+               const PixelRect &rc) noexcept override;
+  bool Save(bool &changed) noexcept override;
 
-  virtual bool SetFocus() override {
+  bool SetFocus() noexcept override {
     /* focus the "Continue" button by default */
     GetRow(CONTINUE).SetFocus();
     return true;
@@ -143,13 +129,13 @@ public:
 };
 
 static bool
-SelectProfileCallback(const TCHAR *caption, DataField &_df,
-                      const TCHAR *help_text)
+SelectProfileCallback([[maybe_unused]] const char *caption, [[maybe_unused]] DataField &_df,
+                      [[maybe_unused]] const char *help_text) noexcept
 {
   FileDataField &df = (FileDataField &)_df;
 
-  const auto path = SelectProfileDialog(df.GetPathFile());
-  if (path.IsNull())
+  const auto path = SelectProfileDialog(df.GetValue());
+  if (path == nullptr)
     return false;
 
   df.ForceModify(path);
@@ -157,23 +143,23 @@ SelectProfileCallback(const TCHAR *caption, DataField &_df,
 }
 
 void
-StartupWidget::Prepare(ContainerWindow &parent,
-                       const PixelRect &rc)
+StartupWidget::Prepare([[maybe_unused]] ContainerWindow &parent,
+                       [[maybe_unused]] const PixelRect &rc) noexcept
 {
   auto *pe = Add(_("Profile"), nullptr, df);
   pe->SetEditCallback(SelectProfileCallback);
 
-  AddButton(_("Continue"), action_listener, mrOK);
+  AddButton(_("Continue"), dialog.MakeModalResultCallback(mrOK));
 }
 
 static bool
-SelectProfile(Path path)
+SelectProfile(Path path) noexcept
 {
   try {
     if (!CheckProfilePasswordResult(CheckProfileFilePassword(path)))
       return false;
-  } catch (const std::runtime_error &e) {
-    ShowError(e, _("Password"));
+  } catch (...) {
+    ShowError(std::current_exception(), _("Password"));
     return false;
   }
 
@@ -189,10 +175,10 @@ SelectProfile(Path path)
 }
 
 bool
-StartupWidget::Save(bool &changed)
+StartupWidget::Save(bool &changed) noexcept
 {
   const auto &dff = (const FileDataField &)GetDataField(PROFILE);
-  if (!SelectProfile(dff.GetPathFile()))
+  if (!SelectProfile(dff.GetValue()))
     return false;
 
   changed = true;
@@ -201,17 +187,18 @@ StartupWidget::Save(bool &changed)
 }
 
 bool
-dlgStartupShowModal()
+dlgStartupShowModal() noexcept
 {
-  LogFormat("Startup dialog");
+  LogString("Startup dialog");
 
   /* scan all profile files */
   auto *dff = new FileDataField();
-  dff->ScanDirectoryTop(_T("*.prf"));
+  dff->SetFileType(FileType::PROFILE);
+  dff->ScanDirectoryTop(GetFileTypePatterns(FileType::PROFILE));
 
   if (dff->GetNumFiles() == 1) {
     /* skip this dialog if there is only one */
-    const auto path = dff->GetPathFile();
+    const auto path = dff->GetValue();
     if (ProfileFileHasPassword(path) == TriState::FALSE &&
         SelectProfile(path)) {
       delete dff;
@@ -225,30 +212,31 @@ dlgStartupShowModal()
 
   /* preselect the most recently used profile */
   unsigned best_index = 0;
-  uint64_t best_timestamp = 0;
+  std::chrono::system_clock::time_point best_timestamp =
+    std::chrono::system_clock::time_point::min();
   unsigned length = dff->size();
 
   for (unsigned i = 0; i < length; ++i) {
-    const auto path = dff->GetItem(i);
-    uint64_t timestamp = File::GetLastModification(path);
+    const auto path = Path(dff->GetItem(i).path);
+    const auto timestamp = File::GetLastModification(path);
     if (timestamp > best_timestamp) {
       best_timestamp = timestamp;
       best_index = i;
     }
   }
 
-  dff->Set(best_index);
+  dff->SetIndex(best_index);
 
   /* show the dialog */
   const DialogLook &look = UIGlobals::GetDialogLook();
-  WidgetDialog dialog(look);
-  TwoWidgets widget(new LogoQuitWidget(look.button, dialog),
-                    new StartupWidget(look, dialog, dff));
+  TWidgetDialog<TwoWidgets> dialog(WidgetDialog::Full{},
+                                   UIGlobals::GetMainWindow(),
+                                   UIGlobals::GetDialogLook(),
+                                   nullptr);
 
-  dialog.CreateFull(UIGlobals::GetMainWindow(), _T(""), &widget);
+  dialog.SetWidget(std::make_unique<LogoQuitWidget>(look.button, dialog,
+                                                    look.dark_mode, look.background_color),
+                   std::make_unique<StartupWidget>(look, dialog, dff));
 
-  const int result = dialog.ShowModal();
-  dialog.StealWidget();
-
-  return result == mrOK;
+  return dialog.ShowModal() == mrOK;
 }

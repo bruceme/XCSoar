@@ -1,24 +1,5 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 #include <iostream>
 #include <fstream>
 #include "Printing.hpp"
@@ -27,14 +8,15 @@
 #include "Route/TerrainRoute.hpp"
 #include "Terrain/RasterMap.hpp"
 #include "Terrain/Loader.hpp"
-#include "OS/ConvertPathName.hpp"
+#include "system/ConvertPathName.hpp"
 #include "Compatibility/path.h"
 #include "GlideSolvers/GlideSettings.hpp"
 #include "GlideSolvers/GlidePolar.hpp"
 #include "Geo/SpeedVector.hpp"
 #include "Geo/GeoVector.hpp"
 #include "Operation/Operation.hpp"
-#include "OS/FileUtil.hpp"
+#include "system/FileUtil.hpp"
+#include "util/PrintException.hxx"
 
 #include <zzip/zzip.h>
 
@@ -62,7 +44,7 @@ test_troute(const RasterMap &map, double mwind, double mc, int ceiling)
   bool retval= true;
 
   {
-    Directory::Create(Path(_T("output/results")));
+    Directory::Create(Path("output/results"));
     std::ofstream fout ("output/results/terrain.txt");
     unsigned nx = 100;
     unsigned ny = 100;
@@ -81,7 +63,6 @@ test_troute(const RasterMap &map, double mwind, double mc, int ceiling)
     fout << "\n";
   }
 
-  unsigned i=0;
   for (double ang = 0; ang < M_2PI; ang += M_PI / 8) {
     GeoPoint dest = GeoVector(40000.0, Angle::Radians(ang)).EndPoint(origin);
 
@@ -99,14 +80,15 @@ test_troute(const RasterMap &map, double mwind, double mc, int ceiling)
             (double)ang, (double)mwind, (double)mc, (int)ceiling);
     ok(retval, buffer, 0);
     PrintHelper::print_route(route);
-    i++;
   }
 
   // polar.SetMC(0);
   // route.UpdatePolar(polar, wind);
 }
 
-int main(int argc, char** argv) {
+int
+main(int argc, char **argv)
+try {
   static const char hc_path[] = "tmp/map.xcm";
   const char *map_path;
   if ((argc<2) || !strlen(argv[0])) {
@@ -123,12 +105,9 @@ int main(int argc, char** argv) {
 
   RasterMap map;
 
-  NullOperationEnvironment operation;
-  if (!LoadTerrainOverview(dir, map.GetTileCache(),
-                           operation)) {
-    fprintf(stderr, "failed to load map\n");
-    zzip_dir_close(dir);
-    return EXIT_FAILURE;
+  {
+    NullOperationEnvironment operation;
+    LoadTerrainOverview(dir, map.GetTileCache(), operation);
   }
 
   map.UpdateProjection();
@@ -147,5 +126,7 @@ int main(int argc, char** argv) {
   test_troute(map, 5.0, 1, 10000);
 
   return exit_status();
+} catch (const std::runtime_error &e) {
+  PrintException(e);
+  return EXIT_FAILURE;
 }
-

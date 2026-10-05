@@ -1,177 +1,32 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Waypoint/WaypointReader.hpp"
 #include "Waypoint/WaypointReaderBase.hpp"
+#include "Waypoint/WaypointReaderSeeYou.hpp"
+#include "Waypoint/CupWriter.hpp"
+#include "Waypoint/WaypointDetailsReader.hpp"
+#include "Waypoint/Factory.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
 #include "Terrain/RasterMap.hpp"
 #include "Units/System.hpp"
 #include "TestUtil.hpp"
-#include "OS/Path.hpp"
-#include "Util/tstring.hpp"
-#include "Util/StringAPI.hxx"
-#include "Util/ExtractParameters.hpp"
+#include "system/Path.hpp"
+#include "io/BufferedOutputStream.hxx"
+#include "io/BufferedReader.hxx"
+#include "io/MemoryReader.hxx"
+#include "io/StringOutputStream.hxx"
+#include "util/StringAPI.hxx"
+#include "util/StringStrip.hxx"
 #include "Operation/Operation.hpp"
+#include "io/CupxArchive.hpp"
 
+#include <algorithm>
+#include <string>
+#include <string_view>
 #include <vector>
 
-static void
-TestExtractParameters()
-{
-  TCHAR buffer[1024];
-  const TCHAR *params[64];
-  unsigned n;
-
-  // test basic functionality
-
-  n = ExtractParameters(_T(""), buffer, params, 64);
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("")));
-
-  n = ExtractParameters(_T("foo"), buffer, params, 64);
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("foo")));
-
-  n = ExtractParameters(_T("foo,bar"), buffer, params, 64);
-  ok1(n == 2);
-  ok1(StringIsEqual(params[0], _T("foo")));
-  ok1(StringIsEqual(params[1], _T("bar")));
-
-  n = ExtractParameters(_T("foo,bar"), buffer, params, 1);
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("foo")));
-
-  n = ExtractParameters(_T("foo,bar,"), buffer, params, 64);
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("foo")));
-  ok1(StringIsEqual(params[1], _T("bar")));
-  ok1(StringIsEqual(params[2], _T("")));
-
-  n = ExtractParameters(_T("foo,bar,,"), buffer, params, 64);
-  ok1(n == 4);
-  ok1(StringIsEqual(params[0], _T("foo")));
-  ok1(StringIsEqual(params[1], _T("bar")));
-  ok1(StringIsEqual(params[2], _T("")));
-  ok1(StringIsEqual(params[3], _T("")));
-
-
-  // with qoutes but no quote handling
-
-  n = ExtractParameters(_T("\"foo,comma\",\"bar\""), buffer, params, 64);
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("\"foo")));
-  ok1(StringIsEqual(params[1], _T("comma\"")));
-  ok1(StringIsEqual(params[2], _T("\"bar\"")));
-
-
-  // quote handling
-
-  n = ExtractParameters(_T("\"\""),
-                                      buffer, params, 64, false, _T('"'));
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("")));
-
-  n = ExtractParameters(_T("\"\"\""),
-                                      buffer, params, 64, false, _T('"'));
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("\"")));
-
-  n = ExtractParameters(_T("\"\"\"\""),
-                                      buffer, params, 64, false, _T('"'));
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("\"")));
-
-  n = ExtractParameters(_T("\"foo,comma\",\"bar\""),
-                                      buffer, params, 64, false, _T('"'));
-  ok1(n == 2);
-  ok1(StringIsEqual(params[0], _T("foo,comma")));
-  ok1(StringIsEqual(params[1], _T("bar")));
-
-
-  // no quotes, whitespace removal
-
-  n = ExtractParameters(_T("foo bar"), buffer, params, 64, true);
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("foo bar")));
-
-  n = ExtractParameters(_T("foo , bar, baz"), buffer, params, 64, true);
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("foo")));
-  ok1(StringIsEqual(params[1], _T("bar")));
-  ok1(StringIsEqual(params[2], _T("baz")));
-
-  n = ExtractParameters(_T(" foo  ,  bar  , baz "), buffer, params, 64, true);
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("foo")));
-  ok1(StringIsEqual(params[1], _T("bar")));
-  ok1(StringIsEqual(params[2], _T("baz")));
-
-  n = ExtractParameters(_T(" foo\"  , \" bar \"  , \"baz "),
-                        buffer, params, 64, true);
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("foo\"")));
-  ok1(StringIsEqual(params[1], _T("\" bar \"")));
-  ok1(StringIsEqual(params[2], _T("\"baz")));
-
-  // quote handling, whitespace removal
-
-  n = ExtractParameters(_T("\"foo \" , \" bar\", \" baz\""),
-                        buffer, params, 64, true, _T('"'));
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("foo ")));
-  ok1(StringIsEqual(params[1], _T(" bar")));
-  ok1(StringIsEqual(params[2], _T(" baz")));
-
-  n = ExtractParameters(_T(" \" foo  \"  ,  \"  bar  \"  , \" baz \" "),
-                        buffer, params, 64, true, _T('"'));
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T(" foo  ")));
-  ok1(StringIsEqual(params[1], _T("  bar  ")));
-  ok1(StringIsEqual(params[2], _T(" baz ")));
-
-  n = ExtractParameters(_T("\"foo\",\"\",\"bar\""), buffer, params, 64,
-                        true, _T('"'));
-  ok1(n == 3);
-  ok1(StringIsEqual(params[0], _T("foo")));
-  ok1(StringIsEqual(params[1], _T("")));
-  ok1(StringIsEqual(params[2], _T("bar")));
-
-  // missing end quote
-  n = ExtractParameters(_T("\"foo, bar"), buffer, params, 64,
-                        true, _T('"'));
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("foo, bar")));
-
-  // embedded quotes and commas
-  n = ExtractParameters(_T("\"foo, \"bar\"\""), buffer, params, 64,
-                        true, _T('"'));
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("foo, \"bar\"")));
-
-  n = ExtractParameters(_T("\"foo, \"\"bar\"\"\""), buffer, params, 64,
-                        true, _T('"'));
-  ok1(n == 1);
-  ok1(StringIsEqual(params[0], _T("foo, \"bar\"")));
-}
+using std::string_view_literals::operator""sv;
 
 typedef std::vector<Waypoint> wp_vector;
 
@@ -179,9 +34,14 @@ static bool
 TestWaypointFile(Path filename, Waypoints &way_points, unsigned num_wps)
 {
   NullOperationEnvironment operation;
-  if (!ok1(ReadWaypointFile(filename, way_points,
-                            WaypointFactory(WaypointOrigin::NONE),
-                            operation))) {
+
+  try {
+    ReadWaypointFile(filename, way_points,
+                     WaypointFactory(WaypointOrigin::NONE),
+                     operation);
+    ok1(true);
+  } catch (...) {
+    ok1(false);
     skip(2, 0, "parsing waypoint file failed");
     return false;
   }
@@ -204,6 +64,8 @@ GetWaypoint(const Waypoint org_wp, const Waypoints &way_points)
   }
   if(!ok1(wp->location.Distance(org_wp.location) <= 1000))
     printf("%f %f\n", (double)wp->location.latitude.Degrees(), (double)wp->location.longitude.Degrees());
+  ok1(org_wp.has_elevation);
+  ok1(wp->has_elevation);
   ok1(fabs(wp->elevation - org_wp.elevation) < 0.5);
 
   return wp;
@@ -229,19 +91,18 @@ TestWinPilotWaypoint(const Waypoint org_wp, const Waypoint *wp)
 }
 
 static void
-TestWinPilot(wp_vector org_wp)
+TestWinPilot(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints.dat")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints.dat"), way_points,
                         org_wp.size())) {
     skip(10 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
-    const auto wp = GetWaypoint(*it, way_points);
-    TestWinPilotWaypoint(*it, wp.get());
+  for (const auto &i : org_wp) {
+    const auto wp = GetWaypoint(i, way_points);
+    TestWinPilotWaypoint(i, wp.get());
   }
 }
 
@@ -269,34 +130,54 @@ TestSeeYouWaypoint(const Waypoint org_wp, const Waypoint *wp)
 }
 
 static void
-TestSeeYou(wp_vector org_wp)
+TestSeeYou(const wp_vector &org_wp)
 {
   // Test a SeeYou waypoint file with no runway width field:
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints.cup")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints.cup"), way_points,
                         org_wp.size())) {
     skip(9 * org_wp.size(), 0, "opening waypoints.cup failed");
   } else {
-    wp_vector::iterator it;
-    for (it = org_wp.begin(); it < org_wp.end(); it++) {
-      const auto wp = GetWaypoint(*it, way_points);
-      TestSeeYouWaypoint(*it, wp.get());
+    for (const auto &i : org_wp) {
+      const auto wp = GetWaypoint(i, way_points);
+      TestSeeYouWaypoint(i, wp.get());
     }
   }
 
   // Test a SeeYou waypoint file with a runway width field:
   Waypoints way_points2;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints2.cup")), way_points2,
+  if (!TestWaypointFile(Path("test/data/waypoints2.cup"), way_points2,
                         org_wp.size())) {
     skip(9 * org_wp.size(), 0, "opening waypoints2.cup failed");
     return;
   }
 
-  wp_vector::iterator it2;
-  for (it2 = org_wp.begin(); it2 < org_wp.end(); it2++) {
-    const auto wp2 = GetWaypoint(*it2, way_points2);
-    TestSeeYouWaypoint(*it2, wp2.get());
+  for (const auto &i : org_wp) {
+    const auto wp2 = GetWaypoint(i, way_points2);
+    TestSeeYouWaypoint(i, wp2.get());
   }
+
+  const auto berg2 = way_points2.LookupName("Bergneustadt");
+  ok1(berg2 != nullptr);
+  ok1(berg2 != nullptr && berg2->runway.IsWidthDefined() &&
+      berg2->runway.GetWidth() == 15);
+  // Test a SeeYou waypoint file with userdata and pics fields:
+  Waypoints way_points3;
+  if (!TestWaypointFile(Path("test/data/waypoints3.cup"), way_points3,
+                        org_wp.size())) {
+    skip(9 * org_wp.size(), 0, "opening waypoints3.cup failed");
+    return;
+  }
+
+  for (const auto &i : org_wp) {
+    const auto wp3 = GetWaypoint(i, way_points3);
+    TestSeeYouWaypoint(i, wp3.get());
+  }
+
+  const auto berg3 = way_points3.LookupName("Bergneustadt");
+  ok1(berg3 != nullptr);
+  ok1(berg3 != nullptr && berg3->runway.IsWidthDefined() &&
+      berg3->runway.GetWidth() == 15);
 }
 
 static void
@@ -316,128 +197,295 @@ TestZanderWaypoint(const Waypoint org_wp, const Waypoint *wp)
 }
 
 static void
-TestZander(wp_vector org_wp)
+TruncateStrip(std::string &s, std::size_t max_length) noexcept
+{
+  std::string_view v = s;
+  if (v.size() > max_length)
+    v = v.substr(0, max_length);
+  v = Strip(v);
+  s.assign(v);
+}
+
+static void
+TestZander(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints.wpz")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints.wpz"), way_points,
                         org_wp.size())) {
     skip(10 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
-    if (it->name.length() > 12)
-      it->name = it->name.erase(12);
-    trim_inplace(it->name);
-    const auto wp = GetWaypoint(*it, way_points);
-    TestZanderWaypoint(*it, wp.get());
+  for (auto i : org_wp) {
+    TruncateStrip(i.name, 12);
+    const auto wp = GetWaypoint(i, way_points);
+    TestZanderWaypoint(i, wp.get());
   }
 }
 
 static void
-TestFS(wp_vector org_wp)
+TestFS(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints_geo.wpt")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints_geo.wpt"), way_points,
                         org_wp.size())) {
     skip(3 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
-    if (it->name.length() > 8)
-      it->name = it->name.erase(8);
-    trim_inplace(it->name);
-    GetWaypoint(*it, way_points);
+  for (auto i : org_wp) {
+    TruncateStrip(i.name, 8);
+    GetWaypoint(i, way_points);
   }
 }
 
 static void
-TestFS_UTM(wp_vector org_wp)
+TestFS_UTM(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints_utm.wpt")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints_utm.wpt"), way_points,
                         org_wp.size())) {
     skip(3 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
-    if (it->name.length() > 8)
-      it->name = it->name.erase(8);
-    trim_inplace(it->name);
-    GetWaypoint(*it, way_points);
+  for (auto i : org_wp) {
+    TruncateStrip(i.name, 8);
+    GetWaypoint(i, way_points);
   }
 }
 
 static void
-TestOzi(wp_vector org_wp)
+TestOzi(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints_ozi.wpt")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints_ozi.wpt"), way_points,
                         org_wp.size())) {
     skip(3 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
-    trim_inplace(it->name);
-    GetWaypoint(*it, way_points);
+  for (auto i : org_wp) {
+    i.name = std::string{Strip(i.name)};
+    GetWaypoint(i, way_points);
   }
 }
 
 static void
-TestCompeGPS(wp_vector org_wp)
+TestCompeGPS(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints_compe_geo.wpt")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints_compe_geo.wpt"), way_points,
                         org_wp.size())) {
     skip(3 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
+  for (auto i : org_wp) {
     size_t pos;
-    while ((pos = it->name.find_first_of(_T(' '))) != tstring::npos)
-      it->name.erase(pos, 1);
+    while ((pos = i.name.find_first_of(' ')) != std::string::npos)
+      i.name.erase(pos, 1);
 
-    if (it->name.length() > 6)
-      it->name = it->name.erase(6);
-
-    trim_inplace(it->name);
-    const auto wp = GetWaypoint(*it, way_points);
-    ok1(wp->comment == it->comment);
+    TruncateStrip(i.name, 6);
+    const auto wp = GetWaypoint(i, way_points);
+    ok1(wp->comment == i.comment);
   }
 }
 
 static void
-TestCompeGPS_UTM(wp_vector org_wp)
+TestCompeGPS_UTM(const wp_vector &org_wp)
 {
   Waypoints way_points;
-  if (!TestWaypointFile(Path(_T("test/data/waypoints_compe_utm.wpt")), way_points,
+  if (!TestWaypointFile(Path("test/data/waypoints_compe_utm.wpt"), way_points,
                         org_wp.size())) {
     skip(3 * org_wp.size(), 0, "opening waypoint file failed");
     return;
   }
 
-  wp_vector::iterator it;
-  for (it = org_wp.begin(); it < org_wp.end(); it++) {
+  for (auto i : org_wp) {
     size_t pos;
-    while ((pos = it->name.find_first_of(_T(' '))) != tstring::npos)
-      it->name.erase(pos, 1);
+    while ((pos = i.name.find_first_of(' ')) != std::string::npos)
+      i.name.erase(pos, 1);
 
-    if (it->name.length() > 6)
-      it->name = it->name.erase(6);
-
-    trim_inplace(it->name);
-    const auto wp = GetWaypoint(*it, way_points);
-    ok1(wp->comment == it->comment);
+    TruncateStrip(i.name, 6);
+    const auto wp = GetWaypoint(i, way_points);
+    ok1(wp->comment == i.comment);
   }
+}
+
+static std::string
+WriteCupToString(const wp_vector &org_wp, bool with_header = false)
+{
+  StringOutputStream sos;
+  WithBufferedOutputStream(sos, [&](BufferedOutputStream &bos){
+    if (with_header)
+      WriteCupHeader(bos);
+    for (const auto &i : org_wp)
+      WriteCup(bos, i);
+  });
+  return std::move(sos).GetValue();
+}
+
+static void
+TestCupWriter(const wp_vector &org_wp)
+{
+  // Test exact output format (2022 CUP spec with rwwidth, userdata, pics)
+  const auto s = WriteCupToString(org_wp);
+  ok1(s == R"cup("Bergneustadt","",,5103.117N,00742.367E,488M,4,040,590M,,,"Rabbit holes, 20"" ditch south end of rwy","",""
+"Aconcagua","",,3239.200S,07000.700W,6962M,7,,,,,"Highest mountain in south-america","",""
+"Golden Gate Bridge","",,3749.050N,12228.700W,227M,14,,,,,"","",""
+"Red Square","",,5545.250N,03737.200E,123M,3,090,016M,,,"","",""
+"Sydney Opera","",,3351.417S,15112.917E,5M,1,,,,,"","",""
+)cup"sv);
+}
+
+static void
+TestCupRoundTrip(const wp_vector &org_wp)
+{
+  // Write waypoints to CUP string (with header for 2022 format detection)
+  const auto s = WriteCupToString(org_wp, true);
+
+  // Parse them back
+  auto bytes = std::as_bytes(std::span{s.data(), s.size()});
+  MemoryReader mr(bytes);
+  BufferedReader br(mr);
+
+  Waypoints waypoints;
+  WaypointFactory factory(WaypointOrigin::USER);
+  ParseSeeYou(factory, waypoints, br);
+  waypoints.Optimise();
+
+  ok1(waypoints.size() == org_wp.size());
+
+  for (const auto &org : org_wp) {
+    auto wp = waypoints.LookupName(org.name);
+    if (!ok1(wp != nullptr)) {
+      skip(8, 0, "waypoint not found in round-trip");
+      continue;
+    }
+
+    ok1(wp->location.Distance(org.location) <= 1000);
+    ok1(wp->has_elevation == org.has_elevation);
+    ok1(!wp->has_elevation || fabs(wp->elevation - org.elevation) < 0.5);
+    ok1(wp->type == org.type);
+    ok1(wp->comment == org.comment);
+    ok1(wp->details == org.details);
+    ok1(wp->runway.IsDirectionDefined() == org.runway.IsDirectionDefined());
+    ok1(wp->runway.IsLengthDefined() == org.runway.IsLengthDefined());
+  }
+}
+
+static void
+TestCupx()
+{
+  Waypoints way_points;
+  if (!TestWaypointFile(Path("test/data/test.cupx"), way_points, 2)) {
+    skip(7, 0, "opening CUPX file failed");
+    return;
+  }
+
+  const auto wp = way_points.LookupName("Test Airfield");
+  ok1(wp != nullptr);
+  if (wp == nullptr) {
+    skip(6, 0, "waypoint not found");
+    return;
+  }
+
+  ok1(wp->type == Waypoint::Type::AIRFIELD);
+  ok1(wp->has_elevation);
+  ok1(fabs(wp->elevation - 500.0) < 0.5);
+  ok1(wp->comment == "A test airfield");
+
+  /* verify files_embed has the bare image filename */
+  ok1(!wp->files_embed.empty());
+  const auto &first_embed = wp->files_embed.front();
+  ok1(first_embed == "test_image.jpg");
+}
+
+/**
+ * Newer SeeYou .cupx files set ZIP general-purpose bit 3 on
+ * POINTS.CUP (local-header sizes are zero).  Regression for that
+ * layout — same waypoints as test.cupx.
+ */
+static void
+TestCupxDataDescriptor()
+{
+  Waypoints way_points;
+  if (!TestWaypointFile(Path("test/data/test_datadesc.cupx"),
+                        way_points, 2)) {
+    skip(5, 0, "opening data-descriptor CUPX failed");
+    return;
+  }
+
+  const auto wp = way_points.LookupName("Test Airfield");
+  ok1(wp != nullptr);
+  if (wp == nullptr) {
+    skip(4, 0, "waypoint not found");
+    return;
+  }
+
+  ok1(wp->type == Waypoint::Type::AIRFIELD);
+  ok1(fabs(wp->elevation - 500.0) < 0.5);
+  ok1(wp->comment == "A test airfield");
+
+  const auto img = CupxArchive::ExtractImage(
+    Path("test/data/test_datadesc.cupx"), "test_image.jpg");
+  ok1(!img.empty());
+}
+
+static void
+ReadDetails(Waypoints &way_points, std::string_view details)
+{
+  MemoryReader mr(std::as_bytes(std::span{details}));
+  BufferedReader br(mr);
+  WaypointDetails::ReadFile(br, way_points);
+}
+
+/**
+ * A waypoint details file may name pictures for a waypoint loaded from
+ * a .cupx (#3250).  Its section replaces the archive's picture list,
+ * and a name the archive does not hold must come back empty from
+ * CupxArchive -- that is what sends the details dialog to the data
+ * directory instead.
+ */
+static void
+TestCupxDetailsFile()
+{
+  const Path cupx("test/data/test.cupx");
+
+  Waypoints way_points;
+  if (!TestWaypointFile(cupx, way_points, 2)) {
+    skip(5, 0, "opening CUPX file failed");
+    return;
+  }
+
+  ReadDetails(way_points,
+              "[Test Airfield]\n"
+              "image=AIP/chart.png\n"
+              "image=test_image.jpg\n");
+
+  const auto wp = way_points.LookupName("Test Airfield");
+  if (!ok1(wp != nullptr)) {
+    skip(4, 0, "waypoint not found");
+    return;
+  }
+
+  /* the details file's list, in file order, replaces the archive's */
+  const std::vector<std::string> expected{"AIP/chart.png", "test_image.jpg"};
+  ok1(std::equal(wp->files_embed.begin(), wp->files_embed.end(),
+                 expected.begin(), expected.end()));
+
+  /* not in the archive: the dialog must look in the data directory */
+  ok1(CupxArchive::ExtractImage(cupx, "AIP/chart.png").empty());
+
+  /* a name the archive does hold is still taken from the archive */
+  ok1(!CupxArchive::ExtractImage(cupx, "test_image.jpg").empty());
+
+  /* a section without any image= line empties the list as well */
+  ReadDetails(way_points,
+              "[Test Airfield]\n"
+              "Tower 123.500\n");
+  ok1(wp->files_embed.empty());
 }
 
 static wp_vector
@@ -453,8 +501,9 @@ CreateOriginalWaypoints()
 
   Waypoint wp(loc);
   wp.elevation = 488;
-  wp.name = _T("Bergneustadt");
-  wp.comment = _T("Rabbit holes, 20\" ditch south end of rwy");
+  wp.has_elevation = true;
+  wp.name = "Bergneustadt";
+  wp.comment = "Rabbit holes, 20\" ditch south end of rwy";
   wp.runway.SetDirection(Angle::Degrees(40));
   wp.runway.SetLength(590);
 
@@ -471,8 +520,9 @@ CreateOriginalWaypoints()
 
   Waypoint wp2(loc);
   wp2.elevation = 6962;
-  wp2.name = _T("Aconcagua");
-  wp2.comment = _T("Highest mountain in south-america");
+  wp2.has_elevation = true;
+  wp2.name = "Aconcagua";
+  wp2.comment = "Highest mountain in south-america";
 
   wp2.type = Waypoint::Type::MOUNTAIN_TOP;
   wp2.flags.turn_point = true;
@@ -487,8 +537,9 @@ CreateOriginalWaypoints()
 
   Waypoint wp3(loc);
   wp3.elevation = 227;
-  wp3.name = _T("Golden Gate Bridge");
-  wp3.comment = _T("");
+  wp3.has_elevation = true;
+  wp3.name = "Golden Gate Bridge";
+  wp3.comment = "";
 
   wp3.type = Waypoint::Type::BRIDGE;
   wp3.flags.turn_point = true;
@@ -503,7 +554,8 @@ CreateOriginalWaypoints()
 
   Waypoint wp4(loc);
   wp4.elevation = 123;
-  wp4.name = _T("Red Square");
+  wp4.has_elevation = true;
+  wp4.name = "Red Square";
   wp4.runway.SetDirection(Angle::Degrees(90));
   wp4.runway.SetLength((unsigned)Units::ToSysUnit(0.01, Unit::STATUTE_MILES));
 
@@ -520,8 +572,9 @@ CreateOriginalWaypoints()
 
   Waypoint wp5(loc);
   wp5.elevation = 5;
-  wp5.name = _T("Sydney Opera");
-  wp5.comment = _T("");
+  wp5.has_elevation = true;
+  wp5.name = "Sydney Opera";
+  wp5.comment = "";
 
   wp5.type = Waypoint::Type::NORMAL;
   wp5.flags.turn_point = true;
@@ -533,22 +586,25 @@ CreateOriginalWaypoints()
   return org_wp;
 }
 
-int main(int argc, char **argv)
+int main()
 {
   wp_vector org_wp = CreateOriginalWaypoints();
 
-  plan_tests(360);
-
-  TestExtractParameters();
+  plan_tests(507 + 4 + 8 + 8);
 
   TestWinPilot(org_wp);
   TestSeeYou(org_wp);
+  TestCupx();
+  TestCupxDataDescriptor();
+  TestCupxDetailsFile();
   TestZander(org_wp);
   TestFS(org_wp);
   TestFS_UTM(org_wp);
   TestOzi(org_wp);
   TestCompeGPS(org_wp);
   TestCompeGPS_UTM(org_wp);
+  TestCupWriter(org_wp);
+  TestCupRoundTrip(org_wp);
 
   return exit_status();
 }

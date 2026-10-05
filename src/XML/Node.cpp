@@ -27,87 +27,46 @@
  */
 
 #include "Node.hpp"
-#include "Util/StringAPI.hxx"
-
-#include <assert.h>
+#include "util/StringAPI.hxx"
 
 XMLNode
-XMLNode::CreateRoot(const TCHAR *name)
+XMLNode::CreateRoot(const char *name) noexcept
 {
   return XMLNode(name, false);
 }
 
-XMLNode::XMLNode(const TCHAR *name, bool is_declaration)
-  :d(new Data(name, is_declaration))
+XMLNode::XMLNode(std::string_view _name,
+                 bool _is_declaration) noexcept
+  :name(_name),
+   is_declaration(_is_declaration)
 {
-  assert(d);
-}
-
-XMLNode::XMLNode(const TCHAR *name, size_t name_length, bool is_declaration)
-  :d(new Data(name, name_length, is_declaration))
-{
-  assert(d);
 }
 
 XMLNode &
-XMLNode::AddChild(const TCHAR *name, bool is_declaration)
+XMLNode::AddChild(const std::string_view _name,
+                  bool _is_declaration) noexcept
 {
-  assert(name != nullptr);
-
-  d->children.push_back(XMLNode(name, is_declaration));
-  return d->children.back();
-}
-
-XMLNode &
-XMLNode::AddChild(const TCHAR *name, size_t name_length, bool is_declaration)
-{
-  assert(name != nullptr);
-
-  d->children.push_back(XMLNode(name, name_length, is_declaration));
-  return d->children.back();
-}
-
-void
-XMLNode::AddText(const TCHAR *value)
-{
-  assert(value != nullptr);
-
-  d->text.append(value);
-}
-
-void
-XMLNode::AddText(const TCHAR *text, size_t length)
-{
-  assert(text != nullptr);
-
-  d->text.append(text, length);
+  children.push_back(XMLNode(_name, _is_declaration));
+  return children.back();
 }
 
 const XMLNode *
-XMLNode::GetChildNode(const TCHAR *name) const
+XMLNode::GetChildNode(const char *name) const noexcept
 {
-  if (!d)
-    return nullptr;
-
-  for (auto i = d->begin(), end = d->end(); i != end; ++i) {
-    const XMLNode &node = *i;
-    if (StringIsEqualIgnoreCase(node.d->name.c_str(), name))
-      return &node;
+  for (const auto &i : children) {
+    if (StringIsEqualIgnoreCase(i.GetName(), name))
+      return &i;
   }
 
   return nullptr;
 }
 
-const TCHAR *
-XMLNode::GetAttribute(const TCHAR *name) const
+const char *
+XMLNode::GetAttribute(const char *name) const noexcept
 {
-  if (!d)
-    return nullptr;
-
-  for (auto i = d->attributes.begin(), end = d->attributes.end();
-       i != end; ++i)
-    if (StringIsEqualIgnoreCase(i->name.c_str(), name))
-      return i->value.c_str();
+  for (const auto &i : attributes)
+    if (StringIsEqualIgnoreCase(i.name.c_str(), name))
+      return i.value.c_str();
 
   return nullptr;
 }

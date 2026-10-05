@@ -1,41 +1,21 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-#ifndef ABSTRACTAIRSPACE_HPP
-#define ABSTRACTAIRSPACE_HPP
-
-#include "Util/TriState.hpp"
-#include "Util/tstring.hpp"
+#include "util/TriState.hpp"
 #include "AirspaceAltitude.hpp"
 #include "AirspaceClass.hpp"
 #include "AirspaceActivity.hpp"
 #include "Geo/GeoPoint.hpp"
 #include "Geo/SearchPointVector.hpp"
-#include "Compiler.h"
+#include "Radio/RadioFrequency.hpp"
+#include "Radio/TransponderCode.hpp"
 
 #ifdef DO_PRINT
-#include <iostream>
+#include <iosfwd>
 #endif
-
-#include <tchar.h>
+#include <string>
 
 struct AircraftState;
 struct AltitudeState;
@@ -58,7 +38,7 @@ private:
   const Shape shape;
 
   /** Airspace class */
-  AirspaceClass type;
+  AirspaceClass asclass;
 
 protected:
   mutable TriState is_convex;
@@ -71,10 +51,19 @@ protected:
   AirspaceAltitude altitude_top;
 
   /** Airspace name (identifier) */
-  tstring name;
+  std::string name;
+
+  /** Airspace type */
+  AirspaceClass astype;
+
+  /** Airspace Station name */
+  std::string station_name;
 
   /** Radio frequency (optional) */
-  tstring radio;
+  RadioFrequency radio_frequency = RadioFrequency::Null();
+
+  /** Transponder code (optional) */
+  TransponderCode transponder_code = TransponderCode::Null();
 
   /** Actual border */
   SearchPointVector m_border;
@@ -85,10 +74,10 @@ protected:
   AirspaceActivity days_of_operation;
 
 public:
-  AbstractAirspace(Shape _shape):shape(_shape), active(true) {}
-  virtual ~AbstractAirspace();
+  AbstractAirspace(Shape _shape) noexcept:shape(_shape), active(true) {}
+  virtual ~AbstractAirspace() noexcept;
 
-  Shape GetShape() const {
+  Shape GetShape() const noexcept {
     return shape;
   }
 
@@ -100,11 +89,11 @@ public:
    *
    * @return Enclosing bounding box
    */
-  gcc_pure
-  const FlatBoundingBox GetBoundingBox(const FlatProjection &projection);
+  [[gnu::pure]]
+  const FlatBoundingBox GetBoundingBox(const FlatProjection &projection) noexcept;
 
-  gcc_pure
-  GeoBounds GetGeoBounds() const;
+  [[gnu::pure]]
+  GeoBounds GetGeoBounds() const noexcept;
 
   /**
    * Get arbitrary center or reference point for use in determining
@@ -112,16 +101,16 @@ public:
    *
    * @return Location of reference point
    */
-  gcc_pure
-  virtual const GeoPoint GetReferenceLocation() const = 0;
+  [[gnu::pure]]
+  virtual const GeoPoint GetReferenceLocation() const noexcept = 0;
 
   /**
    * Get geometric center of airspace.
    *
    * @return center
    */
-  gcc_pure
-  virtual const GeoPoint GetCenter() const = 0;
+  [[gnu::pure]]
+  virtual const GeoPoint GetCenter() const noexcept = 0;
 
   /**
    * Checks whether an observer is inside the airspace (no altitude taken into account)
@@ -131,14 +120,14 @@ public:
    *
    * @return true if observer is inside airspace boundary
    */
-  gcc_pure
-  virtual bool Inside(const GeoPoint &loc) const = 0;
+  [[gnu::pure]]
+  virtual bool Inside(const GeoPoint &loc) const noexcept = 0;
 
   /**
    * Checks whether an observer is inside the airspace altitude range.
    */
-  gcc_pure
-  bool Inside(const AltitudeState &state) const;
+  [[gnu::pure]]
+  bool Inside(const AltitudeState &state) const noexcept;
 
   /**
    * Checks whether an observer is inside the airspace (altitude is taken into account)
@@ -148,8 +137,8 @@ public:
    *
    * @return true if aircraft is inside airspace boundaries
    */
-  gcc_pure
-  bool Inside(const AircraftState &state) const;
+  [[gnu::pure]]
+  bool Inside(const AircraftState &state) const noexcept;
 
   /**
    * Checks whether a line intersects with the airspace.
@@ -160,10 +149,10 @@ public:
    *
    * @return Vector of intersection pairs if the line intersects the airspace
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual AirspaceIntersectionVector Intersects(const GeoPoint &g1,
                                                 const GeoPoint &end,
-                                                const FlatProjection &projection) const = 0;
+                                                const FlatProjection &projection) const noexcept = 0;
 
   /**
    * Find location of closest point on boundary to a reference
@@ -172,21 +161,21 @@ public:
    *
    * @return Location of closest point of boundary to reference
    */
-  gcc_pure
+  [[gnu::pure]]
   virtual GeoPoint ClosestPoint(const GeoPoint &loc,
-                                const FlatProjection &projection) const = 0;
+                                const FlatProjection &projection) const noexcept = 0;
 
   /**
    * Set terrain altitude for AGL-referenced airspace altitudes
    *
    * @param alt Height above MSL of terrain (m) at center
    */
-  void SetGroundLevel(double alt);
+  void SetGroundLevel(double alt) noexcept;
 
   /**
    * Is it necessary to call SetGroundLevel() for this AbstractAirspace?
    */
-  bool NeedGroundLevel() const {
+  bool NeedGroundLevel() const noexcept {
     return altitude_base.NeedGroundLevel() || altitude_top.NeedGroundLevel();
   }
 
@@ -195,28 +184,36 @@ public:
    *
    * @param press Atmospheric pressure model and QNH
    */
-  void SetFlightLevel(const AtmosphericPressure &press);
+  void SetFlightLevel(AtmosphericPressure press) noexcept;
 
   /**
    * Set activity based on day mask
    *
    * @param days Mask of activity
    */
-  void SetActivity(const AirspaceActivity mask) const;
+  void SetActivity(const AirspaceActivity mask) const noexcept;
 
   /**
    * Set fundamental properties of airspace
    *
    * @param _Name Name of airspace
-   * @param _Type Type/class
+   * @param _classs Class
+   * @param _type Type
    * @param _base Lower limit
    * @param _top Upper limit
    */
-  void SetProperties(tstring &&_name, const AirspaceClass _Type,
+
+  void SetProperties(std::string &&_name, std::string &&_station_name,
+                     TransponderCode &&_transponder_code,
+                     const AirspaceClass _class, const AirspaceClass _type,
                      const AirspaceAltitude &_base,
-                     const AirspaceAltitude &_top) {
+                     const AirspaceAltitude &_top) noexcept
+  {
     name = std::move(_name);
-    type = _Type;
+    station_name = std::move(_station_name);
+    transponder_code = std::move(_transponder_code);
+    asclass = _class;
+    astype = _type;
     altitude_base = _base;
     altitude_top = _top;
   }
@@ -226,8 +223,18 @@ public:
    *
    * @param _Radio Radio frequency of airspace
    */
-  void SetRadio(const tstring &_Radio) {
-    radio = _Radio;
+  void SetRadioFrequency(RadioFrequency _radio) noexcept {
+    radio_frequency = _radio;
+  }
+
+  /**
+   * Set transponder code of airspace
+   *
+   * @param _code Radio frequency of airspace
+   */
+  void SetTransponderCode(TransponderCode _code) noexcept
+  {
+    transponder_code = _code;
   }
 
   /**
@@ -235,17 +242,46 @@ public:
    *
    * @param _active New activation setting of airspace
    */
-  void SetDays(const AirspaceActivity mask) {
+  void SetDays(const AirspaceActivity mask) noexcept {
     days_of_operation = mask;
   }
 
   /**
-   * Get type of airspace
+   * Get asclass of airspace
    *
-   * @return Type/class of airspace
+   * @return Class of airspace
    */
-  AirspaceClass GetType() const {
-    return type;
+  AirspaceClass GetClass() const noexcept {
+    return asclass;
+  }
+
+  /**
+   * Get Type of airspace
+   *
+   * @return Type of airspace
+   */
+  AirspaceClass GetType() const noexcept {
+    return astype;
+  }
+
+  /**
+    * Returns the airspace class type. If GetType() is AirspaceClass::OTHER,
+    * returns GetClass(), otherwise returns GetType()
+    *
+    * @return  AirspaceClass - The determined airspace class type
+    */
+  AirspaceClass GetTypeOrClass() const noexcept {
+    return GetType() == AirspaceClass::OTHER ? GetClass() : GetType();
+  }
+
+  /**
+    * Returns the airspace type. If GetClass() is AirspaceClass::UNCLASSIFIED,
+    * returns GetType(), otherwise returns GetClass()
+    *
+    * @return  AirspaceClass - The determined airspace class or type
+    */
+  AirspaceClass GetClassOrType() const noexcept {
+    return GetClass() == AirspaceClass::UNCLASSIFIED ? GetType() : GetClass();
   }
 
   /**
@@ -253,19 +289,19 @@ public:
    *
    * @return True if base is 0 AGL
    */
-  bool IsBaseTerrain() const {
+  bool IsBaseTerrain() const noexcept {
     return altitude_base.IsTerrain();
   }
 
-  const AirspaceAltitude &GetBase() const { return altitude_base; }
-  const AirspaceAltitude &GetTop() const { return altitude_top; }
+  const AirspaceAltitude &GetBase() const noexcept { return altitude_base; }
+  const AirspaceAltitude &GetTop() const noexcept { return altitude_top; }
 
   /**
    * Get base altitude
    *
    * @return Altitude AMSL (m) of base
    */
-  double GetBaseAltitude(const AltitudeState &state) const {
+  double GetBaseAltitude(const AltitudeState &state) const noexcept {
     return altitude_base.GetAltitude(state);
   }
 
@@ -274,7 +310,7 @@ public:
    *
    * @return Altitude AMSL (m) of top
    */
-  double GetTopAltitude(const AltitudeState &state) const {
+  double GetTopAltitude(const AltitudeState &state) const noexcept {
     return altitude_top.GetAltitude(state);
   }
 
@@ -292,11 +328,11 @@ public:
    * @param loc_end Location of last point on/in airspace to query (if provided)
    * @return True if intercept found
    */
-  gcc_pure
+  [[gnu::pure]]
   AirspaceInterceptSolution Intercept(const AircraftState &state,
                                       const AirspaceAircraftPerformance &perf,
                                       const GeoPoint &loc_start,
-                                      const GeoPoint &loc_end) const;
+                                      const GeoPoint &loc_end) const noexcept;
 
   /**
    * Find time/distance/height to airspace from an observer given a
@@ -311,36 +347,41 @@ public:
    * @param solution Solution of intercept (set if intercept possible, else untouched)
    * @return True if intercept found
    */
-  gcc_pure
+  [[gnu::pure]]
   AirspaceInterceptSolution Intercept(const AircraftState &state,
                                       const GeoPoint &end,
                                       const FlatProjection &projection,
-                                      const AirspaceAircraftPerformance &perf) const;
+                                      const AirspaceAircraftPerformance &perf) const noexcept;
 
 #ifdef DO_PRINT
   friend std::ostream &operator<<(std::ostream &f,
                                   const AbstractAirspace &as);
 #endif
 
-  gcc_pure
-  const TCHAR *GetName() const {
+  [[gnu::pure]]
+  const char *GetName() const noexcept {
     return name.c_str();
   }
 
-  /**
+  [[gnu::pure]]
+  const char *GetStationName() const noexcept {
+    return station_name.c_str();
+  }
+
+   /**
    * Returns true if the name begins with the specified string.
    */
-  gcc_pure
-  bool MatchNamePrefix(const TCHAR *prefix) const;
+  [[gnu::pure]]
+  bool MatchNamePrefix(const char *prefix) const noexcept;
 
-  /**
-   * Produce text version of radio frequency.
-   *
-   * @return Text version of radio frequency
-   */
-  gcc_pure
-  const tstring &GetRadioText() const {
-    return radio;
+  [[gnu::pure]]
+  RadioFrequency GetRadioFrequency() const noexcept {
+    return radio_frequency;
+  }
+
+  [[gnu::pure]] TransponderCode GetTransponderCode() const noexcept
+  {
+    return transponder_code;
   }
 
   /**
@@ -351,7 +392,7 @@ public:
    *
    * @return border of airspace
    */
-  const SearchPointVector &GetPoints() const {
+  const SearchPointVector &GetPoints() const noexcept {
     return m_border;
   }
 
@@ -361,18 +402,18 @@ public:
    * and const methods to allow visitors to generate them on demand
    * from within a visit method.
    */
-  gcc_pure
-  const SearchPointVector &GetClearance(const FlatProjection &projection) const;
-  void ClearClearance() const;
+  [[gnu::pure]]
+  const SearchPointVector &GetClearance(const FlatProjection &projection) const noexcept;
+  void ClearClearance() const noexcept;
 
-  gcc_pure
-  bool IsActive() const {
+  [[gnu::pure]]
+  bool IsActive() const noexcept {
     return active;
   }
 
 protected:
   /** Project border */
-  void Project(const FlatProjection &tp);
+  void Project(const FlatProjection &tp) noexcept;
 
 private:
   /**
@@ -386,10 +427,10 @@ private:
    * @param distance Distance from aircraft to boundary
    * @return Solution of intercept
    */
-  gcc_pure
+  [[gnu::pure]]
   AirspaceInterceptSolution InterceptVertical(const AircraftState &state,
                                               const AirspaceAircraftPerformance &perf,
-                                              double distance) const;
+                                              double distance) const noexcept;
 
   /**
    * Find time/distance to specified horizontal boundary from an observer
@@ -404,12 +445,10 @@ private:
    * @param lower If true, examines lower boundary, otherwise upper boundary
    * @return Solution of intercept
    */
-  gcc_pure
+  [[gnu::pure]]
   AirspaceInterceptSolution InterceptHorizontal(const AircraftState &state,
                                                 const AirspaceAircraftPerformance &perf,
                                                 double distance_start,
                                                 double distance_end,
-                                                const bool lower = true) const;
+                                                bool lower = true) const noexcept;
 };
-
-#endif

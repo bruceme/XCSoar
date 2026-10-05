@@ -1,25 +1,5 @@
-/*
-  Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 package org.xcsoar;
 
@@ -47,6 +27,8 @@ final class GlueIOIOPort extends IOIOPort implements IOIOConnectionListener {
   private boolean connected;
 
   private boolean constructing;
+
+  private boolean failed;
 
   private final int inPin;
   private final int outPin;
@@ -85,6 +67,7 @@ final class GlueIOIOPort extends IOIOPort implements IOIOConnectionListener {
       synchronized(this) {
         connected = true;
         constructing = true;
+        failed = false;
       }
 
       stateChanged();
@@ -93,8 +76,8 @@ final class GlueIOIOPort extends IOIOPort implements IOIOConnectionListener {
       try {
         uart = ioio.openUart(inPin, outPin, baudrate, Uart.Parity.NONE,
                              Uart.StopBits.ONE);
-      } catch (IllegalArgumentException e) {
-        Log.w(TAG, "IOIO.openUart() failed", e);
+      } catch (Exception e) {
+        submitError(e.getMessage());
         return;
       }
 
@@ -111,6 +94,7 @@ final class GlueIOIOPort extends IOIOPort implements IOIOConnectionListener {
 
   @Override public void onIOIODisconnect(IOIO ioio) {
     connected = false;
+    failed = true;
     stateChanged();
 
     super.close();
@@ -128,14 +112,15 @@ final class GlueIOIOPort extends IOIOPort implements IOIOConnectionListener {
   }
 
   @Override public int getState() {
-    boolean ready;
     synchronized(this) {
-      ready = connected && !constructing;
+      if (failed)
+        return STATE_FAILED;
+
+      if (!connected || constructing)
+        return STATE_LIMBO;
     }
 
-    return ready
-      ? super.getState()
-      : STATE_LIMBO;
+    return super.getState();
   }
 
   @Override public int getBaudRate() {

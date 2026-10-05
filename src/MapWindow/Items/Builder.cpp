@@ -1,54 +1,21 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Builder.hpp"
 #include "MapItem.hpp"
 #include "List.hpp"
-#include "Util/StaticArray.hxx"
+#include "util/StaticArray.hxx"
 #include "Engine/Task/TaskManager.hpp"
 #include "Engine/Task/Ordered/OrderedTask.hpp"
 #include "Engine/Task/Ordered/Points/OrderedTaskPoint.hpp"
-#include "Engine/Waypoint/WaypointVisitor.hpp"
 #include "Engine/Waypoint/Waypoints.hpp"
+#include "Computer/WaypointReach.hpp"
+#include "Computer/Settings.hpp"
 #include "NMEA/Aircraft.hpp"
 #include "Task/ProtectedTaskManager.hpp"
 #include "Task/ProtectedRoutePlanner.hpp"
 #include "NMEA/Info.hpp"
 #include "Terrain/RasterTerrain.hpp"
-
-class WaypointListBuilderVisitor:
-  public WaypointVisitor
-{
-  MapItemList &list;
-
-public:
-  WaypointListBuilderVisitor(MapItemList &_list):list(_list) {}
-
-  void Visit(const WaypointPtr &waypoint) override {
-    if (!list.full())
-      list.append(new WaypointMapItem(waypoint));
-  }
-};
 
 void
 MapItemListBuilder::AddLocation(const NMEAInfo &basic,
@@ -68,7 +35,7 @@ MapItemListBuilder::AddLocation(const NMEAInfo &basic,
     elevation = terrain->GetTerrainHeight(location)
       .ToDouble(LocationMapItem::UNKNOWN_ELEVATION);
 
-  list.append(new LocationMapItem(vector, elevation));
+  list.append(new LocationMapItem(location, vector, elevation));
 }
 
 void
@@ -94,13 +61,8 @@ MapItemListBuilder::AddArrivalAltitudes(
   const AGeoPoint destination(location, target_elevation);
 
   // Calculate arrival altitudes
-  ReachResult reach;
-
-  ProtectedRoutePlanner::Lease leased_route_planner(route_planner);
-  if (!leased_route_planner->FindPositiveArrival(destination, reach))
-    return;
-
-  list.append(new ArrivalAltitudeMapItem(elevation, reach, safety_height));
+  if (auto reach = route_planner.FindPositiveArrival(destination))
+    list.append(new ArrivalAltitudeMapItem(elevation, *reach, safety_height));
 }
 
 void
@@ -111,10 +73,26 @@ MapItemListBuilder::AddSelfIfNear(const GeoPoint &self, Angle bearing)
 }
 
 void
-MapItemListBuilder::AddWaypoints(const Waypoints &waypoints)
+MapItemListBuilder::AddWaypoints(const Waypoints &waypoints,
+                                 const ProtectedRoutePlanner *route_planner,
+                                 const MoreData &basic,
+                                 const DerivedInfo &calculated,
+                                 const ComputerSettings &settings)
 {
-  WaypointListBuilderVisitor waypoint_list_builder(list);
-  waypoints.VisitWithinRange(location, range, waypoint_list_builder);
+  waypoints.VisitWithinRange(location, range, [&](const auto &w){
+    if (list.full())
+      return;
+
+    /* calculate the reachability the same way the map does, so the
+       icon in the dialog matches the one on the map */
+    auto reachable = WaypointReachability::INVALID;
+    if (w->IsLandable() || w->flags.watched)
+      reachable = CalculateWaypointReach(*w, route_planner, basic, calculated,
+                                         settings.polar,
+                                         settings.task).reachability;
+
+    list.append(new WaypointMapItem(w, reachable));
+  });
 }
 
 void

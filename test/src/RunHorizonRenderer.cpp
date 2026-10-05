@@ -1,34 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #define ENABLE_MAIN_WINDOW
 #define ENABLE_CLOSE_BUTTON
 
 #include "Main.hpp"
-#include "Event/LambdaTimer.hpp"
-#include "Screen/Canvas.hpp"
+#include "ui/event/PeriodicTimer.hpp"
+#include "ui/canvas/Canvas.hpp"
 #include "Form/Button.hpp"
-#include "Form/ActionListener.hpp"
 #include "Look/HorizonLook.hpp"
 #include "Renderer/HorizonRenderer.hpp"
 #include "NMEA/Attitude.hpp"
@@ -48,14 +27,14 @@ public:
   }
 
 protected:
-  virtual void OnPaint(Canvas &canvas) override {
+  void OnPaint(Canvas &canvas) noexcept override {
     canvas.ClearWhite();
     HorizonRenderer::Draw(canvas, canvas.GetRect(), look, attitude);
   }
 };
 
 static void
-Main()
+Main(TestMainWindow &main_window)
 {
   HorizonLook horizon_look;
   horizon_look.Initialise();
@@ -67,18 +46,55 @@ Main()
   horizon.Create(main_window, main_window.GetClientRect(), with_border);
   main_window.SetFullWindow(horizon);
 
-  auto timer = MakeLambdaTimer([&horizon](){
-      AttitudeState attitude;
-      attitude.bank_angle_computed = true;
-      attitude.pitch_angle_computed = true;
-      attitude.bank_angle = Angle::Zero();
-      attitude.pitch_angle = Angle::Zero();
+  double bank_angle = 0;
+  double pitch_angle = 0;
 
-      horizon.SetAttitude(attitude);
-    });
-  timer.Schedule(250);
+  UI::PeriodicTimer timer([&horizon, &pitch_angle, &bank_angle]() {
+    // Static variables to keep track of the pitch angle and bank angle
+    static double pitch_increment = 1.0;
+    static double bank_increment = 1.2;
+    static double min_angle = -30.0;
+    static double max_angle = 30.0;
 
+    AttitudeState attitude;
+    attitude.bank_angle_available = attitude.pitch_angle_available = Validity{
+        TimeStamp{std::chrono::steady_clock::now().time_since_epoch()}};
+
+    // Update pitch angle
+    if (pitch_angle == max_angle) {
+      pitch_increment = -1.0; // Change direction
+    } else if (pitch_angle == min_angle) {
+      pitch_increment = -pitch_increment; // Reverse direction
+    }
+    pitch_angle += pitch_increment;
+
+    // Ensure pitch angle stays within bounds [-30, 30]
+    if (pitch_angle > max_angle) {
+      pitch_angle = max_angle;
+    } else if (pitch_angle < min_angle) {
+      pitch_angle = min_angle;
+    }
+
+    // Update bank angle
+    if (bank_angle == max_angle) {
+      bank_increment = -1.0; // Change direction
+    } else if (bank_angle == min_angle) {
+      bank_increment = -bank_increment; // Reverse direction
+    }
+    bank_angle += bank_increment;
+
+    // Ensure bank angle stays within bounds [-30, 30]
+    if (bank_angle > max_angle) {
+      bank_angle = max_angle;
+    } else if (bank_angle < min_angle) {
+      bank_angle = min_angle;
+    }
+
+    attitude.bank_angle = Angle::Degrees(bank_angle);
+    attitude.pitch_angle = Angle::Degrees(pitch_angle);
+
+    horizon.SetAttitude(attitude);
+  });
+  timer.Schedule(std::chrono::milliseconds(50));
   main_window.RunEventLoop();
-
-  timer.Cancel();
 }

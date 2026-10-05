@@ -1,48 +1,35 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef REPLAY_HPP
-#define REPLAY_HPP
-
-#include "Event/Timer.hpp"
+#include "ui/event/Timer.hpp"
 #include "NMEA/Info.hpp"
-#include "Time/PeriodClock.hpp"
-#include "OS/Path.hpp"
+#include "time/PeriodClock.hpp"
+#include "time/Stamp.hpp"
+#include "system/Path.hpp"
 
+class DeviceBlackboard;
 class Logger;
 class ProtectedTaskManager;
 class AbstractReplay;
 class CatmullRomInterpolator;
+class MergeThread;
+class CalculationThread;
 class Error;
+struct DeviceConfig;
 
 class Replay final
-  : private Timer
 {
-  double time_scale;
+  DeviceBlackboard &device_blackboard;
 
-  AbstractReplay *replay;
+  UI::Timer timer{[this]{ OnTimer(); }};
 
-  Logger *logger;
+  double time_scale = 1;
+
+  AbstractReplay *replay = nullptr;
+
+  Logger *const logger;
   ProtectedTaskManager &task_manager;
 
   AllocatedPath path = nullptr;
@@ -51,7 +38,7 @@ class Replay final
    * The time of day according to replay input.  This is negative if
    * unknown.
    */
-  double virtual_time;
+  TimeStamp virtual_time;
 
   /**
    * If this value is not negative, then we're in fast-forward mode:
@@ -60,7 +47,7 @@ class Replay final
    * #virtual_time is negative, then this is the duration, and
    * #virtual_time will be added as soon as it is known.
    */
-  double fast_forward;
+  TimeStamp fast_forward;
 
   /**
    * Keeps track of the wall-clock time between two Update() calls.
@@ -73,13 +60,13 @@ class Replay final
    */
   NMEAInfo next_data;
 
-  CatmullRomInterpolator *cli;
+  CatmullRomInterpolator *cli = nullptr;
 
 public:
-  Replay(Logger *_logger, ProtectedTaskManager &_task_manager)
-    :time_scale(1), replay(nullptr),
-     logger(_logger), task_manager(_task_manager), cli(nullptr) {
-  }
+  Replay(DeviceBlackboard &_device_blackboard,
+         Logger *_logger, ProtectedTaskManager &_task_manager)
+    :device_blackboard(_device_blackboard),
+     logger(_logger), task_manager(_task_manager) {}
 
   ~Replay() {
     Stop();
@@ -98,7 +85,7 @@ public:
   /**
    * Throws std::runtime_errror on error.
    */
-  void Start(Path _path);
+  void Start(Path _path, const DeviceConfig &device);
 
   Path GetFilename() const {
     return path;
@@ -117,25 +104,32 @@ public:
    * seconds.  This replays the given amount of time from the input
    * time as quickly as possible.  Returns false if unable to fast forward.
    */
-  bool FastForward(double delta_s) {
+  bool FastForward(FloatDuration delta_s) noexcept {
     if (!IsActive())
       return false;
 
-    fast_forward = delta_s;
-    if (virtual_time >= 0) {
-      fast_forward += virtual_time;
+    if (virtual_time.IsDefined()) {
+      fast_forward = virtual_time + delta_s;
       return true;
     } else {
+      fast_forward = TimeStamp{delta_s};
       return false;
     }
   }
 
-  double GetVirtualTime() const {
+  TimeStamp GetVirtualTime() const noexcept {
     return virtual_time;
   }
 
-private:
-  void OnTimer() override;
-};
+  /**
+   * Feed every fix from the current replay file through merge and
+   * calculation without virtual-time skipping.  For trail testing.
+   * Returns the number of fixes processed (0 if replay is inactive or
+   * demo mode).  \a merge_thread and \a calc_thread must be suspended.
+   */
+  unsigned ProcessAllFixes(MergeThread &merge_thread,
+                           CalculationThread &calc_thread);
 
-#endif
+private:
+  void OnTimer();
+};

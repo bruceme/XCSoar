@@ -1,111 +1,92 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "PortMonitor.hpp"
 #include "Dialogs/Message.hpp"
 #include "Look/Look.hpp"
-#include "Screen/TerminalWindow.hpp"
+#include "ui/control/TerminalWindow.hpp"
 #include "Widget/WindowWidget.hpp"
 #include "Dialogs/WidgetDialog.hpp"
-#include "Form/ActionListener.hpp"
 #include "Device/Descriptor.hpp"
-#include "Util/Macros.hpp"
-#include "Util/StaticFifoBuffer.hxx"
+#include "util/StaticFifoBuffer.hxx"
 #include "Language/Language.hpp"
 #include "Operation/MessageOperationEnvironment.hpp"
-#include "Event/DelayedNotify.hpp"
-#include "Thread/Mutex.hpp"
+#include "ui/event/DelayedNotify.hpp"
+#include "thread/Mutex.hxx"
 #include "UIGlobals.hpp"
-
-enum Buttons {
-  CLEAR = 100,
-  RECONNECT,
-  PAUSE,
-};
 
 /**
  * A bridge between DataHandler and TerminalWindow: copy all data
  * received from the Port to the TerminalWindow.
  */
-class PortTerminalBridge : public DataHandler, private DelayedNotify {
+class PortTerminalBridge final : public DataHandler {
   TerminalWindow &terminal;
   Mutex mutex;
-  StaticFifoBuffer<char, 1024> buffer;
+  StaticFifoBuffer<std::byte, 1024> buffer;
+
+  UI::DelayedNotify notify{
+    std::chrono::milliseconds(100),
+    [this]{ OnNotification(); },
+  };
 
 public:
   PortTerminalBridge(TerminalWindow &_terminal)
-    :DelayedNotify(100), terminal(_terminal) {}
-  virtual ~PortTerminalBridge() {}
+    :terminal(_terminal) {}
+  ~PortTerminalBridge() {}
 
-  virtual void DataReceived(const void *data, size_t length) {
-    mutex.Lock();
-    buffer.Shift();
-    auto range = buffer.Write();
-    if (range.size < length)
-      length = range.size;
-    memcpy(range.data, data, length);
-    buffer.Append(length);
-    mutex.Unlock();
-    SendNotification();
+  bool DataReceived(std::span<const std::byte> s) noexcept {
+    {
+      const std::lock_guard lock{mutex};
+      buffer.Shift();
+      auto range = buffer.Write();
+      const std::size_t nbytes = std::min(s.size(), range.size());
+      std::copy_n(s.begin(), nbytes, range.begin());
+      buffer.Append(nbytes);
+    }
+
+    notify.SendNotification();
+    return true;
   }
 
 private:
-  virtual void OnNotification() {
+  void OnNotification() noexcept {
     while (true) {
-      char data[64];
+      std::array<std::byte, 64> data;
       size_t length;
 
       {
-        ScopeLock protect(mutex);
+        const std::lock_guard lock{mutex};
         auto range = buffer.Read();
         if (range.empty())
           break;
 
-        length = std::min(ARRAY_SIZE(data), size_t(range.size));
-        memcpy(data, range.data, length);
+        length = std::min(data.size(), range.size());
+        std::copy_n(range.begin(), length, data.begin());
         buffer.Consume(length);
       }
 
-      terminal.Write(data, length);
+      terminal.Write((const char *)data.data(), length);
     }
   }
 };
 
-class PortMonitorWidget final : public WindowWidget, public ActionListener {
+class PortMonitorWidget final : public WindowWidget {
   DeviceDescriptor &device;
-  TerminalWindow terminal;
-  PortTerminalBridge bridge;
+  const TerminalLook &look;
+  std::unique_ptr<PortTerminalBridge> bridge;
 
   Button *pause_button;
   bool paused;
 
 public:
-  PortMonitorWidget(DeviceDescriptor &_device, const TerminalLook &look)
-    :device(_device), terminal(look), bridge(terminal), paused(false) {}
+  PortMonitorWidget(DeviceDescriptor &_device,
+                    const TerminalLook &_look) noexcept
+    :device(_device), look(_look), paused(false) {}
 
   void CreateButtons(WidgetDialog &dialog);
 
   void Clear() {
+    auto &terminal = (TerminalWindow &)GetWindow();
     terminal.Clear();
   }
 
@@ -114,49 +95,38 @@ public:
 
   /* virtual methods from class Widget */
 
-  void Prepare(ContainerWindow &parent, const PixelRect &rc) override {
+  void Prepare(ContainerWindow &parent, const PixelRect &rc) noexcept override {
     WindowStyle style;
     style.Hide();
-    terminal.Create(parent, rc, style);
-    SetWindow(&terminal);
-    device.SetMonitor(&bridge);
+
+    auto w = std::make_unique<TerminalWindow>(look);
+    w->Create(parent, rc, style);
+
+    bridge = std::make_unique<PortTerminalBridge>(*w);
+    device.SetMonitor(bridge.get());
+
+    SetWindow(std::move(w));
   }
 
-  void Unprepare() override {
+  void Unprepare() noexcept override {
     device.SetMonitor(nullptr);
-  }
-
-  /* virtual methods from class ActionListener */
-  virtual void OnAction(int id) override {
-    switch (id) {
-    case CLEAR:
-      Clear();
-      break;
-
-    case RECONNECT:
-      Reconnect();
-      break;
-
-    case PAUSE:
-      TogglePause();
-      break;
-    }
   }
 };
 
 void
 PortMonitorWidget::CreateButtons(WidgetDialog &dialog)
 {
-  dialog.AddButton(_("Clear"), *this, CLEAR);
-  dialog.AddButton(_("Reconnect"), *this, RECONNECT);
-  pause_button = dialog.AddButton(_("Pause"), *this, PAUSE);
+  dialog.AddButton(_("Clear"), [this](){ Clear(); });
+  dialog.AddButton(_("Reconnect"), [this](){ Reconnect(); });
+  pause_button = dialog.AddButton(_("Pause"), [this](){ TogglePause(); });
 }
 
 void
 PortMonitorWidget::Reconnect()
 {
-  if (device.IsOccupied()) {
-    ShowMessageBox(_("Device is occupied"), _("Manage"), MB_OK | MB_ICONERROR);
+  if (device.IsBorrowed()) {
+    ShowMessageBox(_("Device is occupied"), _("Reconnect"),
+                   MB_OK | MB_ICONERROR);
     return;
   }
 
@@ -176,7 +146,7 @@ PortMonitorWidget::TogglePause()
     device.SetMonitor(nullptr);
   } else {
     pause_button->SetCaption(_("Pause"));
-    device.SetMonitor(&bridge);
+    device.SetMonitor(bridge.get());
   }
 }
 
@@ -185,18 +155,17 @@ ShowPortMonitor(DeviceDescriptor &device)
 {
   const Look &look = UIGlobals::GetLook();
 
-  TCHAR buffer[64];
+  std::array<char, 64> buffer;
   StaticString<128> caption;
-  caption.Format(_T("%s: %s"), _("Port monitor"),
-                 device.GetConfig().GetPortName(buffer, ARRAY_SIZE(buffer)));
+  caption.Format("%s: %s", _("Port monitor"),
+                 device.GetConfig().GetPortName(buffer.data(), buffer.size()));
 
-  PortMonitorWidget widget(device, look.terminal);
-
-  WidgetDialog dialog(look.dialog);
-  dialog.CreateFull(UIGlobals::GetMainWindow(), caption, &widget);
+  TWidgetDialog<PortMonitorWidget>
+    dialog(WidgetDialog::Full{}, UIGlobals::GetMainWindow(),
+           look.dialog, caption);
   dialog.AddButton(_("Close"), mrOK);
-  widget.CreateButtons(dialog);
+  dialog.SetWidget(device, look.terminal);
+  dialog.GetWidget().CreateButtons(dialog);
 
   dialog.ShowModal();
-  dialog.StealWidget();
 }

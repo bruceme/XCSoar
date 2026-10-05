@@ -1,30 +1,12 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "TaskAutoPilot.hpp"
 #include "TaskAccessor.hpp"
 #include "Task/Stats/ElementStat.hpp"
 #include "GlideSolvers/GlidePolar.hpp"
-#include "Util/Clamp.hpp"
+
+#include <algorithm> // for std::clamp()
 
 #include <stdlib.h>
 
@@ -102,7 +84,7 @@ TaskAutoPilot::GetStartLocation(const TaskAccessor& task, bool previous)
 }
 
 bool
-TaskAutoPilot::HasTarget(const TaskAccessor& task) const
+TaskAutoPilot::HasTarget([[maybe_unused]] const TaskAccessor& task) const
 {
   return parms.goto_target && awp > 0;
 }
@@ -110,12 +92,15 @@ TaskAutoPilot::HasTarget(const TaskAccessor& task) const
 GeoPoint
 TaskAutoPilot::GetTarget(const TaskAccessor& task) const
 {
-  if (HasTarget(task))
+  if (HasTarget(task)) {
     // in this mode, we go directly to the target
-    return task.GetActiveTaskPointLocation();
-  else
-    // head towards the rough location
-    return w[0];
+    const auto p = task.GetActiveTaskPointLocation();
+    if (p.IsValid())
+      return p;
+  }
+
+  // head towards the rough location
+  return w[0];
 }
 
 
@@ -172,7 +157,7 @@ TaskAutoPilot::UpdateMode(const TaskAccessor& task, const AircraftState& state)
 void
 TaskAutoPilot::UpdateCruiseBearing(const TaskAccessor& task,
                                    const AircraftState& state,
-                                   const double timestep)
+                                   const FloatDuration timestep) noexcept
 {
   const ElementStat &stat = task.GetLegStats();
   Angle bct = stat.solution_remaining.cruise_track_bearing;
@@ -198,17 +183,17 @@ TaskAutoPilot::UpdateCruiseBearing(const TaskAccessor& task,
 
   auto diff = (bearing - heading).AsDelta();
   auto d = diff.Degrees();
-  auto max_turn = parms.turn_speed * timestep;
-  heading += Angle::Degrees(Clamp(d, -max_turn, max_turn));
+  auto max_turn = parms.turn_speed * timestep.count();
+  heading += Angle::Degrees(std::clamp(d, -max_turn, max_turn));
   if (parms.bearing_noise > 0)
-    heading += GetHeadingDeviation() * timestep;
+    heading += GetHeadingDeviation() * timestep.count();
 
   heading = heading.AsBearing();
 }
 
 void
 TaskAutoPilot::UpdateState(const TaskAccessor& task, AircraftState& state,
-                           const double timestep)
+                           const FloatDuration timestep) noexcept
 {
   const GlidePolar &glide_polar = task.GetGlidePolar();
 
@@ -228,12 +213,12 @@ TaskAutoPilot::UpdateState(const TaskAccessor& task, AircraftState& state,
   }
   case Climb: {
     state.true_airspeed = glide_polar.GetVMin();
-    auto d = parms.turn_speed * timestep;
+    auto d = parms.turn_speed * timestep.count();
     if (d < 360)
       heading += Angle::Degrees(d);
 
     if (parms.bearing_noise > 0)
-      heading += GetHeadingDeviation() * timestep;
+      heading += GetHeadingDeviation() * timestep.count();
 
     heading = heading.AsBearing();
     state.vario = climb_rate * parms.climb_factor;

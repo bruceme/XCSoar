@@ -1,44 +1,57 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef PLANE_FILE_GLUE_HPP
-#define PLANE_FILE_GLUE_HPP
+#pragma once
 
 class Path;
+class AllocatedPath;
 struct Plane;
+class GlidePolar;
 class KeyValueFileReader;
 class KeyValueFileWriter;
 
-namespace PlaneGlue
-{
-  bool Read(Plane &plane, KeyValueFileReader &reader);
-  bool ReadFile(Plane &plane, Path path);
-  void Write(const Plane &plane, KeyValueFileWriter &writer);
+namespace PlaneGlue {
 
 /**
- * Throws exception on error.
+ * Throws on I/O error.
  */
-void WriteFile(const Plane &plane, Path path);
-}
+bool
+Read(Plane &plane, KeyValueFileReader &reader);
 
-#endif
+bool
+ReadFile(Plane &plane, Path path) noexcept;
+
+/**
+ * Throws on I/O error.
+ */
+void
+Write(const Plane &plane, KeyValueFileWriter &writer);
+
+/**
+ * Throws on I/O error.
+ */
+void
+WriteFile(const Plane &plane, Path path);
+
+/**
+ * Search .xcp files in the data directory for a plane matching
+ * the given registration.
+ *
+ * @return path to the matching .xcp file, or nullptr if not found
+ */
+AllocatedPath
+FindByRegistration(const char *registration);
+
+/**
+ * Create a new .xcp plane profile from the given polar and identity.
+ *
+ * @return path of the created file
+ * Throws on I/O error.
+ */
+AllocatedPath
+CreateFromPolar(const char *registration,
+                const char *competition_id,
+                const char *glider_type,
+                const GlidePolar &polar);
+
+} // namespace PlaneGlue

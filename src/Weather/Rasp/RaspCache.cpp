@@ -1,52 +1,44 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "RaspCache.hpp"
 #include "RaspStore.hpp"
 #include "Terrain/RasterMap.hpp"
 #include "Terrain/Loader.hpp"
 #include "Language/Language.hpp"
-#include "OS/Path.hpp"
-#include "IO/ZipArchive.hpp"
+#include "system/Path.hpp"
+#include "io/ZipArchive.hpp"
+#include "LogFile.hpp"
 
-#include <assert.h>
+#include <cassert>
 #include <windef.h> // for MAX_PATH
 
-static inline constexpr unsigned
-ToHalfHours(BrokenTime t)
+RaspCache::RaspCache(const RaspStore &_store, unsigned _parameter) noexcept
+  :store(_store), parameter(_parameter) {}
+
+RaspCache::~RaspCache() noexcept = default;
+
+static constexpr unsigned
+ToQuarterHours(BrokenTime t)
 {
-  return t.hour * 2u + t.minute / 30;
+  return t.hour * 4u + t.minute / 15;
 }
 
-const TCHAR *
+const char *
 RaspCache::GetMapName() const
 {
+  if (parameter >= store.GetItemCount())
+    return "";
+
   return store.GetItemInfo(parameter).name;
 }
 
-const TCHAR *
+const char *
 RaspCache::GetMapLabel() const
 {
+  if (parameter >= store.GetItemCount())
+    return "";
+
   const auto &info = store.GetItemInfo(parameter);
   return info.label != nullptr
     ? gettext(info.label)
@@ -56,7 +48,7 @@ RaspCache::GetMapLabel() const
 void
 RaspCache::SetTime(BrokenTime t)
 {
-  unsigned i = t.IsPlausible() ? ToHalfHours(t) : 0;
+  unsigned i = t.IsPlausible() ? ToQuarterHours(t) : 0;
   time = i;
 }
 
@@ -77,54 +69,69 @@ RaspCache::IsInside(GeoPoint p) const
 void
 RaspCache::Reload(BrokenTime time_local, OperationEnvironment &operation)
 {
+  if (parameter >= store.GetItemCount())
+    return;
+
   unsigned effective_time = time;
   if (effective_time == 0) {
-    // "Now" time, so find time in half hours
-    if (!time_local.IsPlausible())
+    // "Now" time, so find time in quarter hours
+    if (time_local.IsPlausible()) {
+      effective_time = ToQuarterHours(time_local);
+      assert(effective_time < RaspStore::MAX_WEATHER_TIMES);
+    } else if (!store.IsSingleTimeField(parameter)) {
       /* can't update to current time if we don't know the current
-         time */
+         time; single-time fields have no time axis, so effective_time
+         stays 0 and still resolves to their single slot below */
       return;
-
-    effective_time = ToHalfHours(time_local);
-    assert(effective_time < RaspStore::MAX_WEATHER_TIMES);
+    }
   }
 
-  if (effective_time == last_time)
+  const unsigned requested_time = effective_time;
+  const unsigned resolved_time =
+    store.GetNearestTime(parameter, requested_time);
+  if (resolved_time == RaspStore::MAX_WEATHER_TIMES)
+    return;
+
+  if (map != nullptr && resolved_time == last_time)
     // no change, quick exit.
     return;
 
-  last_time = effective_time;
-
-  effective_time = store.GetNearestTime(parameter, effective_time);
-  if (effective_time == RaspStore::MAX_WEATHER_TIMES)
+  if (resolved_time == failed_time)
+    /* avoid retrying malformed/unsupported tiles every redraw */
     return;
-
-  Close();
 
   auto archive = store.OpenArchive();
   if (!archive)
     return;
 
   char new_name[MAX_PATH];
-  store.NarrowWeatherFilename(new_name, Path(store.GetItemInfo(parameter).name),
-                              effective_time);
+  if (!store.WeatherFilename(new_name, Path(store.GetItemInfo(parameter).name),
+                             resolved_time))
+    return;
 
-  RasterMap *new_map = new RasterMap();
-  if (!LoadTerrainOverview(archive->get(), new_name, nullptr,
-                           new_map->GetTileCache(),
-                           true, operation)) {
-    delete new_map;
+  auto new_map = std::make_unique<RasterMap>();
+  try {
+    LoadTerrainOverview(archive->get(), new_name, nullptr,
+                        new_map->GetTileCache(),
+                        true, operation);
+  } catch (...) {
+    LogError(std::current_exception(), "Failed to load RASP file");
+    failed_time = resolved_time;
     return;
   }
 
   new_map->UpdateProjection();
 
-  map = new_map;
+  loaded_time_index = resolved_time;
+  map = std::move(new_map);
+  last_time = resolved_time;
+  failed_time = unsigned(-1);
 }
 
-void
-RaspCache::Close()
+BrokenTime
+RaspCache::GetLoadedTime() const
 {
-  delete map;
-  map = nullptr;
+  return map != nullptr
+    ? RaspStore::IndexToTime(loaded_time_index)
+    : BrokenTime::Invalid();
 }

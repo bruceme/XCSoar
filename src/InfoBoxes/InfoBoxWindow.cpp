@@ -1,39 +1,34 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "InfoBoxWindow.hpp"
 #include "InfoBoxSettings.hpp"
 #include "Border.hpp"
 #include "Look/InfoBoxLook.hpp"
+#include "Look/Colors.hpp"
 #include "Input/InputEvents.hpp"
 #include "Renderer/GlassRenderer.hpp"
 #include "Renderer/UnitSymbolRenderer.hpp"
 #include "Screen/Layout.hpp"
-#include "Screen/Canvas.hpp"
-#include "Event/KeyCode.hpp"
+#include "ui/canvas/Canvas.hpp"
+#include "ui/event/KeyCode.hpp"
 #include "Dialogs/dlgInfoBoxAccess.hpp"
+#include "InfoBoxes/InfoBoxManager.hpp"
+#include "InfoBoxes/InfoBoxArrange.hpp"
+#include "Form/Button.hpp"
+#include "Asset.hpp"
+#include "Hardware/CPU.hpp"
 
 #include <algorithm>
+
+/** timeout of infobox focus */
+static constexpr std::chrono::steady_clock::duration FOCUS_TIMEOUT_MAX = std::chrono::seconds(20);
+
+/**
+ * How long the InfoBox has to be pressed before the arrange mode
+ * starts.  This is the Material long-press timeout.
+ */
+static constexpr auto REORDER_DELAY = InfoBoxArrange::LONG_PRESS;
 
 InfoBoxWindow::InfoBoxWindow(ContainerWindow &parent, PixelRect rc,
                              unsigned border_flags,
@@ -41,26 +36,17 @@ InfoBoxWindow::InfoBoxWindow(ContainerWindow &parent, PixelRect rc,
                              const InfoBoxLook &_look,
                              unsigned _id,
                              WindowStyle style)
-  :content(NULL),
-   settings(_settings), look(_look),
+  :settings(_settings), look(_look),
    border_kind(border_flags),
-   id(_id),
-   dragging(false), pressed(false),
-   force_draw_selector(false),
-   focus_timer(*this), dialog_timer(*this)
+   id(_id)
 {
   data.Clear();
 
   Create(parent, rc, style);
 }
 
-InfoBoxWindow::~InfoBoxWindow() {
-  delete content;
-  Destroy();
-}
-
 void
-InfoBoxWindow::SetTitle(const TCHAR *_title)
+InfoBoxWindow::SetTitle(const char *_title)
 {
   data.SetTitle(_title);
   Invalidate(title_rect);
@@ -72,22 +58,25 @@ InfoBoxWindow::PaintTitle(Canvas &canvas)
   if (data.title.empty())
     return;
 
-  if (!pressed && !HasFocus() && !dragging && !force_draw_selector &&
-      settings.border_style == InfoBoxSettings::BorderStyle::SHADED)
+  if (settings.border_style == InfoBoxSettings::BorderStyle::SHADED)
     canvas.DrawFilledRectangle(title_rect, look.caption_background_color);
 
-  canvas.SetTextColor(look.GetTitleColor(data.title_color));
+  const bool is_selected = HasFocus() || dragging || force_draw_selector;
+  if (is_selected)
+    canvas.SetTextColor(look.title.fg_color);
+  else
+    canvas.SetTextColor(look.GetTitleColor(data.title_color));
 
-  const Font &font = look.title_font;
+  const Font &font = is_selected ? look.title_font_bold : look.title_font;
   canvas.Select(font);
 
   PixelSize tsize = canvas.CalcTextSize(data.title);
 
-  int halftextwidth = (title_rect.left + title_rect.right - tsize.cx) / 2;
+  int halftextwidth = (title_rect.left + title_rect.right - (int)tsize.width) / 2;
   int x = std::max(1, title_rect.left + halftextwidth);
   int y = title_rect.top;
 
-  canvas.TextAutoClipped(x, y, data.title);
+  canvas.TextAutoClipped({x, y}, data.title);
 
   if (settings.border_style == InfoBoxSettings::BorderStyle::TAB &&
       halftextwidth > Layout::Scale(3)) {
@@ -119,43 +108,40 @@ InfoBoxWindow::PaintTitle(Canvas &canvas)
 }
 
 void
-InfoBoxWindow::PaintValue(Canvas &canvas, Color background_color)
+InfoBoxWindow::PaintValue(Canvas &canvas, [[maybe_unused]] Color background_color)
 {
   if (data.value.empty())
     return;
 
   canvas.SetTextColor(look.GetValueColor(data.value_color));
 
-  canvas.Select(look.unit_font);
-  int unit_width =
-    UnitSymbolRenderer::GetSize(canvas, data.value_unit).cx;
-
   canvas.Select(look.value_font);
   int ascent_height = look.value_font.GetAscentHeight();
 
   PixelSize value_size = canvas.CalcTextSize(data.value);
-  if (unsigned(value_size.cx + unit_width) > value_rect.GetWidth()) {
+  if (unsigned(value_size.width + unit_width) > value_rect.GetWidth()) {
     canvas.Select(look.small_value_font);
     ascent_height = look.small_value_font.GetAscentHeight();
     value_size = canvas.CalcTextSize(data.value);
   }
 
-  int x = std::max(0,
-                   (value_rect.left + value_rect.right
-                    - value_size.cx - unit_width) / 2);
+  const PixelSize value_unit_size = value_size + PixelSize{unit_width, 0u};
 
-  int y = (value_rect.top + value_rect.bottom - value_size.cy) / 2;
+  auto value_p = value_rect.CenteredTopLeft(value_unit_size);
+  if (value_p.x < 0)
+    value_p.x = 0;
 
-  canvas.TextAutoClipped(x, y, data.value);
+  canvas.TextAutoClipped(value_p, data.value);
 
   if (unit_width != 0) {
     const int unit_height =
       UnitSymbolRenderer::GetAscentHeight(look.unit_font, data.value_unit);
 
+    const auto unit_p = value_p.At(value_size.width,
+                                   ascent_height - unit_height);
+
     canvas.Select(look.unit_font);
-    UnitSymbolRenderer::Draw(canvas,
-                             { x + value_size.cx,
-                                 y + ascent_height - unit_height },
+    UnitSymbolRenderer::Draw(canvas, unit_p,
                              data.value_unit, look.unit_fraction_pen);
   }
 }
@@ -174,26 +160,31 @@ InfoBoxWindow::PaintComment(Canvas &canvas)
   PixelSize tsize = canvas.CalcTextSize(data.comment);
 
   int x = std::max(1,
-                   (comment_rect.left + comment_rect.right - tsize.cx) / 2);
+                   (comment_rect.left + comment_rect.right - (int)tsize.width) / 2);
   int y = comment_rect.top;
 
-  canvas.TextAutoClipped(x, y, data.comment);
+  canvas.TextAutoClipped({x, y}, data.comment);
 }
 
 void
 InfoBoxWindow::Paint(Canvas &canvas)
 {
+  const bool is_selected = HasFocus() || dragging || force_draw_selector;
   const Color background_color = pressed
     ? look.pressed_background_color
-    : (HasFocus() || dragging || force_draw_selector
+    : (is_selected
        ? look.focused_background_color
        : look.background_color);
+  
+  const PixelRect rc = GetClientRect();
   if (settings.border_style == InfoBoxSettings::BorderStyle::GLASS)
-    DrawGlassBackground(canvas, canvas.GetRect(), background_color);
+    DrawGlassBackground(canvas, rc, background_color);
   else
-    canvas.Clear(background_color);
+    canvas.DrawFilledRectangle(rc, background_color);
 
-  if (data.GetCustom() && content != NULL) {
+  PaintLongPressGlow(canvas);
+
+  if (data.GetCustom() && content) {
     /* if there's no comment, the content object may paint that area,
        too */
     const PixelRect &rc = data.comment.empty()
@@ -211,32 +202,35 @@ InfoBoxWindow::Paint(Canvas &canvas)
   if (border_kind != 0) {
     canvas.Select(look.border_pen);
 
-    const unsigned width = canvas.GetWidth(),
+    const int width = canvas.GetWidth(),
       height = canvas.GetHeight();
 
     if (border_kind & BORDERTOP) {
-      canvas.DrawExactLine(0, 0, width - 1, 0);
+      canvas.DrawExactLine({0, 0}, {width - 1, 0});
     }
 
     if (border_kind & BORDERRIGHT) {
-      canvas.DrawExactLine(width - 1, 0, width - 1, height);
+      canvas.DrawExactLine({width - 1, 0}, {width - 1, height});
     }
 
     if (border_kind & BORDERBOTTOM) {
-      canvas.DrawExactLine(0, height - 1, width - 1, height - 1);
+      canvas.DrawExactLine({0, height - 1}, {width - 1, height - 1});
     }
 
     if (border_kind & BORDERLEFT) {
-      canvas.DrawExactLine(0, 0, 0, height - 1);
+      canvas.DrawExactLine({0, 0}, {0, height - 1});
     }
   }
 }
 
 void
-InfoBoxWindow::SetContentProvider(InfoBoxContent *_content)
+InfoBoxWindow::SetContentProvider(std::unique_ptr<InfoBoxContent> _content)
 {
-  delete content;
-  content = _content;
+  content = std::move(_content);
+  if (content)
+    content->SetSlot(id);
+
+  ++content_serial;
 
   data.SetInvalid();
   Invalidate();
@@ -245,17 +239,17 @@ InfoBoxWindow::SetContentProvider(InfoBoxContent *_content)
 void
 InfoBoxWindow::UpdateContent()
 {
-  if (content == NULL)
+  if (!content)
     return;
 
   InfoBoxData old = data;
   content->Update(data);
+  data.content_serial = content_serial;
 
-  if (old.GetCustom() || data.GetCustom())
-    /* must Invalidate everything when custom painting is/was
-       enabled */
-    Invalidate();
-  else {
+  if (old.GetCustom() || data.GetCustom()) {
+    if (!data.CompareCustom(old))
+      Invalidate();
+  } else {
 #ifdef ENABLE_OPENGL
     if (!data.CompareTitle(old) || !data.CompareValue(old) ||
         !data.CompareComment(old))
@@ -268,6 +262,9 @@ InfoBoxWindow::UpdateContent()
     if (!data.CompareComment(old))
       Invalidate(comment_rect);
 #endif
+
+    unit_width = UnitSymbolRenderer::GetSize(look.unit_font,
+                                             data.value_unit).width;
   }
 }
 
@@ -275,16 +272,25 @@ void
 InfoBoxWindow::ShowDialog()
 {
   force_draw_selector = true;
+  Invalidate();
 
   dlgInfoBoxAccessShowModeless(id, GetDialogContent());
 
+  /* Layout may be reinitialised while the modal dialog runs (e.g. window
+     resize), which destroys and recreates InfoBox windows. */
+  if (InfoBoxManager::GetWindow(id) != this)
+    return;
+
   force_draw_selector = false;
+  Invalidate();
+
+  FocusParent();
 }
 
 bool
 InfoBoxWindow::HandleKey(InfoBoxContent::InfoBoxKeyCodes keycode)
 {
-  if (content != NULL && content->HandleKey(keycode)) {
+  if (content && content->HandleKey(keycode)) {
     UpdateContent();
     return true;
   }
@@ -294,14 +300,14 @@ InfoBoxWindow::HandleKey(InfoBoxContent::InfoBoxKeyCodes keycode)
 const InfoBoxPanel *
 InfoBoxWindow::GetDialogContent() const
 {
-  if (content != NULL)
+  if (content)
     return content->GetDialogContent();
 
   return NULL;
 }
 
 void
-InfoBoxWindow::OnDestroy()
+InfoBoxWindow::OnDestroy() noexcept
 {
   focus_timer.Cancel();
   dialog_timer.Cancel();
@@ -309,30 +315,29 @@ InfoBoxWindow::OnDestroy()
 }
 
 void
-InfoBoxWindow::OnResize(PixelSize new_size)
+InfoBoxWindow::OnResize(PixelSize new_size) noexcept
 {
   PaintWindow::OnResize(new_size);
 
   PixelRect rc = GetClientRect();
 
   if (border_kind & BORDERLEFT)
-    rc.left += look.BORDER_WIDTH;
+    rc.left += look.border_width;
 
   if (border_kind & BORDERRIGHT)
-    rc.right -= look.BORDER_WIDTH;
+    rc.right -= look.border_width;
 
   if (border_kind & BORDERTOP)
-    rc.top += look.BORDER_WIDTH;
+    rc.top += look.border_width;
 
   if (border_kind & BORDERBOTTOM)
-    rc.bottom -= look.BORDER_WIDTH;
+    rc.bottom -= look.border_width;
 
   title_rect = rc;
   title_rect.bottom = rc.top + look.title_font.GetHeight();
 
   comment_rect = rc;
-  comment_rect.bottom -= Layout::Scale(2);
-  comment_rect.top = comment_rect.bottom - (look.title_font.GetHeight() + Layout::Scale(2));
+  comment_rect.top = comment_rect.bottom - look.title_font.GetHeight();
 
   value_rect = rc;
   value_rect.top = title_rect.bottom;
@@ -343,7 +348,7 @@ InfoBoxWindow::OnResize(PixelSize new_size)
 }
 
 bool
-InfoBoxWindow::OnKeyDown(unsigned key_code)
+InfoBoxWindow::OnKeyDown(unsigned key_code) noexcept
 {
   /* handle local hot key */
 
@@ -385,7 +390,7 @@ InfoBoxWindow::OnKeyDown(unsigned key_code)
 }
 
 bool
-InfoBoxWindow::OnMouseDown(PixelPoint p)
+InfoBoxWindow::OnMouseDown(PixelPoint p) noexcept
 {
   dialog_timer.Cancel();
 
@@ -393,18 +398,23 @@ InfoBoxWindow::OnMouseDown(PixelPoint p)
     dragging = true;
     SetCapture();
 
+    PlayHapticFeedback();
+
     pressed = true;
     Invalidate();
 
-    /* start "long click" detection */
-    dialog_timer.Schedule(1000);
+    press_point = p;
+    press_start = std::chrono::steady_clock::now();
+    long_press_pending = true;
+    dialog_timer.Schedule(REORDER_DELAY);
+    hold_timer.Schedule(InfoBoxArrange::TAP);
   }
 
   return true;
 }
 
 bool
-InfoBoxWindow::OnMouseUp(PixelPoint p)
+InfoBoxWindow::OnMouseUp([[maybe_unused]] PixelPoint p) noexcept
 {
   dialog_timer.Cancel();
 
@@ -417,12 +427,24 @@ InfoBoxWindow::OnMouseUp(PixelPoint p)
 
     ReleaseCapture();
 
-    if (was_pressed) {
+    hold_timer.Cancel();
+    fade_timer.Cancel();
+
+    if (was_pressed && hold_armed) {
+      hold_armed = false;
+      long_press_pending = false;
+      InfoBoxArrange::Begin(id);
+    } else if (was_pressed && long_press_pending) {
+      long_press_pending = false;
+
+      InfoBoxManager::ClearFocusExcept(id);
       SetFocus();
 
-      if (GetDialogContent() != nullptr)
-        /* delay the dialog, so double click detection works */
-        dialog_timer.Schedule(300);
+      const bool click_handled = content != nullptr && content->HandleClick();
+
+      if (!click_handled && GetDialogContent() != nullptr)
+        /* delay the dialog opening to prevent double click detection */
+        dialog_timer.Schedule(std::chrono::milliseconds(300));
     }
 
     return true;
@@ -432,20 +454,30 @@ InfoBoxWindow::OnMouseUp(PixelPoint p)
 }
 
 bool
-InfoBoxWindow::OnMouseDouble(PixelPoint p)
+InfoBoxWindow::OnMouseDouble([[maybe_unused]] PixelPoint p) noexcept
 {
   dialog_timer.Cancel();
+  StopLongPress();
   InputEvents::ShowMenu();
   return true;
 }
 
 bool
-InfoBoxWindow::OnMouseMove(PixelPoint p, unsigned keys)
+InfoBoxWindow::OnMouseMove(PixelPoint p, [[maybe_unused]] unsigned keys) noexcept
 {
   if (dragging) {
     SetPressed(IsInside(p));
-    if (!pressed)
+    if (!pressed) {
       dialog_timer.Cancel();
+      StopLongPress();
+    } else if (long_press_pending && !hold_armed) {
+      /* slop before the hold is armed cancels it; after that,
+         lift-off commits and sliding off the box cancels */
+      if (InfoBoxArrange::PastTouchSlop(p, press_point)) {
+        dialog_timer.Cancel();
+        StopLongPress();
+      }
+    }
     return true;
   }
 
@@ -453,13 +485,13 @@ InfoBoxWindow::OnMouseMove(PixelPoint p, unsigned keys)
 }
 
 void
-InfoBoxWindow::OnPaintBuffer(Canvas &canvas)
+InfoBoxWindow::OnPaintBuffer(Canvas &canvas) noexcept
 {
   Paint(canvas);
 }
 
 void
-InfoBoxWindow::OnCancelMode()
+InfoBoxWindow::OnCancelMode() noexcept
 {
   if (dragging) {
     dragging = false;
@@ -469,52 +501,98 @@ InfoBoxWindow::OnCancelMode()
   }
 
   dialog_timer.Cancel();
+  StopLongPress();
 
   PaintWindow::OnCancelMode();
 }
 
 void
-InfoBoxWindow::OnSetFocus()
+InfoBoxWindow::OnSetFocus() noexcept
 {
-  // Call the parent function
+  InfoBoxManager::ClearFocusExcept(id);
+
   PaintWindow::OnSetFocus();
 
-  // Start the focus-auto-return timer
-  // to automatically return focus back to MapWindow if idle
-  focus_timer.Schedule(HasCursorKeys() ? FOCUS_TIMEOUT_MAX : 1100);
+  focus_timer.Schedule(HasCursorKeys() ? FOCUS_TIMEOUT_MAX : std::chrono::milliseconds(1100));
 
-  // Redraw fast to paint the selector
   Invalidate();
 }
 
 void
-InfoBoxWindow::OnKillFocus()
+InfoBoxWindow::OnKillFocus() noexcept
 {
-  // Call the parent function
   PaintWindow::OnKillFocus();
 
-  // Destroy the time if it exists
   focus_timer.Cancel();
 
-  // Redraw fast to remove the selector
   Invalidate();
 }
 
-bool
-InfoBoxWindow::OnTimer(WindowTimer &timer)
+void
+InfoBoxWindow::StopLongPress() noexcept
 {
-  if (timer == focus_timer) {
-    focus_timer.Cancel();
-    FocusParent();
-    return true;
-  } else if (timer == dialog_timer) {
-    dragging = pressed = false;
-    Invalidate();
-    ReleaseCapture();
+  if (!long_press_pending && !hold_armed && !fade_timer.IsActive())
+    return;
 
-    dialog_timer.Cancel();
+  long_press_pending = false;
+  hold_armed = false;
+  hold_timer.Cancel();
+  fade_timer.Cancel();
+  Invalidate();
+}
+
+void
+InfoBoxWindow::OnHoldArmed() noexcept
+{
+  if (!long_press_pending)
+    return;
+
+  if (!HasEPaper() && !IsSlowCPU())
+    fade_timer.Schedule(InfoBoxArrange::LONG_PRESS_FADE);
+  Invalidate();
+}
+
+void
+InfoBoxWindow::PaintLongPressGlow(Canvas &canvas) noexcept
+{
+  if (!long_press_pending && !hold_armed)
+    return;
+
+  const bool fade = !HasEPaper() && !IsSlowCPU() && !hold_armed;
+  const unsigned t = fade
+    ? InfoBoxArrange::LongPressFade(press_start)
+    : 256;
+  /* inside the borders: they are drawn on top of the window edge, so
+     the glow must not reach into the space they reserve */
+  PixelRect rc = title_rect;
+  rc.bottom = comment_rect.bottom;
+  const int height = int(rc.GetHeight() * t / 256);
+  if (height <= 0)
+    return;
+
+  PixelRect fill = rc;
+  fill.top = fill.bottom - height;
+  canvas.DrawFilledRectangle(fill, look.GetPreviewGlowColor());
+}
+
+void
+InfoBoxWindow::OnDialogTimer() noexcept
+{
+  hold_timer.Cancel();
+  fade_timer.Cancel();
+
+  if (long_press_pending) {
+    /* the hold is armed; lifting now opens arrange */
+    hold_armed = true;
+    PlayHapticFeedback(HapticFeedbackType::LONG_PRESS);
+    Invalidate();
+    return;
+  }
+
+  dragging = pressed = false;
+  Invalidate();
+  ReleaseCapture();
+
+  if (GetDialogContent() != nullptr)
     ShowDialog();
-    return true;
-  } else
-    return PaintWindow::OnTimer(timer);
 }

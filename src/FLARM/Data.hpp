@@ -1,31 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_DATA_HPP
-#define XCSOAR_FLARM_DATA_HPP
+#pragma once
 
 #include "FLARM/Error.hpp"
 #include "FLARM/Version.hpp"
+#include "FLARM/Hardware.hpp"
+#include "FLARM/State.hpp"
+#include "FLARM/Progress.hpp"
 #include "FLARM/Status.hpp"
 #include "FLARM/List.hpp"
 
@@ -39,36 +21,49 @@ struct FlarmData {
 
   FlarmVersion version;
 
+  FlarmHardware hardware;
+
+  FlarmState state;
+
+  FlarmProgress progress;
+
   FlarmStatus status;
 
   TrafficList traffic;
 
-  bool IsDetected() const {
+  constexpr bool IsDetected() const noexcept {
     return status.available || !traffic.IsEmpty();
   }
 
-  void Clear() {
+  constexpr void Clear() noexcept {
     error.Clear();
     version.Clear();
+    hardware.Clear();
+    state.Clear();
+    progress.Clear();
     status.Clear();
     traffic.Clear();
   }
 
-  void Complement(const FlarmData &add) {
+  constexpr void Complement(const FlarmData &add) noexcept {
     error.Complement(add.error);
     version.Complement(add.version);
+    hardware.Complement(add.hardware);
+    state.Complement(add.state);
+    progress.Complement(add.progress);
     status.Complement(add.status);
     traffic.Complement(add.traffic);
   }
 
-  void Expire(double clock) {
+  constexpr void Expire(TimeStamp clock) noexcept {
     error.Expire(clock);
     version.Expire(clock);
+    hardware.Expire(clock);
+    state.Expire(clock);
+    progress.Expire(clock);
     status.Expire(clock);
     traffic.Expire(clock);
   }
 };
 
 static_assert(std::is_trivial<FlarmData>::value, "type is not trivial");
-
-#endif

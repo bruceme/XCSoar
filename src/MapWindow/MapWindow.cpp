@@ -1,69 +1,76 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "MapWindow.hpp"
 #include "OverlayBitmap.hpp"
 #include "Look/MapLook.hpp"
 #include "Topography/CachedTopographyRenderer.hpp"
+#include "Topography/TopographyStore.hpp"
 #include "Terrain/RasterTerrain.hpp"
 #include "Weather/Rasp/RaspRenderer.hpp"
 #include "Computer/GlideComputer.hpp"
 
 #ifdef ENABLE_OPENGL
-#include "Screen/OpenGL/Scissor.hpp"
+#include "ui/canvas/opengl/Scissor.hpp"
 #endif
 
 /**
  * Constructor of the MapWindow class
  */
 MapWindow::MapWindow(const MapLook &_look,
-                     const TrafficLook &_traffic_look)
+                     const TrafficLook &_traffic_look) noexcept
   :look(_look),
    traffic_look(_traffic_look),
    waypoint_renderer(nullptr, look.waypoint),
    airspace_renderer(look.airspace),
    airspace_label_renderer(look.airspace),
-   trail_renderer(look.trail) {}
+   trail_renderer(look.trail),
+   turn_back_marker_renderer(look) {}
 
-MapWindow::~MapWindow()
+MapWindow::~MapWindow() noexcept
 {
   Destroy();
 
   delete topography_renderer;
 }
 
-#ifdef ENABLE_OPENGL
+#ifndef ENABLE_OPENGL
 
 void
-MapWindow::SetOverlay(std::unique_ptr<MapOverlay> &&_overlay)
+MapWindow::PublishFrameProjection() noexcept
 {
-  overlay = std::move(_overlay);
+  const std::lock_guard lock{frame_projection_mutex};
+  published_projection = visible_projection;
 }
 
 #endif
 
+#ifdef ENABLE_OPENGL
+
 void
-MapWindow::SetGlideComputer(GlideComputer *_gc)
+MapWindow::SetOverlay(std::unique_ptr<MapOverlay> &&_overlay) noexcept
+{
+#if defined(HAVE_HTTP)
+  SetOverlay(0, std::move(_overlay));
+#else
+  overlay = std::move(_overlay);
+#endif
+}
+
+#if defined(HAVE_HTTP)
+void
+MapWindow::SetOverlay(unsigned index, std::unique_ptr<MapOverlay> &&_overlay) noexcept
+{
+  assert(index < MapWindowOverlay::MAX_MAP_OVERLAYS);
+  if (index < MapWindowOverlay::MAX_MAP_OVERLAYS)
+    overlay[index] = std::move(_overlay);
+}
+#endif
+
+#endif
+
+void
+MapWindow::SetGlideComputer(GlideComputer *_gc) noexcept
 {
   glide_computer = _gc;
   airspace_renderer.SetAirspaceWarnings(glide_computer != nullptr
@@ -72,7 +79,23 @@ MapWindow::SetGlideComputer(GlideComputer *_gc)
 }
 
 void
-MapWindow::FlushCaches()
+MapWindow::SetHudMargins(unsigned left, unsigned top,
+                              unsigned right, unsigned bottom) noexcept
+{
+  if (left == hud_margin_left && top == hud_margin_top &&
+      right == hud_margin_right && bottom == hud_margin_bottom)
+    return;
+
+  hud_margin_left = left;
+  hud_margin_top = top;
+  hud_margin_right = right;
+  hud_margin_bottom = bottom;
+
+  Invalidate();
+}
+
+void
+MapWindow::FlushCaches() noexcept
 {
   background.Flush();
   if (rasp_renderer)
@@ -92,7 +115,7 @@ void
 MapWindow::ReadBlackboard(const MoreData &nmea_info,
                           const DerivedInfo &derived_info,
                           const ComputerSettings &settings_computer,
-                          const MapSettings &settings_map)
+                          const MapSettings &settings_map) noexcept
 {
   MapWindowBlackboard::ReadBlackboard(nmea_info, derived_info);
   ReadComputerSettings(settings_computer);
@@ -100,7 +123,7 @@ MapWindow::ReadBlackboard(const MoreData &nmea_info,
 }
 
 unsigned
-MapWindow::UpdateTopography(unsigned max_update)
+MapWindow::UpdateTopography(unsigned max_update) noexcept
 {
   if (topography != nullptr && GetMapSettings().topography_enabled)
     return topography->ScanVisibility(visible_projection, max_update);
@@ -109,7 +132,7 @@ MapWindow::UpdateTopography(unsigned max_update)
 }
 
 bool
-MapWindow::UpdateTerrain()
+MapWindow::UpdateTerrain() noexcept
 {
   if (terrain == nullptr)
     return false;
@@ -126,19 +149,23 @@ MapWindow::UpdateTerrain()
  * Handles the drawing of the moving map and is called by the DrawThread
  */
 void
-MapWindow::OnPaintBuffer(Canvas &canvas)
+MapWindow::OnPaintBuffer(Canvas &canvas) noexcept
 {
 #ifndef ENABLE_OPENGL
   unsigned render_generation = ui_generation;
 #endif
 
+  {
 #ifdef ENABLE_OPENGL
-  GLCanvasScissor scissor(canvas);
+    GLCanvasScissor scissor(canvas);
+#else
+    const ScopeUnlock unlock{mutex};
 #endif
 
-  // Render the moving map
-  Render(canvas, GetClientRect());
-  draw_sw.Finish();
+    // Render the moving map
+    Render(canvas, GetClientRect());
+    draw_sw.Finish();
+  }
 
 #ifndef ENABLE_OPENGL
   /* save the generation number which was active when rendering had
@@ -149,7 +176,7 @@ MapWindow::OnPaintBuffer(Canvas &canvas)
 }
 
 void
-MapWindow::SetTopography(TopographyStore *_topography)
+MapWindow::SetTopography(TopographyStore *_topography) noexcept
 {
   topography = _topography;
 
@@ -160,14 +187,14 @@ MapWindow::SetTopography(TopographyStore *_topography)
 }
 
 void
-MapWindow::SetTerrain(RasterTerrain *_terrain)
+MapWindow::SetTerrain(RasterTerrain *_terrain) noexcept
 {
   terrain = _terrain;
   background.SetTerrain(_terrain);
 }
 
 void
-MapWindow::SetRasp(const std::shared_ptr<RaspStore> &_rasp_store)
+MapWindow::SetRasp(const std::shared_ptr<RaspStore> &_rasp_store) noexcept
 {
   rasp_renderer.reset();
   rasp_store = _rasp_store;

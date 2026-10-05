@@ -1,5 +1,7 @@
-#ifndef TASK_VARIO_HPP
-#define TASK_VARIO_HPP
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
+#pragma once
 
 #include <type_traits>
 
@@ -14,7 +16,7 @@ class TaskVario
   double value;
 
 public:
-  void Reset() {
+  constexpr void Reset() noexcept {
     value = 0;
   }
 
@@ -23,11 +25,9 @@ public:
  * 
  * @return Current vario value (m/s, positive up)
  */
-  double get_value() const {
+  constexpr double get_value() const noexcept {
     return value;
   }
 };
 
 static_assert(std::is_trivial<TaskVario>::value, "type is not trivial");
-
-#endif

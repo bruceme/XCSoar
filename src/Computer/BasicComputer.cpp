@@ -1,33 +1,15 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "BasicComputer.hpp"
 #include "NMEA/MoreData.hpp"
 #include "NMEA/Derived.hpp"
 #include "Settings.hpp"
+#include "Engine/GlideSolvers/GlidePolar.hpp"
 #include "Atmosphere/AirDensity.hpp"
 #include "Geo/Gravity.hpp"
 #include "Math/Util.hpp"
+#include "time/Cast.hxx"
 
 static constexpr double INVERSE_G = 1. / GRAVITY;
 static constexpr double INVERSE_2G = INVERSE_G / 2.;
@@ -38,7 +20,7 @@ static constexpr double INVERSE_2G = INVERSE_G / 2.;
  * time) is connected.
  */
 static void
-FillVario(MoreData &data)
+FillVario(MoreData &data) noexcept
 {
   if (data.total_energy_vario_available) {
     data.brutto_vario = data.total_energy_vario;
@@ -53,7 +35,7 @@ FillVario(MoreData &data)
 }
 
 static void
-ComputePressure(NMEAInfo &basic, const AtmosphericPressure qnh)
+ComputePressure(NMEAInfo &basic, const AtmosphericPressure qnh) noexcept
 {
   const bool qnh_available = qnh.IsPlausible();
   const bool static_pressure_available = basic.static_pressure_available;
@@ -104,7 +86,7 @@ ComputePressure(NMEAInfo &basic, const AtmosphericPressure qnh)
 }
 
 static void
-ComputeNavAltitude(MoreData &basic, const FeaturesSettings &features)
+ComputeNavAltitude(MoreData &basic, const FeaturesSettings &features) noexcept
 {
   basic.nav_altitude = features.nav_baro_altitude_enabled &&
     basic.baro_altitude_available
@@ -113,7 +95,7 @@ ComputeNavAltitude(MoreData &basic, const FeaturesSettings &features)
 }
 
 static void
-ComputeTrack(NMEAInfo &basic, const NMEAInfo &last)
+ComputeTrack(NMEAInfo &basic, const NMEAInfo &last) noexcept
 {
   if (basic.track_available ||
       !basic.location_available ||
@@ -133,11 +115,10 @@ ComputeTrack(NMEAInfo &basic, const NMEAInfo &last)
  */
 static void
 ComputeHeading(AttitudeState &attitude, const NMEAInfo &basic,
-               const DerivedInfo &calculated)
+               const DerivedInfo &calculated) noexcept
 {
   if (attitude.heading_available) {
     /* compass connected, don't need to calculate it */
-    attitude.heading_computed = false;
     return;
   }
 
@@ -145,7 +126,6 @@ ComputeHeading(AttitudeState &attitude, const NMEAInfo &basic,
     /* calculation not possible; set a dummy value (heading north) to
        avoid accessing uninitialised memory */
     attitude.heading = Angle::Zero();
-    attitude.heading_computed = false;
     return;
   }
 
@@ -161,7 +141,7 @@ ComputeHeading(AttitudeState &attitude, const NMEAInfo &basic,
   } else {
     attitude.heading = basic.track;
   }
-  attitude.heading_computed = true;
+  attitude.heading_available = basic.track_available;
 }
 
 /**
@@ -171,7 +151,7 @@ ComputeHeading(AttitudeState &attitude, const NMEAInfo &basic,
  * 3) ground speed and wind.
  */
 static void
-ComputeAirspeed(NMEAInfo &basic, const DerivedInfo &calculated)
+ComputeAirspeed(NMEAInfo &basic, const DerivedInfo &calculated) noexcept
 {
   if (basic.airspeed_available && basic.airspeed_real)
     /* got it already */
@@ -179,19 +159,21 @@ ComputeAirspeed(NMEAInfo &basic, const DerivedInfo &calculated)
 
   const auto any_altitude = basic.GetAnyAltitude();
 
-  if (!basic.airspeed_available && any_altitude.first) {
+  if (!basic.airspeed_available && any_altitude) {
     double dyn; bool available = false;
     if (basic.dyn_pressure_available) {
       dyn = basic.dyn_pressure.GetHectoPascal();
       available = true;
     } else if (basic.pitot_pressure_available && basic.static_pressure_available) {
       dyn = basic.pitot_pressure.GetHectoPascal() - basic.static_pressure.GetHectoPascal();
-      available = true;
+      // suppress speeds below ~25 km/h
+      available = dyn >= 0.31;
     }
     if (available) {
-      basic.indicated_airspeed = sqrt(double(163.2653061) * dyn);
+      basic.indicated_airspeed =
+        IndicatedAirspeedFromDynamicPressure(dyn);
       basic.true_airspeed = basic.indicated_airspeed *
-                            AirDensityRatio(any_altitude.second);
+                            AirDensityRatio(*any_altitude);
 
       basic.airspeed_available.Update(basic.clock);
       basic.airspeed_real = true; // Anyway not less real then any other method.
@@ -200,8 +182,9 @@ ComputeAirspeed(NMEAInfo &basic, const DerivedInfo &calculated)
   }
 
   if (!basic.ground_speed_available || !calculated.wind_available ||
-      !calculated.flight.flying) {
-    /* impossible to calculate */
+      !calculated.flight.flying ||
+      (basic.ground_speed > 0 && !basic.track_available)) {
+    /* GS+wind TAS needs a track whenever ground speed is used */
     basic.airspeed_available.Clear();
     return;
   }
@@ -221,8 +204,8 @@ ComputeAirspeed(NMEAInfo &basic, const DerivedInfo &calculated)
   basic.true_airspeed = TrueAirspeedEstimated;
 
   basic.indicated_airspeed = TrueAirspeedEstimated;
-  if (any_altitude.first)
-    basic.indicated_airspeed /= AirDensityRatio(any_altitude.second);
+  if (any_altitude)
+    basic.indicated_airspeed /= AirDensityRatio(*any_altitude);
 
   basic.airspeed_available.Update(basic.clock);
   basic.airspeed_real = false;
@@ -234,7 +217,7 @@ ComputeAirspeed(NMEAInfo &basic, const DerivedInfo &calculated)
  * \f${m/2} \times v^2 = m \times g \times h\f$ therefore \f$h = {v^2}/{2 \times g}\f$
  */
 static void
-ComputeEnergyHeight(MoreData &basic)
+ComputeEnergyHeight(MoreData &basic) noexcept
 {
   if (basic.airspeed_available)
     basic.energy_height = Square(basic.true_airspeed) * INVERSE_2G;
@@ -252,7 +235,7 @@ ComputeEnergyHeight(MoreData &basic)
  */
 static void
 ComputeGPSVario(MoreData &basic,
-                const MoreData &last, const MoreData &last_gps)
+                const MoreData &last, const MoreData &last_gps) noexcept
 {
   if (basic.noncomp_vario_available && last.noncomp_vario_available) {
     /* If we have a noncompensated vario signal, we use that to compute
@@ -265,13 +248,10 @@ ComputeGPSVario(MoreData &basic,
     const auto delta_t =
       basic.noncomp_vario_available.GetTimeDifference(last.noncomp_vario_available);
 
-    if (delta_t > 0) {
+    if (delta_t.count() > 0) {
       /* only update when a new value was received */
 
-      auto delta_e = basic.energy_height - last.energy_height;
-
       basic.gps_vario = basic.noncomp_vario;
-      basic.gps_vario_TE = basic.noncomp_vario + delta_e / delta_t;
       basic.gps_vario_available = basic.noncomp_vario_available;
     }
   } else if (basic.pressure_altitude_available && last.pressure_altitude_available) {
@@ -282,14 +262,12 @@ ComputeGPSVario(MoreData &basic,
     const auto delta_t =
       basic.pressure_altitude_available.GetTimeDifference(last.pressure_altitude_available);
 
-    if (delta_t > 0) {
+    if (delta_t.count() > 0) {
       /* only update when a new value was received */
 
       auto delta_h = basic.pressure_altitude - last.pressure_altitude;
-      auto delta_e = basic.energy_height - last.energy_height;
 
-      basic.gps_vario = delta_h / delta_t;
-      basic.gps_vario_TE = (delta_h + delta_e) / delta_t;
+      basic.gps_vario = delta_h / ToFloatSeconds(delta_t);
       basic.gps_vario_available = basic.pressure_altitude_available;
     }
   } else if (basic.baro_altitude_available && last.baro_altitude_available) {
@@ -299,14 +277,12 @@ ComputeGPSVario(MoreData &basic,
     const auto delta_t =
       basic.baro_altitude_available.GetTimeDifference(last.baro_altitude_available);
 
-    if (delta_t > 0) {
+    if (delta_t.count() > 0) {
       /* only update when a new value was received */
 
       auto delta_h = basic.baro_altitude - last.baro_altitude;
-      auto delta_e = basic.energy_height - last.energy_height;
 
-      basic.gps_vario = delta_h / delta_t;
-      basic.gps_vario_TE = (delta_h + delta_e) / delta_t;
+      basic.gps_vario = delta_h / ToFloatSeconds(delta_t);
       basic.gps_vario_available = basic.baro_altitude_available;
     }
   } else if (basic.gps_altitude_available && last_gps.gps_altitude_available &&
@@ -316,24 +292,22 @@ ComputeGPSVario(MoreData &basic,
        shows when this value was parsed by XCSoar */
     const auto delta_t = basic.time - last_gps.time;
 
-    if (delta_t > 0) {
+    if (delta_t.count() > 0) {
       /* only update when a new value was received */
 
       auto delta_h = basic.gps_altitude - last_gps.gps_altitude;
-      auto delta_e = basic.energy_height - last_gps.energy_height;
 
-      basic.gps_vario = delta_h / delta_t;
-      basic.gps_vario_TE = (delta_h + delta_e) / delta_t;
+      basic.gps_vario = delta_h / ToFloatSeconds(delta_t);
       basic.gps_vario_available = basic.gps_altitude_available;
     }
   } else {
-    basic.gps_vario = basic.gps_vario_TE = 0;
+    basic.gps_vario = 0;
     basic.gps_vario_available.Clear();
   }
 }
 
 static void
-ComputeBruttoVario(MoreData &basic)
+ComputeBruttoVario(MoreData &basic) noexcept
 {
   if (basic.total_energy_vario_available) {
     basic.brutto_vario = basic.total_energy_vario;
@@ -345,23 +319,49 @@ ComputeBruttoVario(MoreData &basic)
 }
 
 /**
+ * Glider polar sink [m/s] for netto vario (negative when sinking).
+ */
+static double
+GetGliderSinkRate(const MoreData &basic, const DerivedInfo &calculated,
+                  const ComputerSettings &settings) noexcept
+{
+  if (calculated.flight.flying && basic.airspeed_available &&
+      settings.polar.glide_polar_task.IsValid()) {
+    const double g_load = basic.acceleration.available
+      ? basic.acceleration.g_load
+      : 1.;
+
+    /* MergeThread runs before CalculationThread updates the shared
+       polar; apply density ratio here so SinkRate() sees TAS at
+       altitude. */
+    GlidePolar polar = settings.polar.glide_polar_task;
+    if (const auto altitude = basic.GetAnyAltitude())
+      polar.SetDensityRatio(AirDensityRatio(*altitude));
+
+    return -polar.SinkRate(basic.true_airspeed, g_load);
+  }
+
+  return calculated.sink_rate;
+}
+
+/**
  * Compute the NettoVario value if it's unavailable.
  */
 static void
-ComputeNettoVario(MoreData &basic, const VarioInfo &vario)
+ComputeNettoVario(MoreData &basic, double sink_rate) noexcept
 {
   if (basic.netto_vario_available)
     /* got it already */
     return;
 
-  basic.netto_vario = basic.brutto_vario - vario.sink_rate;
+  basic.netto_vario = basic.brutto_vario - sink_rate;
 }
 
 /**
  * Calculates the estimated bank and pitch angles
  */
 static void
-ComputeDynamics(MoreData &basic, const DerivedInfo &calculated)
+ComputeDynamics(MoreData &basic, const DerivedInfo &calculated) noexcept
 {
   if (!calculated.flight.flying)
     return;
@@ -379,14 +379,19 @@ ComputeDynamics(MoreData &basic, const DerivedInfo &calculated)
 
   if (!basic.attitude.bank_angle_available) {
     basic.attitude.bank_angle = Angle::Radians(angle);
-    basic.attitude.bank_angle_computed = true;
+    basic.attitude.bank_angle_available = std::max(basic.attitude.heading_available,
+                                                   basic.airspeed_available);
   }
 
   if (!basic.attitude.pitch_angle_available && basic.total_energy_vario_available) {
     // estimate pitch angle (assuming balanced turn)
     basic.attitude.pitch_angle = Angle::FromXY(basic.true_airspeed,
                                                basic.gps_vario - basic.total_energy_vario);
-    basic.attitude.pitch_angle_computed = true;
+    basic.attitude.pitch_angle_available = std::max({
+        basic.airspeed_available,
+        basic.gps_vario_available,
+        basic.total_energy_vario_available,
+      });
   }
 
   if (!basic.acceleration.available)
@@ -395,7 +400,7 @@ ComputeDynamics(MoreData &basic, const DerivedInfo &calculated)
 
 void
 BasicComputer::Fill(MoreData &data, const AtmosphericPressure qnh,
-                    const FeaturesSettings &features)
+                    const FeaturesSettings &features) noexcept
 {
   FillVario(data);
   ComputePressure(data, qnh);
@@ -403,7 +408,8 @@ BasicComputer::Fill(MoreData &data, const AtmosphericPressure qnh,
 }
 
 void
-BasicComputer::Fill(MoreData &data, const ComputerSettings &settings_computer)
+BasicComputer::Fill(MoreData &data,
+                    const ComputerSettings &settings_computer) noexcept
 {
   const AtmosphericPressure qnh = settings_computer.pressure_available
     ? settings_computer.pressure
@@ -414,7 +420,8 @@ BasicComputer::Fill(MoreData &data, const ComputerSettings &settings_computer)
 void
 BasicComputer::Compute(MoreData &data,
                        const MoreData &last, const MoreData &last_gps,
-                       const DerivedInfo &calculated)
+                       const DerivedInfo &calculated,
+                       const ComputerSettings &settings) noexcept
 {
   ComputeTrack(data, last_gps);
 
@@ -427,6 +434,8 @@ BasicComputer::Compute(MoreData &data,
   ComputeEnergyHeight(data);
   ComputeGPSVario(data, last, last_gps);
   ComputeBruttoVario(data);
-  ComputeNettoVario(data, calculated);
+  const double sink_rate = GetGliderSinkRate(data, calculated, settings);
+  ComputeNettoVario(data, sink_rate);
+  filtered_vario.Compute(data, sink_rate);
   ComputeDynamics(data, calculated);
 }

@@ -27,8 +27,7 @@
  * DEALINGS IN THE SOFTWARE.
  ****************************************************************************/
 
-#ifndef MAPTREE_H
-#define MAPTREE_H
+#pragma once
 
 #include "mapprimitive.h"
 #include "mapshape.h"
@@ -90,7 +89,7 @@ extern "C" {
   MS_DLL_EXPORT void msDestroyTree(treeObj *tree);
 
   MS_DLL_EXPORT ms_bitarray msSearchTree(const treeObj *tree, rectObj aoi);
-  MS_DLL_EXPORT ms_bitarray msSearchDiskTree(struct zzip_dir *zdir, const char *filename, rectObj aoi, int debug);
+  MS_DLL_EXPORT ms_bitarray msSearchDiskTree(struct zzip_dir *zdir, const char *filename, rectObj aoi, int debug, int numshapes);
 
   MS_DLL_EXPORT treeObj *msReadTree(char *filename, int debug);
   MS_DLL_EXPORT int msWriteTree(treeObj *tree, char *filename, int LSB_order);
@@ -100,5 +99,3 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* MAPTREE_H */

@@ -1,32 +1,23 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Profile/Profile.hpp"
-#include "IO/FileLineReader.hpp"
-#include "OS/Path.hpp"
+#include "Profile/Keys.hpp"
+#include "Profile/Current.hpp"
+#include "Profile/PageProfile.hpp"
+#include "PageSettings.hpp"
+#include "Profile/Map.hpp"
+#include "Profile/WeatherProfile.hpp"
+#include "Profile/InfoBoxConfig.hpp"
+#include "InfoBoxes/InfoBoxSettings.hpp"
+#include "Weather/Settings.hpp"
+#include "io/FileLineReader.hpp"
+#include "system/FileUtil.hpp"
+#include "system/Path.hpp"
 #include "TestUtil.hpp"
-#include "Util/StringAPI.hxx"
-#include "Util/StaticString.hxx"
-#include "Util/PrintException.hxx"
+#include "util/StringAPI.hxx"
+#include "util/StaticString.hxx"
+#include "util/PrintException.hxx"
 
 #include <stdlib.h>
 
@@ -88,18 +79,18 @@ TestWriter()
   Profile::Set("key1", 4);
   Profile::Set("key2", "value2");
 
-  Profile::SaveFile(Path(_T("output/TestProfileWriter.prf")));
+  Profile::SaveFile(Path("output/TestProfileWriter.prf"));
 
-  FileLineReader reader(Path(_T("output/TestProfileWriter.prf")));
+  FileLineReaderA reader(Path("output/TestProfileWriter.prf"));
 
   unsigned count = 0;
   bool found1 = false, found2 = false;
 
-  TCHAR *line;
+  char *line;
   while ((line = reader.ReadLine()) != NULL) {
-    if (StringIsEqual(line, _T("key1=\"4\"")))
+    if (StringIsEqual(line, "key1=\"4\""))
       found1 = true;
-    if (StringIsEqual(line, _T("key2=\"value2\"")))
+    if (StringIsEqual(line, "key2=\"value2\""))
       found2 = true;
 
     count++;
@@ -114,7 +105,7 @@ static void
 TestReader()
 {
   Profile::Clear();
-  Profile::LoadFile(Path(_T("test/data/TestProfileReader.prf")));
+  Profile::LoadFile(Path("test/data/TestProfileReader.prf"));
 
   {
     int value;
@@ -127,7 +118,7 @@ TestReader()
     StaticString<32> value;
     ok1(Profile::Exists("key2"));
     ok1(Profile::Get("key2", value));
-    ok1(value == _T("value"));
+    ok1(value == "value");
   }
 
   {
@@ -138,16 +129,323 @@ TestReader()
   }
 }
 
-int main(int argc, char **argv)
+static void
+TestMigration()
+{
+  Profile::Clear();
+  Profile::LoadFile(Path("test/data/TestProfileMigration.prf"));
+
+  /* verify old keys are not present (they are consumed by migration) */
+  ok1(!Profile::Exists("WPFile"));
+  ok1(!Profile::Exists("AdditionalWPFile"));
+  ok1(!Profile::Exists("AirspaceFile"));
+  ok1(!Profile::Exists("AdditionalAirspaceFile"));
+  ok1(!Profile::Exists("WatchedWPFile"));
+
+  /* verify migrated waypoint list has primary file first */
+  {
+    StaticString<256> value;
+    ok1(Profile::Get(ProfileKeys::WaypointFileList, value));
+    ok1(value == "/path/to/main_waypoints.cup|/path/to/extra_waypoints.cup");
+  }
+
+  /* verify migrated airspace list has primary file first */
+  {
+    StaticString<256> value;
+    ok1(Profile::Get(ProfileKeys::AirspaceFileList, value));
+    ok1(value == "/path/to/main_airspace.txt|/path/to/extra_airspace.txt");
+  }
+
+  /* verify migrated watched waypoint list */
+  {
+    StaticString<256> value;
+    ok1(Profile::Get(ProfileKeys::WatchedWaypointFileList, value));
+    ok1(value == "/path/to/watched.cup");
+  }
+
+  /* verify non-migrated keys are preserved */
+  {
+    int value;
+    ok1(Profile::Get(ProfileKeys::HomeWaypoint, value));
+    ok1(value == 500);
+  }
+}
+
+static void
+TestWeatherPageCursorRoundTrip()
+{
+  PageSettings settings;
+  settings.SetDefaults();
+
+  auto &edl = settings.pages[0];
+  edl.overlay = PageLayout::Overlay::EDL;
+  edl.edl_time = 500000;
+  edl.edl_isobar = 70000;
+  edl.Normalise();
+
+  auto &xctherm = settings.pages[1];
+  xctherm.overlay = PageLayout::Overlay::XCTHERM;
+  xctherm.xctherm_layer = 3;
+  xctherm.xctherm_time = 15;
+  xctherm.Normalise();
+
+  settings.n_pages = 3;
+  auto &skysight = settings.pages[2];
+  skysight = PageLayout::Default();
+  skysight.overlay = PageLayout::Overlay::SKYSIGHT;
+  skysight.skysight_overlay = "wind_925";
+  skysight.skysight_time = 1785542400;
+  skysight.Normalise();
+
+  Profile::Clear();
+  Profile::Save(Profile::map, settings);
+
+  PageSettings loaded;
+  loaded.SetDefaults();
+  Profile::Load(Profile::map, loaded);
+
+  ok1(loaded.pages[0].edl_time == edl.edl_time);
+  ok1(loaded.pages[0].edl_isobar == edl.edl_isobar);
+  ok1(loaded.pages[1].xctherm_layer == xctherm.xctherm_layer);
+  ok1(loaded.pages[1].xctherm_time == xctherm.xctherm_time);
+  ok1(loaded.pages[2].skysight_overlay == skysight.skysight_overlay);
+  ok1(loaded.pages[2].skysight_time == skysight.skysight_time);
+}
+
+static constexpr Path kLifecyclePath{"output/TestProfileLifecycle.prf"};
+static constexpr Path kMissingPath{"output/TestProfileLifecycleMissing.prf"};
+
+static bool
+FileContains(Path path, const char *needle) noexcept
+{
+  char buffer[4096];
+  if (!File::ReadString(path, buffer, sizeof(buffer)))
+    return false;
+  return StringFind(buffer, needle) != nullptr;
+}
+
+static void
+WriteSampleProfile(Path path)
+{
+  Profile::Clear();
+  Profile::Set("keep", "me");
+  Profile::SaveFile(path);
+}
+
+/**
+ * -profile= then Save() before Load() must not wipe the file (#3190).
+ */
+static void
+TestSaveBeforeLoad()
+{
+  WriteSampleProfile(kLifecyclePath);
+  Profile::Clear();
+  Profile::SetFiles(kLifecyclePath);
+
+  ok1(!Profile::IsModified());
+
+  /* even a dirty map that never came from the file must not replace
+     it */
+  Profile::Set("wipe", "yes");
+  ok1(Profile::IsModified());
+  Profile::Save();
+
+  ok1(File::Exists(kLifecyclePath));
+  ok1(FileContains(kLifecyclePath, "keep=\"me\""));
+  ok1(!FileContains(kLifecyclePath, "wipe"));
+}
+
+static void
+TestLoadThenSave()
+{
+  WriteSampleProfile(kLifecyclePath);
+  Profile::Clear();
+  Profile::SetFiles(kLifecyclePath);
+  Profile::Load();
+
+  ok1(!Profile::IsModified());
+  ok1(Profile::Exists("keep"));
+
+  Profile::Set("extra", "1");
+  ok1(Profile::IsModified());
+  Profile::Save();
+
+  Profile::Clear();
+  Profile::LoadFile(kLifecyclePath);
+  ok1(Profile::Exists("keep"));
+  ok1(Profile::Exists("extra"));
+}
+
+/**
+ * A missing file still counts as loaded (first run).  Save() before
+ * Load() must not create it; Save() after Load() and a real change
+ * may.
+ */
+static void
+TestFailedLoadThenSave()
+{
+  File::Delete(kMissingPath);
+  Profile::Clear();
+  Profile::SetFiles(kMissingPath);
+
+  Profile::Save();
+  ok1(!File::Exists(kMissingPath));
+
+  Profile::Load();
+  Profile::Save();
+  ok1(!File::Exists(kMissingPath));
+
+  Profile::Set("new", "1");
+  Profile::Save();
+  ok1(File::Exists(kMissingPath));
+
+  Profile::Clear();
+  Profile::LoadFile(kMissingPath);
+  ok1(Profile::Exists("new"));
+
+  File::Delete(kMissingPath);
+  File::Delete(kLifecyclePath);
+}
+
+#ifdef HAVE_HTTP
+
+static void
+TestSkySightProfileCompatibility()
+{
+  {
+    ProfileMap map;
+    WeatherSettings settings;
+    settings.SetDefaults();
+    ok1(settings.skysight.auto_update);
+
+    map.Set(ProfileKeys::SkySightAutoUpdate, false);
+    Profile::Load(map, settings);
+    ok1(!settings.skysight.auto_update);
+  }
+
+  {
+    ProfileMap map;
+    map.Set(ProfileKeys::LegacySkySightEmail, "legacy@example.com");
+    map.Set(ProfileKeys::LegacySkySightPassword, "legacy-password");
+    map.Set(ProfileKeys::LegacySkySightRegion, "EUROPE");
+
+    WeatherSettings settings{};
+    Profile::Load(map, settings);
+    ok1(settings.skysight.email == "legacy@example.com");
+    ok1(settings.skysight.password == "legacy-password");
+    ok1(settings.skysight.region == "EUROPE");
+  }
+
+  {
+    ProfileMap map;
+    map.Set(ProfileKeys::LegacySkySightEmail, "legacy@example.com");
+    map.Set(ProfileKeys::LegacySkySightPassword, "legacy-password");
+    map.Set(ProfileKeys::LegacySkySightRegion, "EUROPE");
+    map.Set(ProfileKeys::SkySightEmail, "canonical@example.com");
+    map.Set(ProfileKeys::SkySightPassword, "canonical-password");
+    map.Set(ProfileKeys::SkySightRegion, "NZ");
+
+    WeatherSettings settings{};
+    Profile::Load(map, settings);
+    ok1(settings.skysight.email == "canonical@example.com");
+    ok1(settings.skysight.password == "canonical-password");
+    ok1(settings.skysight.region == "NZ");
+  }
+}
+
+#endif
+
+static void
+TestInfoBoxCustomText()
+{
+  /* a quotation mark or a line break cannot be stored; other
+     characters, including '|', can */
+  {
+    InfoBoxCustomText text{};
+
+    ok1(InfoBoxCustomText::AssignLine(text.title, "a|b\"c\n"));
+    ok1(text.title == "a|bc");
+
+    /* the same text again is not a modification */
+    ok1(!InfoBoxCustomText::AssignLine(text.title, "a|bc"));
+
+    /* a null string clears the line, like an empty one */
+    ok1(InfoBoxCustomText::AssignLine(text.title, nullptr));
+    ok1(text.title.empty());
+  }
+
+  /* each line is its own profile value */
+  {
+    ProfileMap map;
+
+    InfoBoxSettings::Panel panel;
+    panel.Clear();
+    panel.contents[0] = InfoBoxFactory::e_CustomText;
+    panel.text[0].title = "Page";
+    panel.text[0].value = "Cruise";
+    panel.text[0].comment = "one more thing";
+
+    Profile::Save(map, panel, 7);
+
+    ok1(map.Get("InfoBoxPanel7Title0") != nullptr &&
+        StringIsEqual(map.Get("InfoBoxPanel7Title0"), "Page"));
+    ok1(map.Get("InfoBoxPanel7Value0") != nullptr &&
+        StringIsEqual(map.Get("InfoBoxPanel7Value0"), "Cruise"));
+    ok1(map.Get("InfoBoxPanel7Comment0") != nullptr &&
+        StringIsEqual(map.Get("InfoBoxPanel7Comment0"), "one more thing"));
+
+    /* a slot without text does not add a value */
+    ok1(map.Get("InfoBoxPanel7Title1") == nullptr);
+
+    InfoBoxSettings settings;
+    settings.SetDefaults();
+    Profile::Load(map, settings);
+
+    ok1(settings.panels[7].text[0].title == "Page");
+    ok1(settings.panels[7].text[0].value == "Cruise");
+    ok1(settings.panels[7].text[0].comment == "one more thing");
+  }
+
+  /* a missing line stays empty */
+  {
+    ProfileMap map;
+    map.Set("InfoBoxPanel7Title0", "only a title");
+
+    InfoBoxSettings settings;
+    settings.SetDefaults();
+    Profile::Load(map, settings);
+
+    ok1(settings.panels[7].text[0].title == "only a title");
+    ok1(settings.panels[7].text[0].value.empty());
+    ok1(settings.panels[7].text[0].comment.empty());
+  }
+}
+
+int main()
 try {
-  plan_tests(31);
+  plan_tests(50
+             + 5 + 5 + 4
+             + 15
+#ifdef HAVE_HTTP
+             + 8
+#endif
+             );
 
   TestMap();
   TestWriter();
   TestReader();
+  TestMigration();
+  TestWeatherPageCursorRoundTrip();
+  TestInfoBoxCustomText();
+  TestSaveBeforeLoad();
+  TestLoadThenSave();
+  TestFailedLoadThenSave();
+#ifdef HAVE_HTTP
+  TestSkySightProfileCompatibility();
+#endif
 
   return exit_status();
-} catch (const std::runtime_error &e) {
-  PrintException(e);
+} catch (...) {
+  PrintException(std::current_exception());
   return EXIT_FAILURE;
 }

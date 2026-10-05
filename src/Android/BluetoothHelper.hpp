@@ -1,85 +1,72 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_ANDROID_BLUETOOTH_HELPER_HPP
-#define XCSOAR_ANDROID_BLUETOOTH_HELPER_HPP
-
-#include "Compiler.h"
-
+#include "java/Object.hxx"
 #include <jni.h>
 
-class LeScanCallback;
+class Context;
+class SensorListener;
+class DetectDeviceListener;
 class PortBridge;
 
-namespace BluetoothHelper {
+class BluetoothHelper final : protected Java::GlobalObject {
+public:
   /**
    * Global initialisation.  Looks up the methods of the
    * BluetoothHelper Java class.
    */
-  bool Initialise(JNIEnv *env);
-  void Deinitialise(JNIEnv *env);
+  static bool Initialise(JNIEnv *env) noexcept;
+  static void Deinitialise(JNIEnv *env) noexcept;
+
+  BluetoothHelper(JNIEnv *env, Context &context,
+                  jobject permission_manager);
 
   /**
    * Is the default Bluetooth adapter enabled in the Android Bluetooth
    * settings?
    */
-  gcc_pure
-  bool isEnabled(JNIEnv *env);
+  [[gnu::pure]]
+  bool IsEnabled(JNIEnv *env) const noexcept;
 
-  gcc_pure
-  const char *GetNameFromAddress(JNIEnv *env, const char *address);
+  [[gnu::pure]]
+  const char *GetNameFromAddress(JNIEnv *env,
+                                 const char *address) const noexcept;
 
   /**
-   * Returns a list of all bonded devices.
+   * True when the device caches the PPG engine-sensor GATT service.
    */
-  gcc_malloc
-  jobjectArray list(JNIEnv *env);
+  [[gnu::pure]]
+  bool HasEngineSensors(JNIEnv *env, const char *address) const noexcept;
 
   /**
    * Does the device support Bluetooth LE?
    */
-  gcc_const
-  bool HasLe(JNIEnv *env);
+  [[gnu::const]]
+  bool HasLe(JNIEnv *env) const noexcept;
 
   /**
-   * Start scanning for Bluetooth LE devices.  Call StopLeScan() with
-   * the returned value when you're done.  Returns nullptr on error.
+   * Start scanning for Bluetooth devices.  Call
+   * RemoveDetectDeviceListener() with the returned value when you're
+   * done.
    */
-  jobject StartLeScan(JNIEnv *env, LeScanCallback &cb);
+  Java::LocalObject AddDetectDeviceListener(JNIEnv *env,
+                                            DetectDeviceListener &l) noexcept;
 
   /**
-   * Stop scanning for Bluetooth LE devices.
+   * Stop scanning for Bluetooth devices.
    *
-   * @param cb the return value of StartLeScan(); the local reference
-   * will be deleted by this function
+   * @param l the return value of AddDetectDeviceListener()
    */
-  void StopLeScan(JNIEnv *env, jobject cb);
+  void RemoveDetectDeviceListener(JNIEnv *env, jobject l) noexcept;
 
-  gcc_malloc
+  Java::LocalObject connectSensor(JNIEnv *env, const char *address,
+                                  SensorListener &listener);
+
   PortBridge *connect(JNIEnv *env, const char *address);
 
-  gcc_malloc
+  PortBridge *connectBleSerial(JNIEnv *env, const char *address);
+
   PortBridge *createServer(JNIEnv *env);
 };
-
-#endif

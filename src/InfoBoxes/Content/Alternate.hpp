@@ -1,53 +1,124 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_INFOBOX_CONTENT_ALTERNATE_HPP
-#define XCSOAR_INFOBOX_CONTENT_ALTERNATE_HPP
+#pragma once
 
 #include "InfoBoxes/Content/Base.hpp"
+#include "Engine/Waypoint/Ptr.hpp"
 
-class InfoBoxContentAlternateName : public InfoBoxContent
-{
-public:
-  InfoBoxContentAlternateName(const unsigned _index):
-    InfoBoxContent(), index(_index) {}
-  virtual void Update(InfoBoxData &data) override;
-  virtual const InfoBoxPanel *GetDialogContent() override;
+#include <cstddef>
+#include <cstdint>
 
-private:
-  unsigned index;
+enum class AlternateInfoBoxMode : uint8_t {
+  AUTO,
+  MANUAL,
 };
 
-class InfoBoxContentAlternateGR : public InfoBoxContent
-{
-public:
-  InfoBoxContentAlternateGR(const unsigned _index):
-    InfoBoxContent(), index(_index) {}
-  virtual void Update(InfoBoxData &data) override;
-  virtual const InfoBoxPanel *GetDialogContent() override;
-
-private:
-  unsigned index;
+/**
+ * Logical slot shared by the Alternate 1 / Alternate 2 InfoBoxes and
+ * all of their variants (name, glide ratio and altitude difference).
+ */
+enum class AlternateInfoBoxSlot : uint8_t {
+  FIRST,
+  SECOND,
 };
 
-#endif
+[[gnu::const]]
+constexpr unsigned
+ToAlternateInfoBoxSlotIndex(AlternateInfoBoxSlot slot) noexcept
+{
+  return static_cast<unsigned>(slot);
+}
+
+[[gnu::const]]
+constexpr unsigned
+GetAlternateInfoBoxSlotDisplayNumber(AlternateInfoBoxSlot slot) noexcept
+{
+  return ToAlternateInfoBoxSlotIndex(slot) + 1;
+}
+
+static constexpr std::size_t alternate_info_box_slot_count = 2;
+
+// Static asserts to help future maintainer to remember to modify the enum
+// AND the slot count in case of an evolution
+static_assert(ToAlternateInfoBoxSlotIndex(AlternateInfoBoxSlot::FIRST) == 0);
+static_assert(ToAlternateInfoBoxSlotIndex(AlternateInfoBoxSlot::SECOND) == 1);
+static_assert(alternate_info_box_slot_count == 2);
+
+/**
+ * Returns the current source mode for the specified alternate InfoBox
+ * slot.  This state is runtime-only and defaults to AUTO on startup.
+ */
+AlternateInfoBoxMode
+GetAlternateInfoBoxMode(AlternateInfoBoxSlot slot) noexcept;
+
+/**
+ * Sets the source mode for the specified alternate InfoBox slot.
+ *
+ * Switching to AUTO clears any stored manual waypoint for that slot.
+ */
+void
+SetAlternateInfoBoxMode(AlternateInfoBoxSlot slot,
+                        AlternateInfoBoxMode mode) noexcept;
+
+/**
+ * Returns the waypoint selected manually for the specified alternate
+ * slot, or nullptr if none is selected.
+ */
+WaypointPtr
+GetManualAlternateWaypoint(AlternateInfoBoxSlot slot) noexcept;
+
+/**
+ * Stores the manually selected waypoint for the specified alternate
+ * slot.  The waypoint is used only while the slot is in MANUAL mode.
+ */
+void
+SetManualAlternateWaypoint(AlternateInfoBoxSlot slot,
+                           WaypointPtr waypoint) noexcept;
+
+/**
+ * Clears the manually selected waypoint for the specified alternate
+ * slot.
+ */
+void
+ClearManualAlternateWaypoint(AlternateInfoBoxSlot slot) noexcept;
+
+/**
+ * Base class for alternate-related InfoBox content that opens the
+ * alternates list dialog on click.
+ */
+class InfoBoxContentAlternateBase : public InfoBoxContent
+{
+protected:
+  AlternateInfoBoxSlot slot;
+
+public:
+  explicit InfoBoxContentAlternateBase(AlternateInfoBoxSlot _slot) noexcept
+    :slot(_slot) {}
+
+  bool HandleClick() noexcept override;
+};
+
+class InfoBoxContentAlternateName : public InfoBoxContentAlternateBase
+{
+public:
+  using InfoBoxContentAlternateBase::InfoBoxContentAlternateBase;
+
+  void Update(InfoBoxData &data) noexcept override;
+};
+
+class InfoBoxContentAlternateGR : public InfoBoxContentAlternateBase
+{
+public:
+  using InfoBoxContentAlternateBase::InfoBoxContentAlternateBase;
+
+  void Update(InfoBoxData &data) noexcept override;
+};
+
+class InfoBoxContentAlternateAltDiff : public InfoBoxContentAlternateBase
+{
+public:
+  using InfoBoxContentAlternateBase::InfoBoxContentAlternateBase;
+
+  void Update(InfoBoxData &data) noexcept override;
+};

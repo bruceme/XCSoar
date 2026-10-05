@@ -1,33 +1,15 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Math/Angle.hpp"
 #include "TestUtil.hpp"
 
+#include <cmath>
 #include <stdio.h>
 
-int main(int argc, char **argv)
+int main()
 {
-  plan_tests(97);
+  plan_tests(97 + 4);
 
   // Test Native() and Native()
   ok1(equals(Angle::Native(0).Native(), 0));
@@ -98,6 +80,27 @@ int main(int argc, char **argv)
   ok1(equals(Angle::Degrees(179).AsDelta(), 179));
   ok1(equals(Angle::Degrees(-179).AsDelta(), -179));
   ok1(equals(Angle::Degrees(270).AsDelta(), -90));
+
+  /* O(1) normalization: many full turns plus a remainder must match the
+     remainder alone (avoids main-thread stalls from iterated wrap;
+     see issue #1292).  Use moderate turn counts so doubles still hold the
+     added radians. */
+  {
+    const double two_pi = Angle::FullCircle().Native();
+    const Angle ref = Angle::Degrees(42);
+    const double huge = 100 * two_pi + ref.Native();
+    ok1(equals(Angle::Native(huge).AsBearing(), ref.AsBearing()));
+    ok1(equals(Angle::Native(huge).AsDelta(), ref.AsDelta()));
+
+    const Angle ref_neg = Angle::Degrees(-13);
+    const double huge_neg = -100 * two_pi + ref_neg.Native();
+    ok1(equals(Angle::Native(huge_neg).AsDelta(), ref_neg.AsDelta()));
+
+    /* Magnitudes far beyond float precision must still land in [0, 2π). */
+    const Angle extreme = Angle::Native(1e22 * two_pi).AsBearing();
+    ok1(std::isfinite(extreme.Native()) && extreme.Native() >= 0 &&
+         extreme.Native() < two_pi);
+  }
 
   // Test Between()
   ok1(Angle::QuarterCircle().Between(Angle::Zero(), Angle::HalfCircle()));

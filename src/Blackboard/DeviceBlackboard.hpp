@@ -1,39 +1,17 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef DEVICE_BLACKBOARD_H
-#define DEVICE_BLACKBOARD_H
+#pragma once
 
 #include "Blackboard/BaseBlackboard.hpp"
 #include "Blackboard/ComputerSettingsBlackboard.hpp"
 #include "Device/Simulator.hpp"
 #include "Device/Features.hpp"
-#include "Thread/Mutex.hpp"
-#include "Time/WrapClock.hpp"
+#include "thread/Mutex.hxx"
+#include "time/WrapClock.hpp"
 
-#include <cassert>
+#include <array>
 
-class MultipleDevices;
 class AtmosphericPressure;
 class OperationEnvironment;
 class RadioFrequency;
@@ -52,12 +30,10 @@ class DeviceBlackboard
 
   Simulator simulator;
 
-  MultipleDevices *devices;
-
   /**
    * Data from each physical device.
    */
-  NMEAInfo per_device_data[NUMDEV];
+  std::array<NMEAInfo, NUMDEV> per_device_data;
 
   /**
    * Merged data from the physical devices.
@@ -83,37 +59,70 @@ public:
   Mutex mutex;
 
 public:
-  DeviceBlackboard();
+  DeviceBlackboard() noexcept;
 
-  void SetDevices(MultipleDevices &_devices) {
-    assert(devices == nullptr);
-
-    devices = &_devices;
+  /**
+   * Reads the given derived_info usually provided by the
+   * GlideComputerBlackboard and saves it to the own Blackboard
+   * @param derived_info Calculated information usually provided
+   * by the GlideComputerBlackboard
+   */
+  void ReadBlackboard(const DerivedInfo &derived_info) noexcept {
+    calculated_info = derived_info;
   }
 
-  void ReadBlackboard(const DerivedInfo &derived_info);
-  void ReadComputerSettings(const ComputerSettings &settings);
+  /**
+   * Reads the given settings usually provided by the InterfaceBlackboard
+   * and saves it to the own Blackboard
+   * @param settings ComputerSettings usually provided by the
+   * InterfaceBlackboard
+   */
+  void ReadComputerSettings(const ComputerSettings &settings) noexcept {
+    computer_settings = settings;
+  }
 
 protected:
-  NMEAInfo &SetBasic() { return gps_info; }
-  MoreData &SetMoreData() { return gps_info; }
+  NMEAInfo &SetBasic() noexcept { return gps_info; }
+  MoreData &SetMoreData() noexcept { return gps_info; }
 
 public:
-  const NMEAInfo &RealState(unsigned i) const {
-    assert(i < NUMDEV);
+  const NMEAInfo &RealState(unsigned i) const noexcept {
     return per_device_data[i];
   }
 
-  NMEAInfo &SetRealState(unsigned i) {
-    assert(i < NUMDEV);
+  NMEAInfo &SetRealState(unsigned i) noexcept {
     return per_device_data[i];
   }
 
-  NMEAInfo &SetSimulatorState() { return simulator_data; }
-  NMEAInfo &SetReplayState() { return replay_data; }
+  /**
+   * Return a copy of a device's data after updating its clock via
+   * NMEAInfo::UpdateClock().  The method takes care for locking and
+   * unlocking the mutex.
+   */
+  NMEAInfo LockGetDeviceDataUpdateClock(unsigned i) noexcept {
+    const std::lock_guard lock{mutex};
+    per_device_data[i].UpdateClock();
+    return per_device_data[i];
+  }
+
+  /**
+   * Overwrites a device's data and schedule the MergeThread.  The
+   * method takes care for locking and unlocking the mutex.
+   */
+  void LockSetDeviceDataScheduleMerge(unsigned i, const NMEAInfo &src) noexcept {
+    {
+      const std::lock_guard lock{mutex};
+      per_device_data[i] = src;
+    }
+
+    ScheduleMerge();
+  }
+
+  NMEAInfo &SetSimulatorState() noexcept { return simulator_data; }
+  NMEAInfo &SetReplayState() noexcept { return replay_data; }
 
 public:
-  const NMEAInfo &RealState() const { return real_data; }
+  const NMEAInfo &RealState() const noexcept { return real_data; }
 
   /**
    * Is the specified device a FLARM?
@@ -122,32 +131,19 @@ public:
    * is assumed that this method is not important enough to implement
    * proper locking.
    */
-  gcc_pure
-  bool IsFLARM(unsigned i) const {
+  [[gnu::pure]]
+  bool IsFLARM(unsigned i) const noexcept {
     return RealState(i).flarm.IsDetected();
   }
 
-  void SetStartupLocation(const GeoPoint &loc, double alt);
-  void ProcessSimulation();
-  void StopReplay();
+  void SetStartupLocation(const GeoPoint &loc, double alt) noexcept;
+  void ProcessSimulation() noexcept;
+  void StopReplay() noexcept;
 
-  void SetSimulatorLocation(const GeoPoint &location);
-  void SetTrack(Angle val);
-  void SetSpeed(double val);
-  void SetAltitude(double alt);
-
-  void SetBallast(double fraction, double overload,
-                  OperationEnvironment &env);
-  void SetBugs(double bugs, OperationEnvironment &env);
-  void SetQNH(AtmosphericPressure qnh, OperationEnvironment &env);
-  void SetMC(double mc, OperationEnvironment &env);
-
-  void SetActiveFrequency(RadioFrequency frequency,
-                          const TCHAR *name,
-                          OperationEnvironment &env);
-  void SetStandbyFrequency(RadioFrequency frequency,
-                           const TCHAR *name,
-                           OperationEnvironment &env);
+  void SetSimulatorLocation(const GeoPoint &location) noexcept;
+  void SetTrack(Angle val) noexcept;
+  void SetSpeed(double val) noexcept;
+  void SetAltitude(double alt) noexcept;
 
   /**
    * Check the expiry time of the device connection with the wall
@@ -157,19 +153,17 @@ public:
    * @return true if the connection has just expired, false if the
    * connection status has not changed
    */
-  void ExpireWallClock();
+  void ExpireWallClock() noexcept;
 
   /**
    * Trigger the MergeThread, which will call Merge().  Call this
    * after a modification.  The caller doesn't need to hold the lock.
    */
-  void ScheduleMerge();
+  void ScheduleMerge() noexcept;
 
   /**
    * Copy real_data or simulator_data or replay_data to gps_info.
    * Caller must lock the blackboard.
    */
-  void Merge();
+  void Merge() noexcept;
 };
-
-#endif

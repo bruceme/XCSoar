@@ -1,33 +1,7 @@
-/* Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 package org.xcsoar;
-
-import javax.microedition.khronos.egl.EGL10;
-import javax.microedition.khronos.egl.EGLConfig;
-import javax.microedition.khronos.egl.EGLContext;
-import javax.microedition.khronos.egl.EGLDisplay;
-import javax.microedition.khronos.egl.EGLSurface;
-import javax.microedition.khronos.opengles.GL10;
 
 import java.io.File;
 import android.util.Log;
@@ -35,8 +9,14 @@ import android.util.DisplayMetrics;
 import android.app.Activity;
 import android.view.MotionEvent;
 import android.view.KeyEvent;
+import android.view.Surface;
 import android.view.SurfaceView;
 import android.view.SurfaceHolder;
+import android.view.View;
+import android.view.ViewParent;
+import android.view.RoundedCorner;
+import android.view.Window;
+import android.view.WindowInsets;
 import android.os.Build;
 import android.os.Handler;
 import android.net.Uri;
@@ -46,9 +26,12 @@ import android.content.res.Resources;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.provider.Settings;
 import android.webkit.MimeTypeMap;
 
 class EGLException extends Exception {
+  private static final long serialVersionUID = 5928634879321047581L;
+
   public EGLException(String _msg) {
     super(_msg);
   }
@@ -61,29 +44,23 @@ class NativeView extends SurfaceView
   implements SurfaceHolder.Callback, Runnable {
   private static final String TAG = "XCSoar";
 
-  final Handler quitHandler, errorHandler;
+  /**
+   * Filters touch events to reject system edge gestures.
+   */
+  private final EdgeTouchFilter edgeTouchFilter = new EdgeTouchFilter();
+
+  /**
+   * A native pointer to a C++ #TopWindow instance.
+   */
+  private long ptr;
+
+  final PermissionManager permissionManager;
+
+  final Handler quitHandler, wakelockhandler, fullScreenHandler, errorHandler;
 
   Resources resources;
 
   final boolean hasKeyboard;
-
-  EGL10 egl;
-  EGLDisplay display = EGL10.EGL_NO_DISPLAY;
-  EGLConfig config;
-  EGLContext context = EGL10.EGL_NO_CONTEXT;
-  EGLSurface surface = EGL10.EGL_NO_SURFACE;
-
-  /**
-   * A 1x1 pbuffer surface that is used to activate the EGLContext
-   * while we have no real surface.
-   */
-  EGLSurface dummySurface = EGL10.EGL_NO_SURFACE;
-
-  /**
-   * Is the EGLSurface currently valid?  This is modified by
-   * SurfaceHolder.Callback methods.
-   */
-  boolean haveSurface = false;
 
   /**
    * Is the extension ARB_texture_non_power_of_two present?  If yes,
@@ -93,23 +70,105 @@ class NativeView extends SurfaceView
 
   Thread thread;
 
+  /**
+   * Listens for physical device orientation changes to offer a
+   * rotation suggestion button (like Android's Rotate Suggestions).
+   */
+  private RotationListener rotationListener;
+
+  /*
+   * Check if running in simulator mode (user chose "simulator" on startup)
+   */
+  private static native boolean isSimulatorNative();
+
+  public static boolean isSimulator() {
+    try {
+      return isSimulatorNative();
+    } catch (UnsatisfiedLinkError e) {
+      return false;
+    }
+  }
+
+  /**
+   * Launch the SAF document-tree picker for a given volume UUID.
+   * Called from native code when the user selects a volume that
+   * does not yet have a persisted SAF tree permission.
+   */
+  void launchSAFTreePicker(String volumeUuid) {
+    final Context ctx = getContext();
+    if (ctx instanceof XCSoar) {
+      ((XCSoar) ctx).launchSAFTreePicker(volumeUuid);
+    }
+  }
+
+  /**
+   * Start the foreground service.  Called from native code after the
+   * user chooses Fly mode (not called in Simulator mode because
+   * IGC logging and safety warnings are not needed in simulation).
+   */
+  void startMyService() {
+    final Context context = getContext();
+
+    try {
+      if (Build.VERSION.SDK_INT >= 34) {
+        final String fgsPermission = "android.permission.FOREGROUND_SERVICE_LOCATION";
+        if (context.checkSelfPermission(fgsPermission) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+          context.startService(new Intent(context, MyService.class));
+        } else {
+          permissionManager.requestPermission(fgsPermission, null);
+          try {
+            context.startService(new Intent(context, MyService.class));
+          } catch (SecurityException e) {
+            /* Expected on Android 14+ without permission */
+          }
+        }
+      } else {
+        context.startService(new Intent(context, MyService.class));
+      }
+    } catch (IllegalStateException e) {
+      /* Android may not allow starting a service in this state */
+    } catch (SecurityException e) {
+      /* Expected on Android 14+ without FOREGROUND_SERVICE_LOCATION */
+    }
+  }
+
   public NativeView(Activity context, Handler _quitHandler,
-                    Handler _errorHandler) {
+                    Handler _wakeLockHandler,
+                    Handler _fullScreenHandler,
+                    Handler _errorHandler,
+                    PermissionManager permissionManager) {
     super(context);
 
     quitHandler = _quitHandler;
+    wakelockhandler = _wakeLockHandler;
+    fullScreenHandler = _fullScreenHandler;
     errorHandler = _errorHandler;
+    this.permissionManager = permissionManager;
 
     resources = context.getResources();
 
     hasKeyboard = resources.getConfiguration().keyboard !=
       Configuration.KEYBOARD_NOKEYS;
 
-    touchInput = DifferentTouchInput.getInstance();
-
     SurfaceHolder holder = getHolder();
     holder.addCallback(this);
     holder.setType(SurfaceHolder.SURFACE_TYPE_GPU);
+
+    /* the insets can change without a surface change, e.g. when the
+       user switches to gesture navigation or rotates the device; keep
+       the native safe area up to date */
+    setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+      @Override
+      public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+        WindowInsets result = edgeTouchFilter.onApplyWindowInsets(v, insets);
+        reportSize();
+        return result;
+      }
+    });
+    requestApplyInsets(); // trigger initial inset calculation
+
+    rotationListener = new RotationListener(context);
   }
 
   private void start() {
@@ -117,222 +176,378 @@ class NativeView extends SurfaceView
     thread.start();
   }
 
-  private static EGLConfig chooseEglConfig(EGL10 egl, EGLDisplay display)
-    throws EGLException {
-    int[] num_config = new int[1];
-    int[] configSpec = new int[]{
-      EGL10.EGL_STENCIL_SIZE, 1,  /* Don't change this position in array! */
-      EGL10.EGL_RED_SIZE, 4,
-      EGL10.EGL_GREEN_SIZE, 4,
-      EGL10.EGL_BLUE_SIZE, 4,
-      EGL10.EGL_ALPHA_SIZE, 0,
-      EGL10.EGL_DEPTH_SIZE, 0,
-      EGL10.EGL_NONE
-    };
-
-    egl.eglChooseConfig(display, configSpec, null, 0, num_config);
-    if (num_config[0] == 0) {
-      /* fallback in case stencil buffer is not available */
-      configSpec[1] = 0;
-      egl.eglChooseConfig(display, configSpec, null, 0, num_config);
-    }
-
-    int numConfigs = num_config[0];
-    EGLConfig[] configs = new EGLConfig[numConfigs];
-    if (!egl.eglChooseConfig(display, configSpec,
-                             configs, numConfigs, num_config))
-      throw new EGLException("eglChooseConfig() failed: " + egl.eglGetError());
-
-    EGLConfig closestConfig = EGLUtil.findClosestConfig(egl, display, configs,
-                                                        4, 4, 4, 0, 0, 8);
-    if (closestConfig == null)
-      throw new EGLException("eglChooseConfig() failed");
-
-    return closestConfig;
-  }
-
-  private void initGL(SurfaceHolder holder) throws EGLException {
-    /* initialize display */
-
-    if (display == EGL10.EGL_NO_DISPLAY) {
-      egl = (EGL10)EGLContext.getEGL();
-      display = egl.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY);
-      if (display == EGL10.EGL_NO_DISPLAY)
-        throw new EGLException("eglGetDisplay() failed");
-
-      int[] version = new int[2];
-      if (!egl.eglInitialize(display, version))
-        throw new EGLException("eglInitialize() failed: " + egl.eglGetError());
-
-      Log.d(TAG, "EGL vendor: " +
-            egl.eglQueryString(display, EGL10.EGL_VENDOR));
-      Log.d(TAG, "EGL version: " +
-            egl.eglQueryString(display, EGL10.EGL_VERSION));
-      Log.d(TAG, "EGL extensions: " +
-            egl.eglQueryString(display, EGL10.EGL_EXTENSIONS));
-    }
-
-    /* choose a configuration */
-
-    if (config == null) {
-      config = chooseEglConfig(egl, display);
-      Log.d(TAG, "EGLConfig = " + EGLUtil.toString(egl, display, config));
-    }
-
-    /* initialize context and surface */
-
-    if (context == EGL10.EGL_NO_CONTEXT) {
-      final int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
-      final int contextClientVersion = getEglContextClientVersion();
-      int[] contextAttribList = null;
-      if (contextClientVersion != 1)
-        /* the default EGL_CONTEXT_CLIENT_VERSION is 1, so we need to
-         * specify this only if using GLES2; some old Androids (e.g. HTC
-         * Magic) will fail eglCreateContext() with EGL_BAD_ATTRIBUTE if
-         * EGL_CONTEXT_CLIENT_VERSION is specified */
-        contextAttribList = new int[]{
-          EGL_CONTEXT_CLIENT_VERSION, getEglContextClientVersion(),
-          EGL10.EGL_NONE
-        };
-
-      context = egl.eglCreateContext(display, config,
-                                     EGL10.EGL_NO_CONTEXT, contextAttribList);
-      if (context == EGL10.EGL_NO_CONTEXT)
-        throw new EGLException("eglCreateContext() failed: " +
-                               egl.eglGetError());
-    }
-
-    surface = egl.eglCreateWindowSurface(display, config,
-                                         holder, null);
-    if (surface == EGL10.EGL_NO_SURFACE)
-      throw new EGLException("eglCreateWindowSurface() failed: " +
-                             egl.eglGetError());
-
-    if (!egl.eglMakeCurrent(display, surface, surface, context))
-      throw new EGLException("eglMakeCurrent() failed: " + egl.eglGetError());
-
-    GL10 gl = (GL10)context.getGL();
-    Log.d(TAG, "OpenGL vendor: " + gl.glGetString(GL10.GL_VENDOR));
-    Log.d(TAG, "OpenGL version: " + gl.glGetString(GL10.GL_VERSION));
-    Log.d(TAG, "OpenGL renderer: " + gl.glGetString(GL10.GL_RENDERER));
-    Log.d(TAG, "OpenGL extensions: " + gl.glGetString(GL10.GL_EXTENSIONS));
+  /**
+   * Called from TopCanvas::AcquireSurface() (native code).
+   */
+  private Surface getSurface() {
+    return getHolder().getSurface();
   }
 
   /**
-   * Initializes the OpenGL surface.  Called by the native code.
+   * Called from native code.
    */
-  private boolean initSurface() {
-    if (!haveSurface)
-      /* this is futile, and will only result in
-         "java.lang.IllegalArgumentException: Make sure the
-         SurfaceView or associated SurfaceHolder has a valid
-         Surface" */
-      return false;
+  void acquireWakeLock() {
+    wakelockhandler.sendEmptyMessage(0);
+  }
 
+  /**
+   * Called from native code.
+   */
+  void setFullScreen(boolean fullScreen) {
+    fullScreenHandler.sendEmptyMessage(fullScreen ? 1 : 0);
+  }
+
+  /**
+   * Check if the system auto-rotate setting is enabled.
+   * Called from native code.
+   */
+  private boolean isAutoRotateEnabled() {
     try {
-      initGL(getHolder());
-      return true;
+      return android.provider.Settings.System.getInt(
+        getContext().getContentResolver(),
+        android.provider.Settings.System.ACCELEROMETER_ROTATION) == 1;
     } catch (Exception e) {
-      Log.e(TAG, "initGL error", e);
-      deinitSurface();
       return false;
     }
-  }
-
-  /**
-   * Deinitializes the OpenGL surface.
-   */
-  private void deinitSurface() {
-    if (surface != EGL10.EGL_NO_SURFACE) {
-      if (dummySurface == EGL10.EGL_NO_SURFACE) {
-        int pbufferAttribs[] = {
-          EGL10.EGL_WIDTH, 1,
-          EGL10.EGL_HEIGHT, 1,
-          EGL10.EGL_NONE
-        };
-
-        dummySurface = egl.eglCreatePbufferSurface(display, config,
-                                                   pbufferAttribs);
-      }
-
-      egl.eglMakeCurrent(display, dummySurface, dummySurface, context);
-      egl.eglDestroySurface(display, surface);
-      surface = EGL10.EGL_NO_SURFACE;
-    }
-  }
-
-  private void deinitEGL() {
-    deinitSurface();
-
-    if (context != EGL10.EGL_NO_CONTEXT) {
-      egl.eglDestroyContext(display, context);
-      context = EGL10.EGL_NO_CONTEXT;
-    }
-
-    if (display != EGL10.EGL_NO_DISPLAY) {
-      egl.eglTerminate(display);
-      display = EGL10.EGL_NO_DISPLAY;
-    }
-
-    config = null;
   }
 
   private boolean setRequestedOrientation(int requestedOrientation) {
-    ((Activity)getContext()).setRequestedOrientation(requestedOrientation);
-    return true;
+    try {
+      ((Activity)getContext()).setRequestedOrientation(requestedOrientation);
+      return true;
+    } catch (Exception e) {
+      /* even though undocumented, there are reports of
+         setRequestedOrientation() throwing IllegalStateException */
+      Log.e(TAG, "setRequestedOrientation error", e);
+      return false;
+    }
   }
 
   @Override public void surfaceCreated(SurfaceHolder holder) {
-    haveSurface = true;
+    if (rotationListener != null && rotationListener.canDetectOrientation())
+      rotationListener.enable();
   }
 
   @Override public void surfaceChanged(SurfaceHolder holder, int format,
                                        int width, int height) {
-    haveSurface = true;
-
     if (thread == null || !thread.isAlive())
       start();
+
+    Context context = getContext();
+    if (context instanceof Activity) {
+      Activity activity = (Activity)context;
+      Window window = activity.getWindow();
+
+      if (isFullScreen())
+        WindowUtil.enterFullScreenMode(window);
+      else
+        WindowUtil.leaveFullScreenMode(window, 0);
+    }
+
+    reportSize(width, height);
+  }
+
+  /**
+   * Is the surface currently laid out edge to edge, i.e. does it
+   * extend into the areas covered by the system bars and the display
+   * cutout?
+   */
+  private boolean isFullScreen() {
+    Context context = getContext();
+    if (!(context instanceof Activity))
+      return false;
+
+    Activity activity = (Activity)context;
+    if (activity instanceof org.xcsoar.XCSoar)
+      return ((org.xcsoar.XCSoar)activity).wantFullScreen();
+
+    int systemUiVisibility = activity.getWindow().getDecorView()
+      .getSystemUiVisibility();
+    return (systemUiVisibility & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0 ||
+      (systemUiVisibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0;
+  }
+
+  /**
+   * Report the surface size and the area covered by system UI to the
+   * native code.
+   */
+  void reportSize(int width, int height) {
+    if (width <= 0 || height <= 0)
+      return;
+
+    /* Outside full screen mode the view is already laid out inside
+       the system bars and the display cutout, so the whole surface
+       is the safe area.  Only in full screen mode does the surface
+       extend into those areas.  Rounded corners and waterfall
+       edges are a property of the display: they still clip the
+       surface once it is edge-to-edge. */
+    int[] overlay = new int[]{0, 0, 0, 0};
+    int[] shape = new int[]{0, 0, 0, 0};
+    if (isFullScreen()) {
+      overlay = getOverlayInsets();
+      shape = getShapeInsets();
+    }
+
+    resizedNative(width, height,
+                  overlay[0], overlay[1], overlay[2], overlay[3],
+                  shape[0], shape[1], shape[2], shape[3]);
+  }
+
+  /**
+   * Report the current surface size, e.g. after the insets have
+   * changed without a surface change.
+   */
+  void reportSize() {
+    if (thread == null || !thread.isAlive())
+      return;
+
+    reportSize(getWidth(), getHeight());
+  }
+
+  /**
+   * Area reserved for system UI (status bar, navigation bar, display
+   * cutout), as {left, top, right, bottom}.  These edges can be
+   * stretched into.  Rounded corners are not included.  The reserved
+   * bar size is reported even while full screen hides the bars, so
+   * unstretched InfoBoxes still sit above the home indicator.
+   */
+  private int[] getOverlayInsets() {
+    int[] result = new int[]{0, 0, 0, 0};
+
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
+      return result;
+
+    WindowInsets insets = getRootWindowInsets();
+    if (insets == null)
+      return result;
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      /* systemBars() is 0 while the bars are hidden; ignoringVisibility
+         keeps the reserved size so unstretched InfoBoxes stay clear */
+      android.graphics.Insets bars =
+        insets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars());
+      android.graphics.Insets cutout =
+        insets.getInsets(WindowInsets.Type.displayCutout());
+      result[0] = Math.max(bars.left, cutout.left);
+      result[1] = Math.max(bars.top, cutout.top);
+      result[2] = Math.max(bars.right, cutout.right);
+      result[3] = Math.max(bars.bottom, cutout.bottom);
+      return result;
+    }
+
+    /* Android 10 and below: getSystemWindowInsets() is 0 in
+       immersive mode; getStableInset*() is the reserved bar size */
+    result[0] = Math.max(insets.getSystemWindowInsetLeft(),
+                         insets.getStableInsetLeft());
+    result[1] = Math.max(insets.getSystemWindowInsetTop(),
+                         insets.getStableInsetTop());
+    result[2] = Math.max(insets.getSystemWindowInsetRight(),
+                         insets.getStableInsetRight());
+    result[3] = Math.max(insets.getSystemWindowInsetBottom(),
+                         insets.getStableInsetBottom());
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      android.view.DisplayCutout cutout = insets.getDisplayCutout();
+      if (cutout != null) {
+        result[0] = Math.max(result[0], cutout.getSafeInsetLeft());
+        result[1] = Math.max(result[1], cutout.getSafeInsetTop());
+        result[2] = Math.max(result[2], cutout.getSafeInsetRight());
+        result[3] = Math.max(result[3], cutout.getSafeInsetBottom());
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Inset so the corner of an axis-aligned rectangle sits on a
+   * quarter-circle of the given radius: R * (1 - 1/sqrt(2)).
+   */
+  private static int roundedCornerInset(int radius) {
+    if (radius <= 0)
+      return 0;
+    return (int)Math.ceil(radius * (1.0 - 1.0 / Math.sqrt(2.0)));
+  }
+
+  private static void applyRoundedCorner(WindowInsets insets, int position,
+                                         int[] result,
+                                         boolean left, boolean top) {
+    RoundedCorner corner = insets.getRoundedCorner(position);
+    if (corner == null)
+      return;
+
+    final int inset = roundedCornerInset(corner.getRadius());
+    if (inset <= 0)
+      return;
+
+    if (left)
+      result[0] = Math.max(result[0], inset);
     else
-      resizedNative(width, height);
+      result[2] = Math.max(result[2], inset);
+    if (top)
+      result[1] = Math.max(result[1], inset);
+    else
+      result[3] = Math.max(result[3], inset);
+  }
+
+  /**
+   * Physical display shape: waterfall edges and rounded corners.
+   * Stretching into these only clips the pixels; they are never
+   * optional.
+   */
+  private int[] getShapeInsets() {
+    int[] result = new int[]{0, 0, 0, 0};
+
+    WindowInsets insets = getRootWindowInsets();
+    if (insets == null)
+      return result;
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      android.view.DisplayCutout cutout = insets.getDisplayCutout();
+      if (cutout != null) {
+        android.graphics.Insets w = cutout.getWaterfallInsets();
+        result[0] = Math.max(result[0], w.left);
+        result[1] = Math.max(result[1], w.top);
+        result[2] = Math.max(result[2], w.right);
+        result[3] = Math.max(result[3], w.bottom);
+      }
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      applyRoundedCorner(insets, RoundedCorner.POSITION_TOP_LEFT,
+                         result, true, true);
+      applyRoundedCorner(insets, RoundedCorner.POSITION_TOP_RIGHT,
+                         result, false, true);
+      applyRoundedCorner(insets, RoundedCorner.POSITION_BOTTOM_LEFT,
+                         result, true, false);
+      applyRoundedCorner(insets, RoundedCorner.POSITION_BOTTOM_RIGHT,
+                         result, false, false);
+    }
+
+    return result;
   }
 
   @Override public void surfaceDestroyed(SurfaceHolder holder) {
-    haveSurface = false;
+    if (rotationListener != null)
+      rotationListener.disable();
+
+    surfaceDestroyedNative();
   }
 
   @Override public void run() {
+    final Context context = getContext();
+
+    android.graphics.Rect r = getHolder().getSurfaceFrame();
+    android.util.Log.d(TAG, "runNative: getSurfaceFrame() size=" + r.width() + "x" + r.height());
+    DisplayMetrics metrics = new DisplayMetrics();
+    /* Physical display size and xdpi/ydpi; getMetrics() can follow reduced
+       application window metrics on some devices (XCSoar #1784). */
+    ((Activity)context).getWindowManager().getDefaultDisplay()
+      .getRealMetrics(metrics);
+
     try {
-      initGL(getHolder());
+      /* Clear the shutdown flag from any previous session so the
+         service starts normally */
+      context.getSharedPreferences("xcsoar_service", Context.MODE_PRIVATE)
+        .edit()
+        .remove("app_shutdown")
+        .commit();
+
+      /* The foreground service is started from native code via
+         startMyService() after the user chooses Fly mode.  In
+         Simulator mode the service is not needed. */
+
+      try {
+        runNative(context, permissionManager,
+                  r.width(), r.height(),
+                  (int)metrics.xdpi, (int)metrics.ydpi,
+                  Build.PRODUCT);
+      } finally {
+        /* Set shutdown flag before stopping service so it does not
+           restart itself after System.exit() kills the process */
+        context.getSharedPreferences("xcsoar_service", Context.MODE_PRIVATE)
+          .edit()
+          .putBoolean("app_shutdown", true)
+          .commit();
+        context.stopService(new Intent(context, MyService.class));
+      }
     } catch (Exception e) {
-      Log.e(TAG, "initGL error", e);
+      Log.e(TAG, "Initialisation error", e);
       errorHandler.sendMessage(errorHandler.obtainMessage(0, e));
-      deinitEGL();
       return;
     }
 
-    android.graphics.Rect r = getHolder().getSurfaceFrame();
-    DisplayMetrics metrics = new DisplayMetrics();
-    ((Activity)getContext()).getWindowManager().getDefaultDisplay().getMetrics(metrics);
-    if (initializeNative(getContext(), r.width(), r.height(),
-                         (int)metrics.xdpi, (int)metrics.ydpi,
-                         Build.VERSION.SDK_INT, Build.PRODUCT))
-        runNative();
-    Log.d(TAG, "deinitializeNative()");
-    deinitializeNative();
-
-    Log.d(TAG, "sending message to quitHandler");
-    quitHandler.sendMessage(quitHandler.obtainMessage());
+    quitHandler.sendEmptyMessage(0);
   }
 
-  protected native int getEglContextClientVersion();
+  static native void initNative();
+  static native void deinitNative();
 
-  protected native boolean initializeNative(Context context,
-                                            int width, int height,
-                                            int xdpi, int ydpi,
-                                            int sdk_version, String product);
-  protected native void runNative();
-  protected native void deinitializeNative();
-  protected native void resizedNative(int width, int height);
+  /**
+   * Show a native permission disclosure dialog on the XCSoar UI
+   * thread.  Called from PermissionHelper instead of showing a Java
+   * AlertDialog.  When the user responds, calls back to
+   * PermissionManager.onDisclosureResult().
+   */
+  static native void showPermissionDisclosure(String permission);
+
+  /**
+   * Notify native code that a permission request completed.
+   * Called from PermissionHelper when a permission chain finishes.
+   *
+   * @param granted true if the permission was granted
+   */
+  static native void onPermissionResult(boolean granted);
+
+  static native void onConfigurationChangedNative(boolean nightMode);
+
+  /**
+   * Called when the physical device orientation changes, to show
+   * or refresh the rotate suggestion button.
+   */
+  static native void onRotationSuggestion();
+
+  /**
+   * Delegate to {@link RotationListener#getPhysicalOrientation()}.
+   * Called from native code when the rotate button is pressed.
+   */
+  int getPhysicalOrientation() {
+    return rotationListener != null
+      ? rotationListener.getPhysicalOrientation() : 0;
+  }
+
+  /**
+   * How far this view still extends into the system swipe-down band.
+   * A view that already starts below the band reports zero.
+   */
+  int getTopGestureClearance() {
+    if (!isShown())
+      return 0;
+
+    if (getWindowToken() == null)
+      return 0;
+
+    final int[] location = new int[2];
+    getLocationOnScreen(location);
+    return Math.max(0,
+                    edgeTouchFilter.getGestureInsetTop() - location[1]);
+  }
+
+  static native String onReceiveXCTrackTask(String data);
+
+  protected native void runNative(Context context,
+                                  PermissionManager permissionManager,
+                                  int width, int height,
+                                  int xdpi, int ydpi,
+                                  String product);
+
+  protected native void resizedNative(int width, int height,
+                                      int inset_left, int inset_top,
+                                      int inset_right, int inset_bottom,
+                                      int shape_left, int shape_top,
+                                      int shape_right, int shape_bottom);
+
+  protected native void surfaceDestroyedNative();
 
   protected native void pauseNative();
   protected native void resumeNative();
@@ -340,12 +555,6 @@ class NativeView extends SurfaceView
   protected native void setBatteryPercent(int level, int plugged);
 
   protected native void setHapticFeedback(boolean on);
-
-  private int findConfigAttrib(EGLConfig config, int attribute,
-                               int defaultValue) {
-    return EGLUtil.getConfigAttrib(egl, display, config,
-                                   attribute, defaultValue);
-  }
 
   /**
    * Finds the next power of two.  Used to calculate texture sizes.
@@ -367,20 +576,24 @@ class NativeView extends SurfaceView
    * Loads the specified bitmap resource.
    */
   private Bitmap loadResourceBitmap(String name) {
-    /* find the resource */
-    int resourceId = resources.getIdentifier(name, "drawable", "org.xcsoar");
+    /* find the resource using the actual package name */
+    String packageName = getContext().getPackageName();
+    int resourceId = resources.getIdentifier(name, "drawable", packageName);
     if (resourceId == 0) {
-      resourceId = resources.getIdentifier(name, "drawable",
-                                           "org.xcsoar.testing");
-      if (resourceId == 0)
-        return null;
+      Log.e(TAG, "Resource not found: drawable/" + name + " in package " + packageName);
+      return null;
     }
 
     /* load the Bitmap from the resource */
     BitmapFactory.Options opts = new BitmapFactory.Options();
     opts.inScaled = false;
 
-    return BitmapFactory.decodeResource(resources, resourceId, opts);
+    try {
+      return BitmapFactory.decodeResource(resources, resourceId, opts);
+    } catch (IllegalArgumentException e) {
+      Log.e(TAG, "Failed to load bitmap", e);
+      return null;
+    }
   }
 
   /**
@@ -408,25 +621,78 @@ class NativeView extends SurfaceView
     return BitmapUtil.bitmapToOpenGL(bmp, false, alpha, result);
   }
 
+  private void shareText(String text) {
+    Intent send = new Intent();
+    send.setAction(Intent.ACTION_SEND);
+    send.putExtra(Intent.EXTRA_TEXT, text);
+    send.setType("text/plain");
+
+    Intent share = Intent.createChooser(send, null);
+    getContext().startActivity(share);
+  }
+
+  /**
+   * Opens a URL in the default browser.
+   */
+  private boolean openURL(String url) {
+    try {
+      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      getContext().startActivity(intent);
+      return true;
+    } catch (Exception e) {
+      Log.e(TAG, "openURL('" + url + "') error", e);
+      return false;
+    }
+  }
+
+  /**
+   * Opens Android Wi-Fi settings or the connectivity panel.
+   */
+  private boolean openWifiSettings() {
+    try {
+      Intent intent;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        intent = new Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY);
+      } else {
+        intent = new Intent(Settings.ACTION_WIFI_SETTINGS);
+      }
+
+      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      getContext().startActivity(intent);
+      return true;
+    } catch (Exception e) {
+      Log.e(TAG, "openWifiSettings() error", e);
+      return false;
+    }
+  }
+
   /**
    * Starts a VIEW intent for a given file
    */
-  private void openFile(String pathName) {
+  private void openWaypointFile(int id, String filename) {
     Intent intent = new Intent();
     intent.setAction(Intent.ACTION_VIEW);
     intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK +
                     Intent.FLAG_RECEIVER_REPLACE_PENDING);
-    File file = new File(pathName);
 
     try {
-      String extension = pathName.substring(pathName.lastIndexOf(".") + 1);
+      String extension = filename.substring(filename.lastIndexOf(".") + 1);
       MimeTypeMap mime = MimeTypeMap.getSingleton();
       String mimeType = mime.getMimeTypeFromExtension(extension);
 
-      intent.setDataAndType(Uri.fromFile(file), mimeType);
+      /* this URI is going to be handled by FileProvider */
+      Uri uri = new Uri.Builder().scheme("content")
+        .authority(getContext().getPackageName())
+        .encodedPath("/waypoints/" + id + "/" + Uri.encode(filename))
+        .build();
+
+      intent.setDataAndType(uri, mimeType);
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
       getContext().startActivity(intent);
     } catch (Exception e) {
-      Log.e(TAG, "NativeView.openFile('" + pathName + "') error", e);
+      Log.e(TAG, "NativeView.openFile('" + filename + "') error", e);
     }
   }
 
@@ -434,9 +700,27 @@ class NativeView extends SurfaceView
     return NetUtil.getNetState();
   }
 
+  private String getWifiIpAddress() {
+    return NetUtil.getWifiIpAddress();
+  }
+
   @Override public boolean onTouchEvent(final MotionEvent event)
   {
-    touchInput.process(event);
+    /* the MotionEvent coordinates are supposed to be relative to this
+       View, but in fact they are not: they seem to be relative to
+       this app's Window; to work around this, we apply an offset;
+       this.getXY() (which is usually 0) plus getParent().getXY()
+       (which is a FrameLayout with non-zero coordinates unless we're
+       in full-screen mode) */
+    float offsetX = getX(), offsetY = getY();
+    ViewParent _p = getParent();
+    if (_p instanceof View) {
+      View p = (View)_p;
+      offsetX += p.getX();
+      offsetY += p.getY();
+    }
+
+    edgeTouchFilter.onTouchEvent(event, offsetX, offsetY);
     return true;
   }
 
@@ -448,35 +732,25 @@ class NativeView extends SurfaceView
     pauseNative();
   }
 
-  public void exitApp() {
-  }
-
-  private final int translateKeyCode(int keyCode) {
-    if (!hasKeyboard) {
-      /* map the volume keys to cursor up/down if the device has no
-         hardware keys */
-
-      switch (keyCode) {
-      case KeyEvent.KEYCODE_VOLUME_UP:
-        return KeyEvent.KEYCODE_DPAD_UP;
-
-      case KeyEvent.KEYCODE_VOLUME_DOWN:
-        return KeyEvent.KEYCODE_DPAD_DOWN;
-      }
-    }
-
-    return keyCode;
+  private static boolean isVolumeKey(int keyCode) {
+    return keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+           keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
+           keyCode == KeyEvent.KEYCODE_VOLUME_MUTE;
   }
 
   @Override public boolean onKeyDown(int keyCode, final KeyEvent event) {
-    EventBridge.onKeyDown(translateKeyCode(keyCode));
+    if (isVolumeKey(keyCode))
+      return false;
+
+    EventBridge.onKeyDown(keyCode);
     return true;
   }
 
   @Override public boolean onKeyUp(int keyCode, final KeyEvent event) {
-    EventBridge.onKeyUp(translateKeyCode(keyCode));
+    if (isVolumeKey(keyCode))
+      return false;
+
+    EventBridge.onKeyUp(keyCode);
     return true;
   }
-
-  DifferentTouchInput touchInput = null;
 }

@@ -1,33 +1,13 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "PCMMixerDataSource.hpp"
 
 #include "AudioAlgorithms.hpp"
 
-#include "Util/Macros.hpp"
+#include "util/Macros.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 #include <algorithm>
 
@@ -36,7 +16,7 @@ PCMMixerDataSource::AddSource(PCMDataSource &source)
 {
   assert(source.GetSampleRate() == sample_rate);
 
-  const ScopeLock protect(lock);
+  const std::lock_guard protect{lock};
 
 #ifndef NDEBUG
   for (unsigned i = 0; i < MAX_MIXER_SOURCES_COUNT; ++i) {
@@ -57,7 +37,7 @@ PCMMixerDataSource::AddSource(PCMDataSource &source)
 void
 PCMMixerDataSource::RemoveSource(PCMDataSource &source)
 {
-  const ScopeLock protect(lock);
+  const std::lock_guard protect{lock};
 
   for (unsigned i = 0; i < MAX_MIXER_SOURCES_COUNT; ++i) {
     if (sources[i] == &source) {
@@ -72,7 +52,7 @@ PCMMixerDataSource::SetVolume(unsigned _vol_percent)
 {
   assert(_vol_percent <= 100);
 
-  const ScopeLock protect(lock);
+  const std::lock_guard protect{lock};
   vol_percent = _vol_percent;
 }
 
@@ -84,7 +64,7 @@ PCMMixerDataSource::GetData(int16_t *buffer, size_t n)
   PCMDataSource *sources_to_remove[MAX_MIXER_SOURCES_COUNT];
   unsigned sources_to_remove_count = 0;
 
-  const ScopeLock protect(lock);
+  const std::lock_guard protect{lock};
 
   for (unsigned i = 0; i < MAX_MIXER_SOURCES_COUNT; ++i) {
     PCMDataSource *source = sources[i];

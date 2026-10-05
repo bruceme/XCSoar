@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Math.hpp"
 #include "SimplifiedMath.hpp"
@@ -28,18 +8,20 @@ Copyright_License {
 #include "GeoPoint.hpp"
 #include "Math/Util.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 using namespace WGS84;
 
+[[gnu::const]]
 static inline Angle
-EarthASin(const double a)
+EarthASin(const double a) noexcept
 {
   return Angle::asin(a);
 }
 
+[[gnu::const]]
 static inline Angle
-EarthDistance(const double a)
+EarthDistance(const double a) noexcept
 {
   if (a <= 0)
     return Angle::Zero();
@@ -47,23 +29,21 @@ EarthDistance(const double a)
   return Angle::acos(1 - 2 * a);
 }
 
-gcc_const
-static double
-CalcUSquare(double cos_sq_alpha)
+static constexpr double
+CalcUSquare(double cos_sq_alpha) noexcept
 {
-  static constexpr double EQUATOR_RADIUS_SQ =
+  constexpr double EQUATOR_RADIUS_SQ =
     WGS84::EQUATOR_RADIUS * WGS84::EQUATOR_RADIUS;
-  static constexpr double POLE_RADIUS_SQ =
+  constexpr double POLE_RADIUS_SQ =
     WGS84::POLE_RADIUS * WGS84::POLE_RADIUS;
-  static constexpr double factor((EQUATOR_RADIUS_SQ - POLE_RADIUS_SQ)
-                                 / POLE_RADIUS_SQ);
+  constexpr double factor((EQUATOR_RADIUS_SQ - POLE_RADIUS_SQ)
+                          / POLE_RADIUS_SQ);
 
   return cos_sq_alpha * factor;
 }
 
-gcc_const
-static double
-CalcA(double u_sq)
+static constexpr double
+CalcA(double u_sq) noexcept
 {
   const double A_16k = 16384
     + u_sq * (4096 + u_sq *
@@ -71,26 +51,24 @@ CalcA(double u_sq)
   return A_16k / 16384;
 }
 
-gcc_const
-static double
-CalcB(double u_sq)
+static constexpr double
+CalcB(double u_sq) noexcept
 {
   const auto B_1k = u_sq * (256 + u_sq * (-128 + u_sq * (74 - 47 * u_sq)));
   return B_1k / 1024;
 }
 
-gcc_const
-static double
-CalcC(double cos_sq_alpha)
+static constexpr double
+CalcC(double cos_sq_alpha) noexcept
 {
   return FLATTENING / 16 * cos_sq_alpha *
     (4 + FLATTENING * (4 - 3 * cos_sq_alpha));
 }
 
-gcc_pure
+[[gnu::pure]]
 static GeoPoint
 IntermediatePoint(const GeoPoint &loc1, const GeoPoint &loc2,
-                  Angle dthis, Angle dtotal)
+                  Angle dthis, Angle dtotal) noexcept
 {
   assert(loc1.IsValid());
   assert(loc2.IsValid());
@@ -139,7 +117,7 @@ IntermediatePoint(const GeoPoint &loc1, const GeoPoint &loc2,
 
 GeoPoint
 IntermediatePoint(const GeoPoint &loc1, const GeoPoint &loc2,
-                  const double dthis)
+                  const double dthis) noexcept
 {
   const auto dtotal = ::Distance(loc1, loc2);
 
@@ -152,7 +130,7 @@ IntermediatePoint(const GeoPoint &loc1, const GeoPoint &loc2,
 }
 
 GeoPoint
-Middle(const GeoPoint &a, const GeoPoint &b)
+Middle(const GeoPoint &a, const GeoPoint &b) noexcept
 {
   // TODO: optimize this naive approach
   const auto distance = Distance(a, b);
@@ -161,7 +139,7 @@ Middle(const GeoPoint &a, const GeoPoint &b)
 
 void
 DistanceBearing(const GeoPoint &loc1, const GeoPoint &loc2,
-                double *distance, Angle *bearing)
+                double *distance, Angle *bearing) noexcept
 {
   const auto lon21 = loc2.longitude - loc1.longitude;
 
@@ -243,7 +221,7 @@ DistanceBearing(const GeoPoint &loc1, const GeoPoint &loc2,
 
 double
 ProjectedDistance(const GeoPoint &loc1, const GeoPoint &loc2,
-                  const GeoPoint &loc3)
+                  const GeoPoint &loc3) noexcept
 {
   Angle dist_AD, crs_AD;
   DistanceBearingS(loc1, loc3, &dist_AD, &crs_AD);
@@ -278,10 +256,9 @@ ProjectedDistance(const GeoPoint &loc1, const GeoPoint &loc2,
   return Distance(loc1, projected);
 }
 
-
 double
 DoubleDistance(const GeoPoint &loc1, const GeoPoint &loc2,
-               const GeoPoint &loc3)
+               const GeoPoint &loc3) noexcept
 {
   assert(loc1.IsValid());
   assert(loc2.IsValid());
@@ -299,13 +276,13 @@ DoubleDistance(const GeoPoint &loc1, const GeoPoint &loc2,
   const auto a12 = Square(s21) + cos_loc1_lat * cos_loc2_lat * Square(sl21);
   const auto a23 = Square(s32) + cos_loc2_lat * cos_loc3_lat * Square(sl32);
 
-  return (2 * FAISphere::REARTH) *
+  return FAISphere::REARTH *
     (EarthDistance(a12) + EarthDistance(a23)).Radians();
 }
 
 GeoPoint
 FindLatitudeLongitude(const GeoPoint &loc, const Angle bearing,
-                      double distance)
+                      double distance) noexcept
 {
   assert(loc.IsValid());
   assert(distance >= 0);
@@ -377,7 +354,7 @@ FindLatitudeLongitude(const GeoPoint &loc, const Angle bearing,
 }
 
 double
-Distance(const GeoPoint &loc1, const GeoPoint &loc2)
+Distance(const GeoPoint &loc1, const GeoPoint &loc2) noexcept
 {
   double distance;
   DistanceBearing(loc1, loc2, &distance, nullptr);
@@ -385,7 +362,7 @@ Distance(const GeoPoint &loc1, const GeoPoint &loc2)
 }
 
 Angle
-Bearing(const GeoPoint &loc1, const GeoPoint &loc2)
+Bearing(const GeoPoint &loc1, const GeoPoint &loc2) noexcept
 {
   Angle bearing;
   DistanceBearing(loc1, loc2, nullptr, &bearing);

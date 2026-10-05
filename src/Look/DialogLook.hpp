@@ -1,41 +1,22 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_DIALOG_LOOK_HPP
-#define XCSOAR_DIALOG_LOOK_HPP
+#pragma once
 
 #include "ButtonLook.hpp"
 #include "CheckBoxLook.hpp"
-#include "Screen/Color.hpp"
-#include "Screen/Pen.hpp"
-#include "Screen/Brush.hpp"
-#include "Screen/Font.hpp"
+#include "ui/canvas/Color.hpp"
+#include "ui/canvas/Pen.hpp"
+#include "ui/canvas/Brush.hpp"
+#include "ui/canvas/Font.hpp"
 
 #ifdef EYE_CANDY
-#include "Screen/Bitmap.hpp"
+#include "ui/canvas/Bitmap.hpp"
 #endif
 
 struct DialogLook {
+  bool dark_mode = false;
+
   struct {
     Color text_color;
 
@@ -49,11 +30,17 @@ struct DialogLook {
     Color inactive_background_color;
   } caption;
 
-  Color background_color, text_color;
+  Color background_color, background_gradient_top_color, text_color;
 
   Brush background_brush;
 
-  Font text_font, bold_font, small_font;
+  Font text_font, bold_font, small_font, small_font_bold;
+
+  /** Bold font scaled up for H1 headings in rich text */
+  Font heading1_font;
+
+  /** Bold font scaled up for H2 headings in rich text */
+  Font heading2_font;
 
   struct {
     Color background_color, text_color;
@@ -85,7 +72,7 @@ struct DialogLook {
 
     const Font *font, *font_bold;
 
-    gcc_pure
+    [[gnu::pure]]
     Color GetTextColor(bool is_selected, bool is_focused,
                        bool is_pressed) const {
       return is_pressed
@@ -97,7 +84,7 @@ struct DialogLook {
            : text_color);
     }
 
-    gcc_pure
+    [[gnu::pure]]
     Color GetBackgroundColor(bool is_selected, bool is_focused,
                              bool is_pressed) const {
       return is_pressed
@@ -113,9 +100,16 @@ struct DialogLook {
   ButtonLook button;
   CheckBoxLook check_box;
 
-  void Initialise();
+  void LoadFonts();
+
+  void Initialise(bool dark_mode = false);
 
   void SetBackgroundColor(Color color);
-};
 
-#endif
+  /** Unfocused read-only value fill (#WndProperty, #LargeTextWindow). */
+  [[gnu::pure]]
+  Color ReadOnlyValueBackground() const noexcept;
+
+  [[gnu::pure]]
+  Color ReadOnlyValueBorderColor() const noexcept;
+};

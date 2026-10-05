@@ -1,29 +1,9 @@
-/* Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
- */
-
-#ifndef OBSERVATIONZONECLIENT_HPP
-#define OBSERVATIONZONECLIENT_HPP
-
-#include "Compiler.h"
+#include <memory>
 
 class ObservationZonePoint;
 class OZBoundary;
@@ -34,7 +14,7 @@ struct GeoPoint;
  * Class holding an ObzervationZonePoint, directing calls to it
  */
 class ObservationZoneClient {
-  ObservationZonePoint *oz_point;
+  const std::unique_ptr<ObservationZonePoint> oz_point;
 
 public:
   /**
@@ -42,45 +22,42 @@ public:
    *
    * @param _oz The OZ to store
    */
-  ObservationZoneClient(ObservationZonePoint* _oz_point):oz_point(_oz_point) {}
+  template<typename T>
+  explicit ObservationZoneClient(T &&_oz_point) noexcept
+    :oz_point(std::forward<T>(_oz_point)) {}
 
-  ~ObservationZoneClient();
-
-  ObservationZoneClient(const ObservationZoneClient &) = delete;
-  ObservationZoneClient &operator=(const ObservationZoneClient &) = delete;
+  ~ObservationZoneClient() noexcept;
 
   /**
    * Accessor for OZ (for modifying parameters etc)
    *
    * @return Observation zone
    */
-  ObservationZonePoint &GetObservationZone() {
+  ObservationZonePoint &GetObservationZone() noexcept {
     return *oz_point;
   }
 
-  const ObservationZonePoint &GetObservationZone() const {
+  const ObservationZonePoint &GetObservationZone() const noexcept {
     return *oz_point;
   }
 
-  bool IsInSector(const GeoPoint &location) const;
+  bool IsInSector(const GeoPoint &location) const noexcept;
 
-  gcc_pure
-  bool CanStartThroughTop() const;
+  [[gnu::pure]]
+  bool CanStartThroughTop() const noexcept;
 
-  gcc_pure
+  [[gnu::pure]]
   bool TransitionConstraint(const GeoPoint &location,
-                            const GeoPoint &last_location) const;
+                            const GeoPoint &last_location) const noexcept;
 
-  gcc_pure
-  OZBoundary GetBoundary() const;
+  [[gnu::pure]]
+  OZBoundary GetBoundary() const noexcept;
 
-  virtual double ScoreAdjustment() const;
+  [[gnu::pure]]
+  virtual double ScoreAdjustment() const noexcept;
 
-  void SetLegs(const TaskPoint *previous, const TaskPoint *next);
+  void SetLegs(const TaskPoint *previous, const TaskPoint *next) noexcept;
 
-  gcc_pure
-  GeoPoint GetRandomPointInSector(double mag) const;
+  [[gnu::pure]]
+  GeoPoint GetRandomPointInSector(double mag) const noexcept;
 };
-
-
-#endif

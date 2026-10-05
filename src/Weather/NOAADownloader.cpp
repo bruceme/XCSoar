@@ -1,47 +1,46 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "NOAADownloader.hpp"
 #include "METAR.hpp"
 #include "TAF.hpp"
-#include "Net/HTTP/ToBuffer.hpp"
-#include "Util/StringUtil.hpp"
-#include "Job/Runner.hpp"
+#include "net/http/Progress.hpp"
+#include "lib/curl/Easy.hxx"
+#include "lib/curl/CoRequest.hxx"
+#include "lib/curl/Setup.hxx"
+#include "co/Task.hxx"
+#include "util/StringStrip.hxx"
 
 #include <cstdlib>
 
-namespace NOAADownloader
+static Co::Task<Curl::CoResponse>
+CoGet(CurlGlobal &curl, const char *url, ProgressListener &progress)
 {
-  /**
-   * Tries to parse a date and time from the buffer
-   * @param buffer Buffer to parse
-   * @param dest BrokenDateTime to write the parsed results in
-   * @return Same as buffer if parsing failed,
-   * otherwise the pointer to the next character after the parsed string portion
-   */
-  static const char *ParseDateTime(const char *buffer, BrokenDateTime &dest);
-  static bool ParseDecodedDateTime(const char *buffer, BrokenDateTime &dest);
+  CurlEasy easy{url};
+  Curl::Setup(easy);
+  const Net::ProgressAdapter progress_adapter{easy, progress};
+  easy.SetFailOnError();
+
+  // TODO limit the response body size
+  co_return co_await Curl::CoRequest(curl, std::move(easy));
 }
+
+namespace NOAADownloader {
+
+/**
+ * Tries to parse a date and time from the buffer
+ * @param buffer Buffer to parse
+ * @param dest BrokenDateTime to write the parsed results in
+ * @return Same as buffer if parsing failed,
+ * otherwise the pointer to the next character after the parsed string portion
+ */
+static const char *
+ParseDateTime(const char *buffer, BrokenDateTime &dest);
+
+static bool
+ParseDecodedDateTime(const char *buffer, BrokenDateTime &dest);
+
+} // namespace NOAADownloader
 
 const char *
 NOAADownloader::ParseDateTime(const char *buffer, BrokenDateTime &dest)
@@ -138,9 +137,9 @@ NOAADownloader::ParseDecodedDateTime(const char *buffer, BrokenDateTime &dest)
   return true;
 }
 
-bool
-NOAADownloader::DownloadMETAR(const char *code, METAR &metar,
-                              Net::Session &session, JobRunner &runner)
+Co::Task<METAR>
+NOAADownloader::DownloadMETAR(const char *code, CurlGlobal &curl,
+                              ProgressListener &progress)
 {
 #ifndef NDEBUG
   assert(strlen(code) == 4);
@@ -152,16 +151,11 @@ NOAADownloader::DownloadMETAR(const char *code, METAR &metar,
   // Build file url
   char url[256];
   snprintf(url, sizeof(url),
-           "http://tgftp.nws.noaa.gov/data/observations/metar/decoded/%s.TXT",
+           "https://tgftp.nws.noaa.gov/data/observations/metar/decoded/%s.TXT",
            code);
 
   // Request the file
-  char buffer[4096];
-  Net::DownloadToBufferJob job(session, url, buffer, sizeof(buffer) - 1);
-  if (!runner.Run(job))
-    return false;
-
-  buffer[job.GetLength()] = 0;
+  auto response = co_await CoGet(curl, url, progress);
 
   /*
    * Example:
@@ -179,34 +173,36 @@ NOAADownloader::DownloadMETAR(const char *code, METAR &metar,
    * cycle: 20
    */
 
-  char *p = buffer;
+  char *p = response.body.data();
 
   // Skip characters until line feed or string end
   while (*p != '\n' && *p != 0)
     p++;
 
   if (*p == 0)
-    return false;
+    throw std::runtime_error{"Malformed METAR text"};
 
   // Skip characters until slash or string end
   while (*p != '/' && *p != 0)
     p++;
 
   if (*p == 0)
-    return false;
+    throw std::runtime_error{"Malformed METAR text"};
 
   p++;
 
-  if (*p == 0 || !ParseDecodedDateTime(p, metar.last_update))
-    return false;
+  METAR metar;
 
-  if (BrokenDateTime::NowUTC() - metar.last_update > 24*60*60)
-    return false;
+  if (*p == 0 || !ParseDecodedDateTime(p, metar.last_update))
+    throw std::runtime_error{"Malformed METAR time stamp"};
+
+  if (BrokenDateTime::NowUTC() - metar.last_update > std::chrono::hours{24})
+    throw std::runtime_error{"METAR is too old"};
 
   // Search for line feed followed by "ob:"
   char *ob = strstr(p, "\nob:");
   if (ob == NULL)
-    return false;
+    throw std::runtime_error{"Malformed METAR text"};
 
   *ob = 0;
 
@@ -223,18 +219,18 @@ NOAADownloader::DownloadMETAR(const char *code, METAR &metar,
     *p = 0;
 
   metar.content.SetASCII(ob);
-  metar.decoded.SetASCII(buffer);
+  metar.decoded.SetASCII(response.body);
 
   // Trim the content strings
   StripRight(metar.content.buffer());
   StripRight(metar.decoded.buffer());
 
-  return true;
+  co_return metar;
 }
 
-bool
-NOAADownloader::DownloadTAF(const char *code, TAF &taf,
-                            Net::Session &session, JobRunner &runner)
+Co::Task<TAF>
+NOAADownloader::DownloadTAF(const char *code, CurlGlobal &curl,
+                            ProgressListener &progress)
 {
 #ifndef NDEBUG
   assert(strlen(code) == 4);
@@ -246,16 +242,13 @@ NOAADownloader::DownloadTAF(const char *code, TAF &taf,
   // Build file url
   char url[256];
   snprintf(url, sizeof(url),
-           "http://tgftp.nws.noaa.gov/data/forecasts/taf/stations/%s.TXT",
+           "https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/%s.TXT",
            code);
 
   // Request the file
-  char buffer[4096];
-  Net::DownloadToBufferJob job(session, url, buffer, sizeof(buffer) - 1);
-  if (!runner.Run(job))
-    return false;
+  auto response = co_await CoGet(curl, url, progress);
 
-  buffer[job.GetLength()] = 0;
+  const char *p = response.body.c_str();
 
   /*
    * Example:
@@ -269,26 +262,30 @@ NOAADownloader::DownloadTAF(const char *code, TAF &taf,
    *       BECMG 0210/0213 31010KT
    */
 
-  // Parse date and time of last update
-  const char *p = ParseDateTime(buffer, taf.last_update);
-  if (p == buffer)
-    return false;
+  TAF taf;
 
-  if (BrokenDateTime::NowUTC() - taf.last_update > 2*24*60*60)
-    return false;
+  // Parse date and time of last update
+  const char *q = ParseDateTime(p, taf.last_update);
+  if (q == p)
+    throw std::runtime_error{"Malformed TAF time stamp"};
+
+  p = q;
+
+  if (BrokenDateTime::NowUTC() - taf.last_update > std::chrono::hours{2*24})
+    throw std::runtime_error{"TAF is too old"};
 
   // Skip characters until line feed or string end
   while (*p != '\n' && *p != 0)
     p++;
 
   if (*p == 0)
-    return false;
+    throw std::runtime_error{"Malformed TAF text"};
 
   // p is now at the first character after the line feed
   p++;
 
   if (*p == 0)
-    return false;
+    throw std::runtime_error{"Malformed TAF text"};
 
   // Read rest of the response into the content string
   taf.content.SetASCII(p);
@@ -296,5 +293,5 @@ NOAADownloader::DownloadTAF(const char *code, TAF &taf,
   // Trim the content string
   StripRight(taf.content.buffer());
 
-  return true;
+  co_return taf;
 }

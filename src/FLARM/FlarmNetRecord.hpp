@@ -1,55 +1,25 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_FLARM_NET_RECORD_HPP
-#define XCSOAR_FLARM_NET_RECORD_HPP
-
-#include "Util/StaticString.hxx"
-#include "Compiler.h"
-
-class FlarmId;
-
-constexpr
-static inline size_t
-LatinBufferSize(size_t size)
+#include "util/StaticString.hxx"
+#include "Radio/RadioFrequency.hpp"
+#include "Id.hpp"
+static constexpr std::size_t
+LatinBufferSize(std::size_t size) noexcept
 {
-#ifdef _UNICODE
-/* with wide characters, the exact size of the FLARMNet database field
-   (plus one for the terminator) is just right, ... */
-  return size;
-#else
 /* ..., but when we convert Latin-1 to UTF-8, we need a little bit
    more buffer */
   return size * 3 / 2 + 1;
-#endif
 }
 
 /**
  * FlarmNet.org file entry
  */
 struct FlarmNetRecord {
-  /**< FLARM id 6 bytes */
-  StaticString<LatinBufferSize(7)> id;
+  /**< FLARM id */
+  FlarmId id;
 
   /**< Name 15 bytes */
   StaticString<LatinBufferSize(22)> pilot;
@@ -66,11 +36,15 @@ struct FlarmNetRecord {
   /**< Callsign 3 bytes */
   StaticString<LatinBufferSize(4)> callsign;
 
-  /**< Radio frequency 6 bytes */
-  StaticString<LatinBufferSize(8)> frequency;
+  /**< Radio frequency value (parsed) */
+  RadioFrequency frequency = RadioFrequency::Null();
 
-  gcc_pure
-  FlarmId GetId() const;
+  /** 
+   * Format a char value; returns nullptr if empty.
+   * @param buffer Present for interface compatibility with other Format
+   *        overloads, but unused in this specialization
+   * @return Formatted string pointer; must not be ignored 
+   */
+  [[nodiscard]] const char *Format([[maybe_unused]] StaticString<256> &buffer,
+                                     const char *value) const noexcept;
 };
-
-#endif

@@ -1,113 +1,75 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "Internal.hpp"
 #include "Protocol.hpp"
-#include "Util/Macros.hpp"
-#include "Util/CharUtil.hxx"
+#include "util/Macros.hpp"
+#include "util/CharUtil.hxx"
 #include "Engine/Waypoint/Waypoint.hpp"
 
 bool
 CAI302Device::ReadGeneralInfo(CAI302::GeneralInfo &data,
                               OperationEnvironment &env)
 {
-  if (!UploadMode(env))
-    return false;
-
+  UploadMode(env);
   return CAI302::UploadGeneralInfo(port, data, env);
 }
 
-bool
+void
 CAI302Device::Reboot(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::Reboot(port, env);
+  CommandMode(env);
+  CAI302::Reboot(port, env);
 }
 
-bool
+void
 CAI302Device::PowerOff(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::PowerOff(port, env);
+  CommandMode(env);
+  CAI302::PowerOff(port, env);
 }
 
-bool
+void
 CAI302Device::StartLogging(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::StartLogging(port, env);
+  CommandMode(env);
+  CAI302::StartLogging(port, env);
 }
 
-bool
+void
 CAI302Device::StopLogging(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::StopLogging(port, env);
+  CommandMode(env);
+  CAI302::StopLogging(port, env);
 }
 
-bool
+void
 CAI302Device::SetVolume(unsigned volume, OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::SetVolume(port, volume, env);
+  CommandMode(env);
+  CAI302::SetVolume(port, volume, env);
 }
 
-bool
+void
 CAI302Device::ClearPoints(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::ClearPoints(port, env);
+  CommandMode(env);
+  CAI302::ClearPoints(port, env);
 }
 
 
-bool
+void
 CAI302Device::ClearPilot(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::ClearPilot(port, env);
+  CommandMode(env);
+  CAI302::ClearPilot(port, env);
 }
 
-bool
+void
 CAI302Device::ClearLog(OperationEnvironment &env)
 {
-  if (!CommandMode(env))
-    return false;
-
-  return CAI302::ClearLog(port, env);
+  CommandMode(env);
+  CAI302::ClearLog(port, env);
 }
 
 bool
@@ -117,8 +79,7 @@ CAI302Device::ReadPilotList(std::vector<CAI302::Pilot> &list,
 {
   assert(list.empty());
 
-  if (!UploadMode(env))
-    return false;
+  UploadMode(env);
 
   CAI302::PilotMetaActive meta;
   if (!CAI302::UploadPilotMetaActive(port, meta, env))
@@ -135,7 +96,7 @@ CAI302Device::ReadPilotList(std::vector<CAI302::Pilot> &list,
 
   const unsigned block_count = 8;
 
-  uint8_t buffer[1024];
+  std::byte buffer[1024];
 
   for (unsigned i = 0; i < count; i += block_count) {
     unsigned this_block = std::min(count - i, block_count);
@@ -144,7 +105,7 @@ CAI302Device::ReadPilotList(std::vector<CAI302::Pilot> &list,
     if (n != this_block)
       return false;
 
-    const uint8_t *p = buffer;
+    const std::byte *p = buffer;
     for (unsigned j = 0; j < n; ++j, p += record_size)
       list.push_back(*(const CAI302::Pilot *)p);
   }
@@ -155,8 +116,7 @@ CAI302Device::ReadPilotList(std::vector<CAI302::Pilot> &list,
 bool
 CAI302Device::ReadActivePilot(CAI302::Pilot &pilot, OperationEnvironment &env)
 {
-  if (!UploadMode(env))
-    return false;
+  UploadMode(env);
 
   if (!CAI302::UploadPilot(port, 0, pilot, env)) {
     mode = Mode::UNKNOWN;
@@ -170,12 +130,13 @@ bool
 CAI302Device::WriteActivePilot(const CAI302::Pilot &pilot,
                                OperationEnvironment &env)
 {
-  if (!DownloadMode(env))
-    return false;
+  DownloadMode(env);
 
-  if (!CAI302::DownloadPilot(port, pilot, 0, env)) {
+  try {
+    CAI302::DownloadPilot(port, pilot, 0, env);
+  } catch (...) {
     mode = Mode::UNKNOWN;
-    return false;
+    throw;
   }
 
   return true;
@@ -185,12 +146,13 @@ bool
 CAI302Device::WritePilot(unsigned index, const CAI302::Pilot &pilot,
                          OperationEnvironment &env)
 {
-  if (!DownloadMode(env))
-    return false;
+  DownloadMode(env);
 
-  if (!CAI302::DownloadPilot(port, pilot, 64 + index, env)) {
+  try {
+    CAI302::DownloadPilot(port, pilot, 64 + index, env);
+  } catch (...) {
     mode = Mode::UNKNOWN;
-    return false;
+    throw;
   }
 
   return true;
@@ -199,12 +161,13 @@ CAI302Device::WritePilot(unsigned index, const CAI302::Pilot &pilot,
 bool
 CAI302Device::AddPilot(const CAI302::Pilot &pilot, OperationEnvironment &env)
 {
-  if (!DownloadMode(env))
-    return false;
+  DownloadMode(env);
 
-  if (!CAI302::DownloadPilot(port, pilot, 255, env)) {
+  try {
+    CAI302::DownloadPilot(port, pilot, 255, env);
+  } catch (...) {
     mode = Mode::UNKNOWN;
-    return false;
+    throw;
   }
 
   return true;
@@ -213,8 +176,7 @@ CAI302Device::AddPilot(const CAI302::Pilot &pilot, OperationEnvironment &env)
 int
 CAI302Device::ReadNavpointCount(OperationEnvironment &env)
 {
-  if (!UploadMode(env))
-    return -1;
+  UploadMode(env);
 
   CAI302::NavpointMeta meta;
   if (!CAI302::UploadNavpointMeta(port, meta, env)) {
@@ -229,8 +191,7 @@ bool
 CAI302Device::ReadNavpoint(unsigned index, CAI302::Navpoint &navpoint,
                            OperationEnvironment &env)
 {
-  if (!UploadMode(env))
-    return false;
+  UploadMode(env);
 
   if (!CAI302::UploadNavpoint(port, index, navpoint, env)) {
     mode = Mode::UNKNOWN;
@@ -241,10 +202,10 @@ CAI302Device::ReadNavpoint(unsigned index, CAI302::Navpoint &navpoint,
 }
 
 static void
-ToASCII(char *dest, size_t dest_size, const TCHAR *src)
+ToASCII(char *dest, size_t dest_size, const char *src)
 {
   char *end = dest + dest_size - 1;
-  while (*src != _T('\0') && dest < end)
+  while (*src != '\0' && dest < end)
     if (IsPrintableASCII(*src))
       *dest++ = (char)*src++;
 
@@ -255,28 +216,30 @@ bool
 CAI302Device::WriteNavpoint(unsigned id, const Waypoint &wp,
                             OperationEnvironment &env)
 {
-  if (!DownloadMode(env))
-    return false;
+  DownloadMode(env);
 
   char name[64], remark[64];
   ToASCII(name, ARRAY_SIZE(name), wp.name.c_str());
   ToASCII(remark, ARRAY_SIZE(remark), wp.comment.c_str());
 
-  if (!CAI302::DownloadNavpoint(port, wp.location, (int)wp.elevation, id,
-                                wp.IsTurnpoint(), wp.IsAirport(), false,
-                                wp.IsLandable(), wp.IsStartpoint(),
-                                wp.IsFinishpoint(), wp.flags.home,
-                                false, wp.IsTurnpoint(), false,
-                                name, remark, env)) {
+  try {
+    CAI302::DownloadNavpoint(port, wp.location, (int)wp.GetElevationOrZero(),
+                             id,
+                             wp.IsTurnpoint(), wp.IsAirport(), false,
+                             wp.IsLandable(), wp.IsStartpoint(),
+                             wp.IsFinishpoint(), wp.flags.home,
+                             false, wp.IsTurnpoint(), false,
+                             name, remark, env);
+  } catch (...) {
     mode = Mode::UNKNOWN;
-    return false;
+    throw;
   }
 
   return true;
 }
 
-bool
+void
 CAI302Device::CloseNavpoints(OperationEnvironment &env)
 {
-  return CAI302::CloseNavpoints(port, env);
+  CAI302::CloseNavpoints(port, env);
 }

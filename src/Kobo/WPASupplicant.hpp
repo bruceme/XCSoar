@@ -1,129 +1,107 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
+#include "net/wifi/WifiData.hpp"
+#include "net/SocketDescriptor.hxx"
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
+#include <cstddef>
+#include <span>
+#include <string_view>
 
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_KOBO_WIFI_HPP
-#define XCSOAR_KOBO_WIFI_HPP
-
-#include "Util/StaticString.hxx"
-#include "Net/SocketDescriptor.hxx"
-
-enum WifiSecurity {
-  WPA_SECURITY,
-  WEP_SECURITY,
-  OPEN_SECURITY,
-};
-
-struct WifiStatus {
-  StaticString<32> bssid;
-  StaticString<256> ssid;
-
-  void Clear() {
-    bssid.clear();
-    ssid.clear();
-  }
-};
-
-struct WifiVisibleNetwork {
-  StaticString<32> bssid;
-  StaticString<256> ssid;
-  unsigned signal_level;
-  enum WifiSecurity security;
-};
-
-struct WifiConfiguredNetworkInfo {
-  int id;
-  StaticString<256> ssid;
-  StaticString<32> bssid;
-};
-
+/**
+ * All methods that are not `noexcept` throw on error.
+ */
 class WPASupplicant {
   SocketDescriptor fd;
 
 public:
-  WPASupplicant():fd(SocketDescriptor::Undefined()) {}
+  WPASupplicant() noexcept:fd(SocketDescriptor::Undefined()) {}
 
-  ~WPASupplicant() {
+  ~WPASupplicant() noexcept {
     Close();
   }
 
-  gcc_pure
-  bool IsConnected() const {
+  [[gnu::pure]]
+  bool IsConnected() const noexcept {
     // TODO: what if the socket is broken?
     return fd.IsDefined();
   }
 
-  bool Connect(const char *path);
-  void Close();
+  /**
+   * Throws on error.
+   */
+  void Connect(const char *path);
 
-  bool SendCommand(const char *cmd);
-  bool ExpectResponse(const char *expected);
-
-  bool ExpectOK() {
-    return ExpectResponse("OK\n");
+  void EnsureConnected(const char *path) {
+    if (!IsConnected())
+      Connect(path);
   }
 
-  bool SaveConfig() {
-    return SendCommand("SAVE_CONFIG") && ExpectOK();
+  void Close() noexcept;
+
+  void SendCommand(std::string_view cmd);
+
+  void ExpectResponse(std::string_view expected);
+
+  void ExpectOK() {
+    ExpectResponse("OK\n");
   }
 
-  bool Status(WifiStatus &status);
+  void SaveConfig() {
+    SendCommand("SAVE_CONFIG");
+    ExpectOK();
+  }
 
-  bool Scan();
+  bool Status(WifiBackendStatus &status);
+
+  void Scan() {
+    SendCommand("SCAN");
+    ExpectOK();
+  }
 
   /**
-   * @return the number of networks or -1 on error
+   * @return the number of networks
    */
-  int ScanResults(WifiVisibleNetwork *dest, unsigned max);
+  std::size_t ScanResults(WifiVisibleNetwork *dest, unsigned max);
 
   /**
-   * @return the network id or -1 on error
+   * @return the network id
    */
-  int AddNetwork();
+  unsigned AddNetwork();
 
-  bool SetNetworkString(unsigned id, const char *name, const char *value);
+  void SetNetworkString(unsigned id, const char *name, const char *value);
 
-  bool SetNetworkID(unsigned id, const char *name, const char *value);
+  void SetNetworkID(unsigned id, const char *name, const char *value);
 
-  bool SetNetworkSSID(unsigned id, const char *ssid) {
-    return SetNetworkString(id, "ssid", ssid);
+  void SetNetworkSSID(unsigned id, const char *ssid) {
+    SetNetworkString(id, "ssid", ssid);
   }
 
-  bool SetNetworkPSK(unsigned id, const char *psk) {
-    return SetNetworkString(id, "psk", psk);
+  void SetNetworkPSK(unsigned id, const char *psk) {
+    SetNetworkID(id, "psk", psk);
   }
 
-  bool SelectNetwork(unsigned id);
-  bool EnableNetwork(unsigned id);
-  bool DisableNetwork(unsigned id);
-  bool RemoveNetwork(unsigned id);
+  void SelectNetwork(unsigned id);
+  void EnableNetwork(unsigned id);
+  void DisableNetwork(unsigned id);
+  bool GetCurrentNetworkId(unsigned &id);
+  void RemoveNetwork(unsigned id);
 
   /**
-   * @return the number of networks or -1 on error
+   * Throws on error.
+   *
+   * @return the number of networks
    */
-  int ListNetworks(WifiConfiguredNetworkInfo *dest, unsigned max);
+  std::size_t ListNetworks(WifiConfiguredNetworkInfo *dest, std::size_t max);
 
 private:
-  ssize_t ReadTimeout(void *buffer, size_t length, int timeout_ms=1000);
-};
+  void ReadDiscard() noexcept;
 
-#endif
+  std::size_t ReadTimeout(std::span<std::byte> dest, int timeout_ms=2000);
+
+  std::string_view ReadStringTimeout(std::span<char> buffer, int timeout_ms=2000);
+
+  std::string_view ExpectLineTimeout(std::span<char> buffer, int timeout_ms=2000);
+};

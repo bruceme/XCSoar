@@ -1,25 +1,5 @@
-/*
-Copyright_License {
-
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
 #include "DebugPort.hpp"
 #include "Device/Port/Port.hpp"
@@ -29,13 +9,13 @@ Copyright_License {
 #include "Device/Parser.hpp"
 #include "Device/Config.hpp"
 #include "Operation/ConsoleOperationEnvironment.hpp"
-#include "IO/Async/GlobalAsioThread.hpp"
-#include "IO/Async/AsioThread.hpp"
-#include "IO/NullDataHandler.hpp"
-#include "Util/PrintException.hxx"
+#include "io/async/GlobalAsioThread.hpp"
+#include "io/async/AsioThread.hpp"
+#include "io/NullDataHandler.hpp"
+#include "util/PrintException.hxx"
 
 #define MORE_USAGE
-#include "OS/Args.hpp"
+#include "system/Args.hpp"
 
 #include <stdio.h>
 
@@ -46,31 +26,35 @@ PrintMoreUsage()
 
   const struct DeviceRegister *driver;
   for (unsigned i = 0; (driver = GetDriverByIndex(i)) != NULL; ++i)
-    _ftprintf(stderr, _T("\t%s\n"), driver->name);
+    fprintf(stderr, "\t%s\n", driver->name);
 }
 
 bool
-NMEAParser::ReadGeoPoint(NMEAInputLine &line, GeoPoint &value_r)
+NMEAParser::ReadGeoPoint([[maybe_unused]] NMEAInputLine &line,
+                         [[maybe_unused]] GeoPoint &value_r)
 {
   return false;
 }
 
 bool
-NMEAParser::ReadDate(NMEAInputLine &line, BrokenDate &date)
+NMEAParser::ReadDate([[maybe_unused]] NMEAInputLine &line,
+                     [[maybe_unused]] BrokenDate &date)
 {
   return false;
 }
 
 bool
-NMEAParser::ReadTime(NMEAInputLine &line, BrokenTime &broken_time,
-                     double &time_of_day_s)
+NMEAParser::ReadTime([[maybe_unused]] NMEAInputLine &line,
+                     [[maybe_unused]] BrokenTime &broken_time,
+                     [[maybe_unused]] TimeStamp &time_of_day_s) noexcept
 {
   return false;
 }
 
 bool
-NMEAParser::TimeHasAdvanced(double this_time, double &last_time,
-                            NMEAInfo &info)
+NMEAParser::TimeHasAdvanced([[maybe_unused]] TimeStamp this_time,
+                            [[maybe_unused]] TimeStamp &last_time,
+                            [[maybe_unused]] NMEAInfo &info)
 {
   return false;
 }
@@ -79,19 +63,19 @@ int main(int argc, char **argv)
 try {
   Args args(argc, argv, "DRIVER PORT BAUD");
 
-  tstring _driver_name = args.ExpectNextT();
-  const TCHAR *driver_name = _driver_name.c_str();
+  std::string _driver_name = args.ExpectNextT();
+  const char *driver_name = _driver_name.c_str();
   DebugPort debug_port(args);
   args.ExpectEnd();
 
   ScopeGlobalAsioThread global_asio_thread;
 
   NullDataHandler handler;
-  auto port = debug_port.Open(*asio_thread, handler);
+  auto port = debug_port.Open(*asio_thread, *global_cares_channel, handler);
 
   const struct DeviceRegister *driver = FindDriverByName(driver_name);
   if (driver == NULL) {
-    _ftprintf(stderr, _T("No such driver: %s\n"), driver_name);
+    fprintf(stderr, "No such driver: %s\n", driver_name);
     return EXIT_FAILURE;
   }
 

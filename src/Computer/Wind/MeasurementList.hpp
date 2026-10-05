@@ -1,31 +1,13 @@
-/*
-Copyright_License {
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
 
-  XCSoar Glide Computer - http://www.xcsoar.org/
-  Copyright (C) 2000-2016 The XCSoar Project
-  A detailed list of copyright holders can be found in the file "AUTHORS".
+#pragma once
 
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-}
-*/
-
-#ifndef XCSOAR_WIND_MEASUREMENT_LIST_HPP
-#define XCSOAR_WIND_MEASUREMENT_LIST_HPP
-
-#include "Util/StaticArray.hxx"
+#include "util/StaticArray.hxx"
 #include "Math/Vector.hpp"
+#include "time/Stamp.hpp"
+
+#include <chrono>
 
 /**
  * Structure to hold a single wind measurement
@@ -40,15 +22,15 @@ struct WindMeasurement
   /**
    * Time of fix.
    */
-  unsigned time;
+  TimeStamp time;
   double altitude;               /**< Altitude of fix */
 
-  constexpr unsigned Score(unsigned _time) const {
+  constexpr unsigned Score(TimeStamp _time) const noexcept {
     // Calculate the score of this item. The item with the highest
     // score is the least important one.  We may need to adjust the
     // proportion of the quality and the elapsed time. Currently, one
     // quality-point (scale: 1 to 5) is equal to 10 minutes.
-    return 600 * (6 - quality) + (_time - time);
+    return 600 * (6 - quality) + (_time - time).count();
   }
 };
 
@@ -67,10 +49,12 @@ public:
    * if no valid vector could be calculated (for instance: too little or
    * too low quality data).
    */
-  const Vector getWind(unsigned now, double alt, bool &found) const;
+  const Vector getWind(TimeStamp now, double alt,
+                       bool &found) const;
 
   /** Adds the windvector vector with quality quality to the list. */
-  void addMeasurement(unsigned time, const SpeedVector &vector,
+  void addMeasurement(TimeStamp time,
+                      const SpeedVector &vector,
                       double alt, unsigned quality);
 
   void Reset();
@@ -80,8 +64,6 @@ protected:
    * getLeastImportantItem is called to identify the item that should be
    * removed if the list is too full. Reimplemented from LimitedList.
    */
-  gcc_pure
-  unsigned int getLeastImportantItem(unsigned now);
+  [[gnu::pure]]
+  unsigned int getLeastImportantItem(TimeStamp now) noexcept;
 };
-
-#endif
